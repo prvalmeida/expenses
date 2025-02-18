@@ -1,0 +1,31 @@
+{
+  "name": "expenses-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "build": "tsc",
+    "dev": "nodemon",
+    "production": "pm2 start src/loader.js --name expenses-backend"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "5.0.0",
+    "body-parser": "^1.20.3",
+    "express": "^4.21.2",
+    "express-async-handler": "^1.2.0",
+    "express-query-int": "^3.0.0",
+    "jsonwebtoken": "^7.3.0",
+    "lodash": "^4.17.21",
+    "lowdb": "^7.0.1",
+    "node-restful": "^0.2.6",
+    "pm2": "^2.1.5"
+  },
+  "devDependencies": {
+    "nodemon": "^1.11.0"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "expenses-poc",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "build": "rm -rf ./dist && npx tsc",
+    "build-and-start": "npm run build && node dist/server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "express": "^4.21.2",
+    "lowdb": "^7.0.1"
+  },
+  "devDependencies": {
+    "@tsconfig/node-lts": "22.0.1",
+    "@types/body-parser": "^1.19.5",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "nodemon": "^3.1.9",
+    "typescript": "^5.7.2"
+  }
+}
