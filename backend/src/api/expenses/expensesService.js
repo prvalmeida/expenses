@@ -8,7 +8,8 @@ Expenses.updateOptions({new: true, runValidators: true})
 Expenses.after('post', errorHandler).after('put', errorHandler)
 
 Expenses.route('get', (req, res, next) => {
-    BillingCycle.find({}, (err, docs) => {
+    console.log('getting....')
+    Expenses.find({}, (err, docs) => {
         if(!err) {
             res.json(docs)
         } else {
@@ -17,4 +18,4 @@ Expenses.route('get', (req, res, next) => {
     })
 })
 
-module.exports = BillingCycle
+module.exports = Expenses
