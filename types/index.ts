@@ -6,25 +6,25 @@ export enum CardBrand {
 
 export const ExpenseSubtypes = {
   'farmácia': ['Remédio', 'Fralda', 'Leite Dudu', 'Lenços Umedecidos', 'Outros'],
-  'saúde': ['Médico', 'Nina', 'Seguro de Vida'],
-  'comida': ['Restaurante', 'Cafeteria', 'Lanche', 'Pizza', 'Ração Nina', 'Assinaturas', 'Padaria', 'Confetaria', 'Chocolate'],
-  'estética': ['Cabelereiro', 'Unha', 'Costureira'],
+  'saúde': ['Médico', 'Nina', 'Seguro de Vida', 'Suplementos'],
+  'comida': ['Restaurante', 'Cafeteria', 'Lanche', 'Pizza', 'Ração Nina', 'Assinaturas', 'Padaria', 'Confetaria', 'Chocolate', 'Outros'],
+  'estética': ['Cabelereiro', 'Unha', 'Costureira', 'Outros'],
   'esportes': ['Academia', 'Natação'],
-  'transporte': ['Gasolina', 'Uber', 'Revisão', 'Estacionamento', 'Lavagem', 'Aluguel Carro'],
+  'transporte': ['Gasolina', 'Uber', 'Revisão', 'Estacionamento', 'Lavagem', 'Aluguel Carro', 'Seguro'],
   'casa': ['Luz', 'Água', 'Internet/TV', 'Condomínio', 'Financiamento casa', 'Faxina', 'Gás', 'Manutenção', 'Móveis', 'Jardim'],
   'estudo': ['Curso', 'Colégio', 'Livro'],
-  'lazer': ['Streaming', 'Bar', 'Assinaturas', 'Outros'],
-  'taxas': ['Anuidade cartão', 'Seguro'],
-  'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café'],
+  'lazer': ['Streaming', 'Bar', 'Assinaturas', 'Outros', 'Cinema'],
+  'taxas': ['Anuidade cartão', 'Seguro Cartão', 'Proteção conta'],
+  'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café', 'Eletrônicos'],
   'viagens': ['Passagens', 'Fidelidade CIA Aérea'],
-  'assinaturas': ['Google Drive', 'Icloud'],
+  'assinaturas': ['Google Drive', 'Icloud', 'Microsoft', 'GaúchaZH'],
   'supermercado': [
     'Limpeza',
     'Higiene',
     'Pão',
     'Suco',
     'Iogurte',
-    'Café',
+    'Café/Chá',
     'Frango',
     'Carne',
     'Cerveja',
@@ -37,7 +37,9 @@ export const ExpenseSubtypes = {
     'Comida',
     'Fruta',
     'Verdura/Legume',
-    'Outros'
+    'Outros',
+    'Refrigerante',
+    'Chocolate'
   ],
   'feira': [
     'Fruta',
@@ -70,7 +72,7 @@ interface CreditExpense extends BaseExpense {
 }
 
 interface OtherExpense extends BaseExpense {
-  paymentType: 'cash' | 'debit' | 'pix'; 
+  paymentType: 'cash' | 'debit' | 'pix' | 'food-voucher' | 'meal-voucher' | 'fuel-voucher'; 
   cardBrand?: never;
   installment?: never;
   totalInstallments?: never;
@@ -83,8 +85,27 @@ export type ExpenseForm = {
   value: number | '';
   type: keyof typeof ExpenseSubtypes | ''; 
   subtype?: string;
-  paymentType: 'credit' | 'cash' | 'debit' | 'pix' | '';
+  paymentType: 'credit' | 'cash' | 'debit' | 'pix' | 'food-voucher' | 'meal-voucher' |'fuel-voucher' | '';
   cardBrand: CardBrand | undefined;
   date: string;
   installments: number | undefined;
+}
+
+export const IncomeTypes = ['salary', 'bonus', 'other'] as const;
+
+export type IncomeType = typeof IncomeTypes[number];
+
+export interface Income {
+  _id?: string;
+  name: string;
+  value: number;
+  type: IncomeType;
+  date: string;
+}
+
+export type IncomeForm = {
+  name: string;
+  value: number | '';
+  type: IncomeType | '';
+  date: string;
 }

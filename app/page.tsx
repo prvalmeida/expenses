@@ -2,14 +2,19 @@
 
 import { useCallback, useState } from 'react';
 import AddExpense from './AddExpense';
+import AddIncome from './AddIncome';
 import DashBoard from './Dashboard';
 import CardConfigPage from './CardConfig'; // Import your new component
 
 export default function MainPage() {
   // 1. Update the type to include 'cardConfig'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'cardConfig'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'addIncome' | 'cardConfig'>('dashboard');
 
   const handleExpenseAdded = useCallback(() => {
+    setCurrentView('dashboard');
+  }, []);
+
+  const handleIncomeAdded = useCallback(() => {
     setCurrentView('dashboard');
   }, []);
 
@@ -38,6 +43,15 @@ export default function MainPage() {
             ➕ Novo Gasto
           </button>
 
+          <button
+            onClick={() => setCurrentView('addIncome')}
+            className={`w-full text-left p-2 rounded transition-colors ${
+              currentView === 'addIncome' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+            }`}
+          >
+            ➕ Nova Receita
+          </button>
+
           <hr className="border-gray-400 my-4" />
 
           {/* 2. New Sidebar Button */}
@@ -59,6 +73,10 @@ export default function MainPage() {
         
         {currentView === 'addExpense' && (
           <AddExpense onExpenseAdded={handleExpenseAdded} />
+        )}
+        
+        {currentView === 'addIncome' && (
+          <AddIncome onIncomeAdded={handleIncomeAdded} />
         )}
         
         {currentView === 'cardConfig' && (

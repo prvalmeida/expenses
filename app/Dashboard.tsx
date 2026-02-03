@@ -1,16 +1,23 @@
 'use client';
 
-import { Expense } from "@/types";
+import { Expense, Income } from "@/types";
 import { useCallback, useEffect, useState } from "react";
+import ExpenseCharts from "../components/ExpenseCharts";
 
 export default function DashBoard() {
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [filteredExpenses, setFilteredExpenses] = useState<Expense[]>([]);
   const [totalThisMonth, setTotalThisMonth] = useState(0);
   const [showDetailedView, setShowDetailedView] = useState<boolean>(false);
+  const [showIncomeView, setShowIncomeView] = useState<boolean>(false);
+  
+  // Income states
+  const [allIncomes, setAllIncomes] = useState<Income[]>([]);
+  const [totalIncomeThisMonth, setTotalIncomeThisMonth] = useState(0);
   
   // Toggle: 'purchase' (Data da Compra) vs 'payment' (Fluxo de Caixa)
   const [viewMode, setViewMode] = useState<'purchase' | 'payment'>('purchase');
+  const [showCharts, setShowCharts] = useState(false);
   
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
@@ -35,6 +42,21 @@ export default function DashBoard() {
     setFilteredExpenses(filtered);
   }, [selectedMonth]);
 
+  const filterIncomes = useCallback(() => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+
+    const filtered = allIncomes.filter(income => {
+      const incomeDate = new Date(`${income.date}T12:00:00Z`);
+      
+      return (
+        incomeDate.getUTCMonth() === month - 1 && 
+        incomeDate.getUTCFullYear() === year
+      );
+    });
+
+    setTotalIncomeThisMonth(filtered.reduce((sum, inc) => sum + inc.value, 0));
+  }, [selectedMonth, allIncomes]);
+
   const onExpenseDeleted = (id: string, deleteAll: boolean) => {
     setAllExpenses(prev => {
       // 1. Pegamos a despesa que vai ser deletada para saber o transactionId dela
@@ -54,18 +76,29 @@ export default function DashBoard() {
   };
 
   const handleDelete = async (id: string, hasMultiple: boolean) => {
-    let url = `/api/expenses?id=${id}`;
+    let url = `/api/expenses/${id}`;
     
+    let choice: boolean = false
     if (hasMultiple) {
-      const choice = confirm("Este gasto é parcelado. Deseja excluir TODAS as parcelas? (OK para todas, Cancelar para apenas esta)");
-      if (choice) url += "&all=true";
+      choice = confirm("Este gasto é parcelado. Deseja excluir TODAS as parcelas? (OK para todas, Cancelar para apenas esta)");
+      if (choice) url += "?all=true";
     } else {
       if (!confirm("Excluir este gasto?")) return;
     }
 
     const res = await fetch(url, { method: 'DELETE' });
     if (res.ok) {
-      onExpenseDeleted(id, hasMultiple); 
+      onExpenseDeleted(id, hasMultiple && choice); 
+    }
+  };
+
+  const handleIncomeAdded = async () => {
+    // Refetch incomes
+    const incomeResponse = await fetch('/api/income');
+    if (incomeResponse.ok) {
+      const incomeData: Income[] = await incomeResponse.json();
+      setAllIncomes(incomeData);
+      filterIncomes();
     }
   };
 
@@ -74,14 +107,25 @@ export default function DashBoard() {
       const response = await fetch('/api/expenses');
       if (response.ok) {
         const data: Expense[] = await response.json();
-        console.log(`data: ${JSON.stringify(data)}`)
+
         setAllExpenses(data);
         filterAndCalculate(data, viewMode);
+      }
+
+      const incomeResponse = await fetch('/api/income');
+      if (incomeResponse.ok) {
+        const incomeData: Income[] = await incomeResponse.json();
+        console.log(`incomeData: ${JSON.stringify(incomeData)}`)
+        setAllIncomes(incomeData);
       }
     };
     fetchData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth, viewMode]);
+
+  useEffect(() => {
+    filterIncomes();
+  }, [filterIncomes]);
 
   return (
     <div className="space-y-6">
@@ -112,7 +156,7 @@ export default function DashBoard() {
       {/* Card de Resumo Financeiro */}
       <div className={`p-6 rounded-xl border-l-4 shadow-sm bg-white transition-all ${viewMode === 'purchase' ? 'border-blue-500' : 'border-green-500'}`}>
         <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-          Total {viewMode === 'purchase' ? 'em Compras' : 'a Pagar'} (Mês Selecionado)
+          Total {viewMode === 'purchase' ? 'em Gastos' : 'a Pagar'} (Mês Selecionado)
         </p>
         <p className="text-3xl font-black mt-1 text-gray-900">
           R$ {totalThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -123,6 +167,34 @@ export default function DashBoard() {
             : "* Mostra o quanto sairá efetivamente da sua conta (faturas e débitos)."}
         </p>
       </div>
+
+      {/* Card de Receitas */}
+      <div className="p-6 rounded-xl border-l-4 border-purple-500 shadow-sm bg-white">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+          Total em Receitas (Mês Selecionado)
+        </p>
+        <p className="text-3xl font-black mt-1 text-gray-900">
+          R$ {totalIncomeThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+        </p>
+        <p className="text-[10px] text-gray-400 mt-2 italic">
+          * Receitas recebidas neste mês.
+        </p>
+      </div>
+
+      {/* Card de Poupança */}
+      {viewMode === 'payment' && (
+        <div className="p-6 rounded-xl border-l-4 border-yellow-500 shadow-sm bg-white">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+            Poupança (Mês Selecionado)
+          </p>
+          <p className={`text-3xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            R$ {(totalIncomeThisMonth - totalThisMonth).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-2 italic">
+            * Diferença entre receitas e gastos efetivos.
+          </p>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col sm:flex-row items-end gap-4">
@@ -139,7 +211,19 @@ export default function DashBoard() {
           onClick={() => setShowDetailedView(!showDetailedView)}
           className="bg-gray-800 text-white px-4 py-2 rounded text-sm font-bold hover:bg-gray-700"
         >
-          {showDetailedView ? "OCULTAR TABELA" : "VER DETALHES"}
+          {showDetailedView ? "OCULTAR GASTOS" : "VER GASTOS"}
+        </button>
+        <button 
+          onClick={() => setShowIncomeView(!showIncomeView)}
+          className="bg-purple-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-purple-700"
+        >
+          {showIncomeView ? "OCULTAR RECEITAS" : "VER RECEITAS"}
+        </button>
+        <button
+          onClick={() => setShowCharts(!showCharts)}
+          className="bg-green-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-green-700"
+        >
+          {showCharts ? "OCULTAR DETALHES" : "VER DETALHES"}
         </button>
       </div>
 
@@ -222,7 +306,54 @@ export default function DashBoard() {
             </tbody>
           </table>
           {filteredExpenses.length === 0 && (
-            <div className="p-10 text-center text-gray-400 text-sm">Nenhum registro encontrado.</div>
+            <div className="p-10 text-center text-gray-400 text-sm">Nenhum gasto encontrado.</div>
+          )}
+        </div>
+      )}
+
+      {showCharts && (
+        <ExpenseCharts allExpenses={allExpenses} viewMode={viewMode} defaultMonth={selectedMonth} onClose={() => setShowCharts(false)} />
+      )}
+
+      {showIncomeView && (
+        <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-300">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Data</th>
+                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nome</th>
+                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
+                <th className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase">Valor</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {allIncomes
+                .filter(income => {
+                  const [year, month] = selectedMonth.split('-').map(Number);
+                  const incomeDate = new Date(`${income.date}T12:00:00Z`);
+                  return incomeDate.getUTCMonth() === month - 1 && incomeDate.getUTCFullYear() === year;
+                })
+                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                .map((income) => (
+                <tr key={income._id} className="hover:bg-gray-50 transition-colors">
+                  <td className="whitespace-nowrap py-4 px-4 text-sm text-gray-600 font-medium">
+                    {new Date(`${income.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                  </td>
+                  <td className="px-3 py-4 text-sm text-gray-900 font-semibold">{income.name}</td>
+                  <td className="px-3 py-4 text-sm text-gray-600 capitalize">{income.type}</td>
+                  <td className="px-3 py-4 text-right text-sm font-black text-gray-900">
+                    R$ {income.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {allIncomes.filter(income => {
+            const [year, month] = selectedMonth.split('-').map(Number);
+            const incomeDate = new Date(`${income.date}T12:00:00Z`);
+            return incomeDate.getUTCMonth() === month - 1 && incomeDate.getUTCFullYear() === year;
+          }).length === 0 && (
+            <div className="p-10 text-center text-gray-400 text-sm">Nenhuma receita encontrada.</div>
           )}
         </div>
       )}

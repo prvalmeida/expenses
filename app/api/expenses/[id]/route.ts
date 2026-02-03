@@ -4,11 +4,12 @@ import Expense from '../../../../lib/models/Expense';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     await connectToDatabase();
-    const expense = await Expense.findById(params.id);
+    const expense = await Expense.findById(id);
     if (!expense) {
       return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
     }
@@ -38,11 +39,11 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   try {
     await connectToDatabase();
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
     const deleteAllParts = searchParams.get('all') === 'true';
 
     if (!id) return NextResponse.json({ error: 'ID is required' }, { status: 400 });

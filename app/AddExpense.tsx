@@ -94,7 +94,7 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
         expenseData = {
           ...common,
           value: expense.value === '' ? 0 : expense.value,
-          paymentType: expense.paymentType as 'cash' | 'debit' | 'pix',
+          paymentType: expense.paymentType as 'cash' | 'debit' | 'pix' | 'food-voucher' | 'meal-voucher' |'fuel-voucher',
         };
       }
 
@@ -242,6 +242,9 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
             <option value="debit">Débito</option>
             <option value="cash">PIX</option>
             <option value="other">Dinheiro</option>
+            <option value="food-voucher">Vale Alimentação</option>
+            <option value="meal-voucher">Vale Refeição</option>
+            <option value="fuel-voucher">Vale Combustível</option>
           </select>
         </div>
         {expense.paymentType === "credit" ? 
