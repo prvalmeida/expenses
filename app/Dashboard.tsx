@@ -92,13 +92,17 @@ export default function DashBoard() {
     }
   };
 
-  const handleIncomeAdded = async () => {
-    // Refetch incomes
-    const incomeResponse = await fetch('/api/income');
-    if (incomeResponse.ok) {
-      const incomeData: Income[] = await incomeResponse.json();
-      setAllIncomes(incomeData);
-      filterIncomes();
+  const onIncomeDeleted = (id: string) => {
+    setAllIncomes(prev => prev.filter(inc => inc._id !== id));
+    filterIncomes();
+  };
+
+  const handleDeleteIncome = async (id: string) => {
+    if (!confirm("Excluir esta receita?")) return;
+    
+    const res = await fetch(`/api/income/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      onIncomeDeleted(id);
     }
   };
 
@@ -324,6 +328,7 @@ export default function DashBoard() {
                 <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nome</th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
                 <th className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase">Valor</th>
+                <th className="px-3 py-3 text-center text-xs font-bold text-gray-500 uppercase">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -343,6 +348,32 @@ export default function DashBoard() {
                   <td className="px-3 py-4 text-sm text-gray-600 capitalize">{income.type}</td>
                   <td className="px-3 py-4 text-right text-sm font-black text-gray-900">
                     R$ {income.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-3 py-4 text-center">
+                    <button
+                      onClick={() => {
+                        if (income._id) {
+                          handleDeleteIncome(income._id);
+                        }
+                      }}
+                      className="text-red-400 hover:text-red-600 transition-colors p-1"
+                      title="Excluir receita"
+                    >
+                      <svg 
+                        xmlns="http://www.w3.org/2000/svg" 
+                        className="h-5 w-5" 
+                        fill="none" 
+                        viewBox="0 0 24 24" 
+                        stroke="currentColor"
+                      >
+                        <path 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          strokeWidth={2} 
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" 
+                        />
+                      </svg>
+                    </button>
                   </td>
                 </tr>
               ))}

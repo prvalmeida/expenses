@@ -24,7 +24,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   try {
     await connectToDatabase();
     const body = await request.json();
-    const { _id, ...updateData } = body;
+    const { ...updateData } = body;
 
     const updatedIncome = await Income.findByIdAndUpdate(
       id,

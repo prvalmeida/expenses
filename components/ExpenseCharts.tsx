@@ -14,7 +14,7 @@ function formatCurrency(v: number) {
   return v.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 }
 
-export default function ExpenseCharts({ allExpenses, viewMode, defaultMonth, onClose }: Props) {
+export default function ExpenseCharts({ allExpenses, viewMode, defaultMonth }: Props) {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [mode, setMode] = useState<'detail' | 'compare'>('detail');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => defaultMonth ?? (() => {
@@ -39,16 +39,6 @@ export default function ExpenseCharts({ allExpenses, viewMode, defaultMonth, onC
   const parseMonth = (ym: string) => {
     const [y, m] = ym.split('-').map(Number);
     return { y, m };
-  };
-
-  const expensesFor = (ym: string) => {
-    const { y, m } = parseMonth(ym);
-    return allExpenses.filter(e => {
-      const dateStr = viewMode === 'payment' ? e.effectiveDate : e.date;
-      if (!dateStr) return false;
-      const d = new Date(`${dateStr}T12:00:00Z`);
-      return d.getUTCFullYear() === y && d.getUTCMonth() === m - 1;
-    });
   };
 
   const expCurrent = useMemo(() => {
@@ -136,7 +126,7 @@ export default function ExpenseCharts({ allExpenses, viewMode, defaultMonth, onC
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 mb-6">
         <div className="flex bg-gray-100 rounded overflow-hidden">
           <button
             onClick={() => setMode('detail')}
@@ -152,25 +142,12 @@ export default function ExpenseCharts({ allExpenses, viewMode, defaultMonth, onC
           </button>
         </div>
 
-        {selectedType && (
-          <button
-            onClick={() => setSelectedType(null)}
-            className="text-sm px-3 py-1 bg-gray-200 rounded"
-          >
-            Voltar
-          </button>
-        )}
-
         {mode === 'compare' && (
           <div className="flex items-center gap-2">
             <input type="month" value={monthA} onChange={e => setMonthA(e.target.value)} className="p-1 border rounded" />
             <span className="text-sm">vs</span>
             <input type="month" value={monthB} onChange={e => setMonthB(e.target.value)} className="p-1 border rounded" />
           </div>
-        )}
-
-        {onClose && (
-          <button onClick={onClose} className="text-sm px-3 py-1 bg-red-100 text-red-700 rounded">FECHAR</button>
         )}
       </div>
 
@@ -279,7 +256,6 @@ export default function ExpenseCharts({ allExpenses, viewMode, defaultMonth, onC
                     const va = sa.find(x => x[0] === sub)?.[1] ?? 0;
                     const vb = sb.find(x => x[0] === sub)?.[1] ?? 0;
                     const wa = Math.round((va / maxSub) * 100);
-                    const wb = Math.round((vb / maxSub) * 100);
                     return (
                       <div key={sub} className="w-full flex items-center gap-3 p-2 rounded text-left">
                         <div className="w-36 text-sm font-medium text-gray-700">{sub}</div>
