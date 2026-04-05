@@ -249,7 +249,7 @@ export default function DashBoard() {
                 .sort((a, b) => {
                   const dateA = viewMode === 'purchase' ? a.date : a.effectiveDate;
                   const dateB = viewMode === 'purchase' ? b.date : b.effectiveDate;
-                  return new Date(dateA).getTime() - new Date(dateB).getTime();
+                  return new Date(dateB).getTime() - new Date(dateA).getTime();
                 })
                 .map((expense) => (
                 <tr key={expense._id} className="hover:bg-gray-50 transition-colors">

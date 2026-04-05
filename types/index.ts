@@ -9,13 +9,13 @@ export const ExpenseSubtypes = {
   'saúde': ['Médico', 'Nina', 'Seguro de Vida', 'Suplementos'],
   'comida': ['Restaurante', 'Cafeteria', 'Lanche', 'Pizza', 'Ração Nina', 'Assinaturas', 'Padaria', 'Confetaria', 'Chocolate', 'Outros'],
   'estética': ['Cabelereiro', 'Unha', 'Costureira', 'Outros'],
-  'esportes': ['Academia', 'Natação'],
-  'transporte': ['Gasolina', 'Uber', 'Revisão', 'Estacionamento', 'Lavagem', 'Aluguel Carro', 'Seguro'],
-  'casa': ['Luz', 'Água', 'Internet/TV', 'Condomínio', 'Financiamento casa', 'Faxina', 'Gás', 'Manutenção', 'Móveis', 'Jardim'],
-  'estudo': ['Curso', 'Colégio', 'Livro'],
+  'esportes': ['Academia', 'Natação', 'Corrida'],
+  'transporte': ['Gasolina', 'Uber', 'Revisão', 'Estacionamento', 'Lavagem', 'Aluguel Carro', 'Seguro', 'IPVA', 'Licenciamento', 'Pedágio', 'Outros'],
+  'casa': ['Luz', 'Água', 'Internet/TV', 'Condomínio', 'Financiamento casa', 'Faxina', 'Gás', 'Manutenção', 'Móveis', 'Jardim', 'IPTU'],
+  'estudo': ['Curso', 'Colégio', 'Livro', 'Outros'],
   'lazer': ['Streaming', 'Bar', 'Assinaturas', 'Outros', 'Cinema'],
-  'taxas': ['Anuidade cartão', 'Seguro Cartão', 'Proteção conta'],
-  'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café', 'Eletrônicos'],
+  'taxas': ['Anuidade cartão', 'Seguro Cartão', 'Proteção conta', 'Conta bancária'],
+  'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café', 'Eletrônicos', 'Louça'],
   'viagens': ['Passagens', 'Fidelidade CIA Aérea'],
   'assinaturas': ['Google Drive', 'Icloud', 'Microsoft', 'GaúchaZH'],
   'supermercado': [
@@ -39,7 +39,12 @@ export const ExpenseSubtypes = {
     'Verdura/Legume',
     'Outros',
     'Refrigerante',
-    'Chocolate'
+    'Chocolate',
+    'Salgadinho',
+    'Massa',
+    'Lanche',
+    'Água de coco',
+    'Azeite/Óleo'
   ],
   'feira': [
     'Fruta',
