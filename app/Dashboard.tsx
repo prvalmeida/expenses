@@ -2,6 +2,7 @@
 
 import { Expense, Income } from "@/types";
 import { useCallback, useEffect, useState } from "react";
+import EditExpenseModal from "../components/EditExpenseModal";
 import ExpenseCharts from "../components/ExpenseCharts";
 
 export default function DashBoard() {
@@ -10,6 +11,7 @@ export default function DashBoard() {
   const [totalThisMonth, setTotalThisMonth] = useState(0);
   const [showDetailedView, setShowDetailedView] = useState<boolean>(false);
   const [showIncomeView, setShowIncomeView] = useState<boolean>(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   
   // Income states
   const [allIncomes, setAllIncomes] = useState<Income[]>([]);
@@ -75,20 +77,25 @@ export default function DashBoard() {
     });
   };
 
-  const handleDelete = async (id: string, hasMultiple: boolean) => {
-    let url = `/api/expenses/${id}`;
-    
-    let choice: boolean = false
-    if (hasMultiple) {
-      choice = confirm("Este gasto é parcelado. Deseja excluir TODAS as parcelas? (OK para todas, Cancelar para apenas esta)");
-      if (choice) url += "?all=true";
-    } else {
-      if (!confirm("Excluir este gasto?")) return;
-    }
+  const handleEdit = (updated: Expense) => {
+    setAllExpenses(prev => {
+      const newExpenses = prev.map(e => e._id === updated._id ? updated : e);
+      filterAndCalculate(newExpenses, viewMode);
+      return newExpenses;
+    });
+    setEditingExpense(null);
+  };
 
+  const handleDelete = async (id: string, hasMultiple: boolean) => {
+    const message = hasMultiple
+      ? "Este gasto é parcelado. Todas as parcelas serão excluídas. Confirma?"
+      : "Excluir este gasto?";
+    if (!confirm(message)) return;
+
+    const url = hasMultiple ? `/api/expenses/${id}?all=true` : `/api/expenses/${id}`;
     const res = await fetch(url, { method: 'DELETE' });
     if (res.ok) {
-      onExpenseDeleted(id, hasMultiple && choice); 
+      onExpenseDeleted(id, hasMultiple);
     }
   };
 
@@ -278,32 +285,31 @@ export default function DashBoard() {
                     R$ {expense.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="px-3 py-4 text-center">
-                    <button
-                      onClick={() => {
-                        if (expense._id) {
-                          // Verificamos se há mais de uma parcela para decidir a lógica de exclusão
-                          const isInstallment = (expense.totalInstallments ?? 0) > 1;
-                          handleDelete(expense._id, isInstallment);
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-600 transition-colors p-1"
-                      title={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
-                    >
-                      <svg 
-                        xmlns="http://www.w3.org/2000/svg" 
-                        className="h-5 w-5" 
-                        fill="none" 
-                        viewBox="0 0 24 24" 
-                        stroke="currentColor"
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={() => setEditingExpense(expense)}
+                        className="text-blue-400 hover:text-blue-600 transition-colors p-1"
+                        title="Editar despesa"
                       >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" 
-                        />
-                      </svg>
-                    </button>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (expense._id) {
+                            const isInstallment = (expense.totalInstallments ?? 0) > 1;
+                            handleDelete(expense._id, isInstallment);
+                          }
+                        }}
+                        className="text-red-400 hover:text-red-600 transition-colors p-1"
+                        title={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -313,6 +319,14 @@ export default function DashBoard() {
             <div className="p-10 text-center text-gray-400 text-sm">Nenhum gasto encontrado.</div>
           )}
         </div>
+      )}
+
+      {editingExpense && (
+        <EditExpenseModal
+          expense={editingExpense}
+          onSave={handleEdit}
+          onClose={() => setEditingExpense(null)}
+        />
       )}
 
       {showCharts && (

@@ -19,19 +19,29 @@ export async function GET(
   }
 }
 
-export async function PUT(request: NextRequest) {
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
   try {
     await connectToDatabase();
-    const body = await request.json();
-    const { _id, ...updateData } = body;
+    const { name, value, type, subtype, paymentType, cardBrand, date, effectiveDate } = await request.json();
 
-    if (!_id) return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    const $set: Record<string, unknown> = { name, value, type, subtype, paymentType, date, effectiveDate };
+    if (paymentType === 'credit') $set.cardBrand = cardBrand;
+
+    const update = paymentType !== 'credit'
+      ? { $set, $unset: { cardBrand: '', installment: '', totalInstallments: '' } }
+      : { $set };
 
     const updatedExpense = await Expense.findByIdAndUpdate(
-      _id,
-      updateData,
-      { new: true, runValidators: true }
+      id,
+      update,
+      { new: true }
     );
+
+    if (!updatedExpense) return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
 
     return NextResponse.json(updatedExpense);
   } catch (error) {

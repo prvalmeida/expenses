@@ -6,17 +6,17 @@ export enum CardBrand {
 
 export const ExpenseSubtypes = {
   'farmácia': ['Remédio', 'Fralda', 'Leite Dudu', 'Lenços Umedecidos', 'Outros'],
-  'saúde': ['Médico', 'Nina', 'Seguro de Vida', 'Suplementos'],
-  'comida': ['Restaurante', 'Cafeteria', 'Lanche', 'Pizza', 'Ração Nina', 'Assinaturas', 'Padaria', 'Confetaria', 'Chocolate', 'Outros'],
+  'saúde': ['Médico', 'Nina', 'Seguro de Vida', 'Suplementos', 'Vacina'],
+  'comida': ['Restaurante', 'Cafeteria', 'Lanche', 'Pizza', 'Ração Nina', 'Assinaturas', 'Padaria', 'Confetaria', 'Chocolate', 'Peixaria', 'Outros'],
   'estética': ['Cabelereiro', 'Unha', 'Costureira', 'Outros'],
   'esportes': ['Academia', 'Natação', 'Corrida'],
   'transporte': ['Gasolina', 'Uber', 'Revisão', 'Estacionamento', 'Lavagem', 'Aluguel Carro', 'Seguro', 'IPVA', 'Licenciamento', 'Pedágio', 'Outros'],
   'casa': ['Luz', 'Água', 'Internet/TV', 'Condomínio', 'Financiamento casa', 'Faxina', 'Gás', 'Manutenção', 'Móveis', 'Jardim', 'IPTU'],
-  'estudo': ['Curso', 'Colégio', 'Livro', 'Outros'],
+  'estudo': ['Curso', 'Colégio', 'Livro', 'Outros', 'IA'],
   'lazer': ['Streaming', 'Bar', 'Assinaturas', 'Outros', 'Cinema'],
   'taxas': ['Anuidade cartão', 'Seguro Cartão', 'Proteção conta', 'Conta bancária'],
   'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café', 'Eletrônicos', 'Louça'],
-  'viagens': ['Passagens', 'Fidelidade CIA Aérea'],
+  'viagens': ['Passagens', 'Fidelidade CIA Aérea', 'Hotel'],
   'assinaturas': ['Google Drive', 'Icloud', 'Microsoft', 'GaúchaZH'],
   'supermercado': [
     'Limpeza',
@@ -52,7 +52,8 @@ export const ExpenseSubtypes = {
     'Castanha',
     'Pão',
     'Outros'
-  ]
+  ],
+  'trabalho': ['assinaturas', 'serviços']
 } as const;
 
 // Helper to get the union of all possible subtypes
