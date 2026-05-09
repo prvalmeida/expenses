@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import ExpenseTypeSelect from '../components/ExpenseTypeSelect';
+import { addMonthsClamped } from '../lib/utils/dateUtils';
 import { CardBrand, Expense, ExpenseForm, ExpenseSubtypes, Subtype } from '../types';
 
 export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => void }) {
@@ -25,8 +26,7 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
 
     // For each installment, create an expense object and add to the array of expenses
     for (let i = 1; i <= iterations; i++) {
-      const purchaseDate = new Date(`${expense.date}T12:00:00Z`);
-      purchaseDate.setUTCMonth(purchaseDate.getUTCMonth() + (i - 1));
+      const purchaseDate = addMonthsClamped(expense.date, i - 1);
       const dateString = purchaseDate.toISOString().split('T')[0];
 
       let effectiveDateString = dateString;
@@ -48,9 +48,7 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
         // Comparison using strings is safe for YYYY-MM-DD
         if (dateString > closingDateStr) {         
           // Move to NEXT month
-          const nextMonthDate = new Date(purchaseDate);
-          nextMonthDate.setUTCMonth(nextMonthDate.getUTCMonth() + 1);
-          
+          const nextMonthDate = addMonthsClamped(dateString, 1);
           const nMonth = nextMonthDate.getUTCMonth() + 1;
           const nYear = nextMonthDate.getUTCFullYear();
 

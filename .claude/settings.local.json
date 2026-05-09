@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Read(//mnt/e/projects/**)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(not exist *)",
+      "Bash(npx tsc *)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit)"
     ]
   }
 }
