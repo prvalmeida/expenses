@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../../lib/mongodb';
 import Expense from '../../../../lib/models/Expense';
+import { addMonthsClamped } from '../../../../lib/utils/dateUtils';
+import { getCycle } from '../../../../lib/utils/cycleUtils';
 
 export async function GET(
   request: NextRequest,
@@ -26,7 +28,20 @@ export async function PUT(
   const { id } = await params;
   try {
     await connectToDatabase();
-    const { name, value, type, subtype, paymentType, cardBrand, date, effectiveDate } = await request.json();
+    const { name, value, type, subtype, paymentType, cardBrand, date, effectiveDate: clientEffectiveDate } = await request.json();
+
+    let effectiveDate = clientEffectiveDate;
+    if (paymentType === 'credit' && cardBrand && date) {
+      const [year, month] = date.split('-').map(Number);
+      const cycle = await getCycle(cardBrand, month, year);
+      if (date > cycle.closingDate) {
+        const nextMonthDate = addMonthsClamped(date, 1);
+        const nextCycle = await getCycle(cardBrand, nextMonthDate.getUTCMonth() + 1, nextMonthDate.getUTCFullYear());
+        effectiveDate = nextCycle.dueDate;
+      } else {
+        effectiveDate = cycle.dueDate;
+      }
+    }
 
     const $set: Record<string, unknown> = { name, value, type, subtype, paymentType, date, effectiveDate };
     if (paymentType === 'credit') $set.cardBrand = cardBrand;

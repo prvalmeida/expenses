@@ -94,7 +94,7 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
             paymentType: form.paymentType,
             cardBrand: form.cardBrand,
             date: form.date,
-            effectiveDate: form.effectiveDate,
+            ...(form.paymentType !== 'credit' && { effectiveDate: form.effectiveDate }),
           }),
         });
         if (res.ok) {
@@ -227,7 +227,7 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
                 required
               />
             </div>
-            {!isInstallment && (
+            {form.paymentType !== 'credit' && (
               <div>
                 <label className="block text-sm font-medium mb-1">Data Efetiva</label>
                 <input
