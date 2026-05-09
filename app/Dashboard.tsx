@@ -12,6 +12,7 @@ export default function DashBoard() {
   const [showDetailedView, setShowDetailedView] = useState<boolean>(false);
   const [showIncomeView, setShowIncomeView] = useState<boolean>(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [editingOriginalDate, setEditingOriginalDate] = useState<string | undefined>();
   
   // Income states
   const [allIncomes, setAllIncomes] = useState<Income[]>([]);
@@ -77,13 +78,22 @@ export default function DashBoard() {
     });
   };
 
-  const handleEdit = (updated: Expense) => {
+  const handleEdit = (updated: Expense | Expense[]) => {
     setAllExpenses(prev => {
-      const newExpenses = prev.map(e => e._id === updated._id ? updated : e);
+      let newExpenses: Expense[];
+      if (Array.isArray(updated)) {
+        const tid = updated[0]?.transactionId;
+        newExpenses = tid
+          ? [...prev.filter(e => e.transactionId !== tid), ...updated]
+          : [...prev, ...updated];
+      } else {
+        newExpenses = prev.map(e => e._id === updated._id ? updated : e);
+      }
       filterAndCalculate(newExpenses, viewMode);
       return newExpenses;
     });
     setEditingExpense(null);
+    setEditingOriginalDate(undefined);
   };
 
   const handleDelete = async (id: string, hasMultiple: boolean) => {
@@ -287,7 +297,21 @@ export default function DashBoard() {
                   <td className="px-3 py-4 text-center">
                     <div className="flex items-center justify-center gap-1">
                       <button
-                        onClick={() => setEditingExpense(expense)}
+                        onClick={() => {
+                          setEditingExpense(expense);
+                          if (expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1 && expense.transactionId) {
+                            const first = allExpenses
+                              .filter(e => e.transactionId === expense.transactionId)
+                              .sort((a, b) => {
+                                const aI = a.paymentType === 'credit' ? a.installment : 0;
+                                const bI = b.paymentType === 'credit' ? b.installment : 0;
+                                return aI - bI;
+                              })[0];
+                            setEditingOriginalDate(first?.date);
+                          } else {
+                            setEditingOriginalDate(undefined);
+                          }
+                        }}
                         className="text-blue-400 hover:text-blue-600 transition-colors p-1"
                         title="Editar despesa"
                       >
@@ -324,8 +348,12 @@ export default function DashBoard() {
       {editingExpense && (
         <EditExpenseModal
           expense={editingExpense}
+          originalDate={editingOriginalDate}
           onSave={handleEdit}
-          onClose={() => setEditingExpense(null)}
+          onClose={() => {
+            setEditingExpense(null);
+            setEditingOriginalDate(undefined);
+          }}
         />
       )}
 

@@ -9,25 +9,28 @@ type EditForm = ExpenseForm & { effectiveDate: string };
 
 interface Props {
   expense: Expense;
-  onSave: (updated: Expense) => void;
+  originalDate?: string;
+  onSave: (updated: Expense | Expense[]) => void;
   onClose: () => void;
 }
 
-export default function EditExpenseModal({ expense, onSave, onClose }: Props) {
+export default function EditExpenseModal({ expense, originalDate, onSave, onClose }: Props) {
+  const isInstallment = expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1;
+
   const [form, setForm] = useState<EditForm>({
     name: expense.name,
-    value: expense.value,
+    value: isInstallment
+      ? Math.round(expense.value * (expense.totalInstallments ?? 1) * 100) / 100
+      : expense.value,
     type: expense.type,
     subtype: expense.subtype ?? '',
     paymentType: expense.paymentType,
     cardBrand: expense.paymentType === 'credit' ? expense.cardBrand : undefined,
-    date: expense.date,
+    date: isInstallment ? (originalDate ?? expense.date) : expense.date,
     installments: expense.paymentType === 'credit' ? expense.totalInstallments : undefined,
     effectiveDate: expense.effectiveDate,
   });
   const [saving, setSaving] = useState(false);
-
-  const isInstallment = expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -35,6 +38,8 @@ export default function EditExpenseModal({ expense, onSave, onClose }: Props) {
       switch (name) {
         case 'value':
           return { ...prev, value: value === '' ? '' : parseFloat(value) };
+        case 'installments':
+          return { ...prev, installments: value === '' ? undefined : parseInt(value) };
         case 'type':
           return { ...prev, type: value as keyof typeof ExpenseSubtypes | '', subtype: '' };
         case 'paymentType':
@@ -55,26 +60,49 @@ export default function EditExpenseModal({ expense, onSave, onClose }: Props) {
     }
     setSaving(true);
     try {
-      const res = await fetch(`/api/expenses/${expense._id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: form.name,
-          value: form.value === '' ? 0 : form.value,
-          type: form.type,
-          subtype: form.subtype,
-          paymentType: form.paymentType,
-          cardBrand: form.cardBrand,
-          date: form.date,
-          effectiveDate: form.effectiveDate,
-        }),
-      });
-
-      if (res.ok) {
-        const updated: Expense = await res.json();
-        onSave(updated);
+      if (isInstallment) {
+        const res = await fetch('/api/expenses/installment-group', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transactionId: expense.transactionId,
+            totalValue: form.value === '' ? 0 : form.value,
+            installmentCount: form.installments ?? 1,
+            originalDate: form.date,
+            name: form.name,
+            type: form.type,
+            subtype: form.subtype,
+            paymentType: form.paymentType,
+            cardBrand: form.cardBrand,
+          }),
+        });
+        if (res.ok) {
+          const updated: Expense[] = await res.json();
+          onSave(updated);
+        } else {
+          alert(`Erro ao atualizar parcelas: ${res.statusText}`);
+        }
       } else {
-        alert(`Erro ao atualizar o gasto: ${res.statusText}`);
+        const res = await fetch(`/api/expenses/${expense._id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: form.name,
+            value: form.value === '' ? 0 : form.value,
+            type: form.type,
+            subtype: form.subtype,
+            paymentType: form.paymentType,
+            cardBrand: form.cardBrand,
+            date: form.date,
+            effectiveDate: form.effectiveDate,
+          }),
+        });
+        if (res.ok) {
+          const updated: Expense = await res.json();
+          onSave(updated);
+        } else {
+          alert(`Erro ao atualizar o gasto: ${res.statusText}`);
+        }
       }
     } finally {
       setSaving(false);
@@ -96,31 +124,69 @@ export default function EditExpenseModal({ expense, onSave, onClose }: Props) {
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
           </div>
           {isInstallment && (
-            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
-              Esta edição afeta apenas esta parcela ({expense.installment}/{expense.totalInstallments}).
+            <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-2 mb-4">
+              Edição do grupo completo ({expense.totalInstallments}x). Valor e data afetam todas as parcelas.
             </p>
           )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1">Nome</label>
-              <input type="text" name="name" value={form.name} onChange={handleChange} className="w-full p-2 border rounded" required />
+              <input
+                type="text"
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                className="w-full p-2 border rounded"
+                required
+              />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Valor</label>
+              <label className="block text-sm font-medium mb-1">
+                {isInstallment ? 'Valor Total' : 'Valor'}
+              </label>
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                   <span className="text-gray-500">R$</span>
                 </div>
-                <input type="number" name="value" value={form.value} onChange={handleChange} className="w-full p-2 pl-10 border rounded" min="0" step="0.01" required />
+                <input
+                  type="number"
+                  name="value"
+                  value={form.value}
+                  onChange={handleChange}
+                  className="w-full p-2 pl-10 border rounded"
+                  min="0"
+                  step="0.01"
+                  required
+                />
               </div>
             </div>
+            {isInstallment && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Número de Parcelas</label>
+                <input
+                  type="number"
+                  name="installments"
+                  value={form.installments ?? ''}
+                  onChange={handleChange}
+                  className="w-full p-2 border rounded"
+                  min="1"
+                  required
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium mb-1">Tipo</label>
               <ExpenseTypeSelect expense={form} onChange={handleChange} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Tipo de Pagamento</label>
-              <select name="paymentType" value={form.paymentType} onChange={handleChange} className="w-full p-2 border rounded" required>
+              <select
+                name="paymentType"
+                value={form.paymentType}
+                onChange={handleChange}
+                className="w-full p-2 border rounded"
+                required
+              >
                 <option value="">Selecione o tipo de pagamento</option>
                 <option value="credit">Crédito</option>
                 <option value="debit">Débito</option>
@@ -134,7 +200,13 @@ export default function EditExpenseModal({ expense, onSave, onClose }: Props) {
             {form.paymentType === 'credit' && (
               <div>
                 <label className="block text-sm font-medium mb-1">Cartão Utilizado</label>
-                <select name="cardBrand" value={form.cardBrand ?? ''} onChange={handleChange} className="w-full p-2 border rounded" required>
+                <select
+                  name="cardBrand"
+                  value={form.cardBrand ?? ''}
+                  onChange={handleChange}
+                  className="w-full p-2 border rounded"
+                  required
+                >
                   <option value="">Selecione o cartão</option>
                   {Object.entries(CardBrand).map(([key, value]) => (
                     <option key={key} value={value}>{value}</option>
@@ -143,15 +215,37 @@ export default function EditExpenseModal({ expense, onSave, onClose }: Props) {
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium mb-1">Data da Compra</label>
-              <input type="date" name="date" value={form.date} onChange={handleChange} className="w-full p-2 border rounded" required />
+              <label className="block text-sm font-medium mb-1">
+                {isInstallment ? 'Data Inicial' : 'Data da Compra'}
+              </label>
+              <input
+                type="date"
+                name="date"
+                value={form.date}
+                onChange={handleChange}
+                className="w-full p-2 border rounded"
+                required
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Data Efetiva</label>
-              <input type="date" name="effectiveDate" value={form.effectiveDate} onChange={handleChange} className="w-full p-2 border rounded" required />
-            </div>
+            {!isInstallment && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Data Efetiva</label>
+                <input
+                  type="date"
+                  name="effectiveDate"
+                  value={form.effectiveDate}
+                  onChange={handleChange}
+                  className="w-full p-2 border rounded"
+                  required
+                />
+              </div>
+            )}
             <div className="flex gap-3 pt-2">
-              <button type="button" onClick={onClose} className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+              >
                 Cancelar
               </button>
               <button
