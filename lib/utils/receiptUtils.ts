@@ -141,7 +141,7 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
 
     return {
       description: item.description,
-      value: item.value,
+      value: itemValue,
       type: null,
       subtype: null,
       recognized: false,
