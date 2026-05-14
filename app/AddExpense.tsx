@@ -5,6 +5,13 @@ import ExpenseTypeSelect from '../components/ExpenseTypeSelect';
 import { addMonthsClamped } from '../lib/utils/dateUtils';
 import { CardBrand, Expense, ExpenseForm, ExpenseSubtypes, Subtype } from '../types';
 
+function randomUUID(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c =>
+    (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))).toString(16)
+  );
+}
+
 export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => void }) {
   const [expense, setExpense] = useState<ExpenseForm>({
     name: '',
@@ -22,7 +29,7 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
     const iterations = isCredit ? (expense.installments ?? 1) : 1;
     const expenses: Expense[] = [];
 
-    const transactionId = crypto.randomUUID();
+    const transactionId = randomUUID();
 
     // For each installment, create an expense object and add to the array of expenses
     for (let i = 1; i <= iterations; i++) {
