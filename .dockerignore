@@ -1,0 +1,12 @@
+.next
+node_modules
+dist
+build
+.git
+*.log
+.env
+.DS_Store
+.vscode
+.idea
+coverage
+npm-debug.log
