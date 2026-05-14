@@ -71,7 +71,12 @@ export default function CardConfigPage() {
     });
 
     if (response.ok) {
-      alert(`${brand} atualizado com sucesso!`);
+      const data = await response.json();
+      const recalculated: number = data.updatedExpenses ?? 0;
+      const message = recalculated > 0
+        ? `${brand} atualizado. ${recalculated} despesa(s) com data efetiva recalculada.`
+        : `${brand} atualizado com sucesso!`;
+      alert(message);
     }
   };
 

@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server';
 import { CardCycle } from '../../../lib/models/CardCycle';
-import { CardBrand } from '@/types';
-
-// Default settings if no specific month is configured
-const DEFAULT_SETTINGS: Record<string, { closingDay: number; dueDay: number }> = {
-  [CardBrand.MasterSantander]: { closingDay: 20, dueDay: 25 },
-  [CardBrand.Visa]: { closingDay: 15, dueDay: 25 },
-  [CardBrand.EloCaixa]: { closingDay: 15, dueDay: 25 },
-};
+import Expense from '../../../lib/models/Expense';
+import connectToDatabase from '../../../lib/mongodb';
+import { DEFAULT_SETTINGS, computeEffectiveDate } from '../../../lib/utils/cycleUtils';
 
 export async function GET(request: Request) {
+  await connectToDatabase();
   const { searchParams } = new URL(request.url);
   const brand = searchParams.get('brand');
   const month = parseInt(searchParams.get('month') || '');
@@ -47,15 +43,44 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  await connectToDatabase();
   const body = await request.json();
   const { cardBrand, month, year, closingDate, dueDate } = body;
 
-  // Update or Create (Upsert)
   const config = await CardCycle.findOneAndUpdate(
     { cardBrand, month, year },
     { closingDate, dueDate },
     { upsert: true, new: true }
   );
 
-  return NextResponse.json(config);
+  // Recalculate effectiveDate for all credit expenses of this card whose
+  // purchase date falls in the cycle's month or the preceding month (purchases
+  // after the closing date of the previous month land in this cycle).
+  const monthStart = new Date(Date.UTC(year, month - 2, 1)).toISOString().split('T')[0];
+  const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().split('T')[0];
+
+  const affectedExpenses = await Expense.find({
+    paymentType: 'credit',
+    cardBrand,
+    date: { $gte: monthStart, $lte: monthEnd },
+  });
+
+  const bulkOps: Parameters<typeof Expense.bulkWrite>[0] = [];
+  for (const expense of affectedExpenses) {
+    const newEffectiveDate = await computeEffectiveDate(expense.date, cardBrand, 'credit');
+    if (newEffectiveDate !== expense.effectiveDate) {
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: expense._id },
+          update: { $set: { effectiveDate: newEffectiveDate } },
+        },
+      });
+    }
+  }
+
+  if (bulkOps.length > 0) {
+    await Expense.bulkWrite(bulkOps);
+  }
+
+  return NextResponse.json({ config, updatedExpenses: bulkOps.length });
 }

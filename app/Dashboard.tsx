@@ -1,6 +1,6 @@
 'use client';
 
-import { Expense, Income } from "@/types";
+import { Expense, ExpenseSubtypes, Income } from "@/types";
 import { useCallback, useEffect, useState } from "react";
 import EditExpenseModal from "../components/EditExpenseModal";
 import ExpenseCharts from "../components/ExpenseCharts";
@@ -26,6 +26,10 @@ export default function DashBoard() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+
+  const [sortColumn, setSortColumn] = useState<'date' | 'name' | 'type' | 'value'>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [typeFilter, setTypeFilter] = useState('');
 
   const filterAndCalculate = useCallback((expenses: Expense[], mode: 'purchase' | 'payment') => {
     const [year, month] = selectedMonth.split('-').map(Number);
@@ -59,6 +63,15 @@ export default function DashBoard() {
 
     setTotalIncomeThisMonth(filtered.reduce((sum, inc) => sum + inc.value, 0));
   }, [selectedMonth, allIncomes]);
+
+  const handleSort = (column: 'date' | 'name' | 'type' | 'value') => {
+    if (column === sortColumn) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection(column === 'date' ? 'desc' : 'asc');
+    }
+  };
 
   const onExpenseDeleted = (id: string, deleteAll: boolean) => {
     setAllExpenses(prev => {
@@ -250,23 +263,63 @@ export default function DashBoard() {
 
       {showDetailedView && (
         <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3">
+            <label className="text-xs font-bold text-gray-700 uppercase whitespace-nowrap">Filtrar por Categoria</label>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+            >
+              <option value="">Todos os Tipos</option>
+              {Object.keys(ExpenseSubtypes).sort().map((type) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </div>
           <table className="min-w-full divide-y divide-gray-300">
             <thead className="bg-gray-50">
               <tr>
-                <th className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Data</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nome</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Categoria</th>
+                <th
+                  className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
+                  onClick={() => handleSort('date')}
+                >
+                  Data {sortColumn === 'date' && (sortDirection === 'asc' ? '▲' : '▼')}
+                </th>
+                <th
+                  className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
+                  onClick={() => handleSort('name')}
+                >
+                  Nome {sortColumn === 'name' && (sortDirection === 'asc' ? '▲' : '▼')}
+                </th>
+                <th
+                  className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
+                  onClick={() => handleSort('type')}
+                >
+                  Categoria {sortColumn === 'type' && (sortDirection === 'asc' ? '▲' : '▼')}
+                </th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Pagamento</th>
-                <th className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase">Valor</th>
+                <th
+                  className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
+                  onClick={() => handleSort('value')}
+                >
+                  Valor {sortColumn === 'value' && (sortDirection === 'asc' ? '▲' : '▼')}
+                </th>
                 <th className="px-3 py-3 text-center text-xs font-bold text-gray-500 uppercase">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredExpenses
+                .filter((expense) => typeFilter === '' || expense.type === typeFilter)
                 .sort((a, b) => {
-                  const dateA = viewMode === 'purchase' ? a.date : a.effectiveDate;
-                  const dateB = viewMode === 'purchase' ? b.date : b.effectiveDate;
-                  return new Date(dateB).getTime() - new Date(dateA).getTime();
+                  const dir = sortDirection === 'asc' ? 1 : -1;
+                  if (sortColumn === 'date') {
+                    const dateA = viewMode === 'purchase' ? a.date : a.effectiveDate;
+                    const dateB = viewMode === 'purchase' ? b.date : b.effectiveDate;
+                    return (dateA < dateB ? -1 : dateA > dateB ? 1 : 0) * dir;
+                  }
+                  if (sortColumn === 'name') return a.name.localeCompare(b.name) * dir;
+                  if (sortColumn === 'type') return a.type.localeCompare(b.type) * dir;
+                  return (a.value - b.value) * dir;
                 })
                 .map((expense) => (
                 <tr key={expense._id} className="hover:bg-gray-50 transition-colors">

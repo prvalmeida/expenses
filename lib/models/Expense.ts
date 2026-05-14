@@ -43,7 +43,9 @@ const ExpenseSchema = new mongoose.Schema({
     transactionId: { type: String, required: false },
     installment: { type: Number, required: false },
     totalInstallments: {type: Number, required: false},
-    cardBrand: {type: String, enum: Object.values(CardBrand), required: false}
+    cardBrand: {type: String, enum: Object.values(CardBrand), required: false},
+    qty: { type: Number, required: false },
+    unit: { type: String, required: false }
   },
   { 
     strict: true // This ensures only schema fields are saved

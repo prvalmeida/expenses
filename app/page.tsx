@@ -4,17 +4,22 @@ import { useCallback, useState } from 'react';
 import AddExpense from './AddExpense';
 import AddIncome from './AddIncome';
 import DashBoard from './Dashboard';
-import CardConfigPage from './CardConfig'; // Import your new component
+import CardConfigPage from './CardConfig';
+import ImportReceipt from './ImportReceipt';
 
 export default function MainPage() {
   // 1. Update the type to include 'cardConfig'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'addIncome' | 'cardConfig'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'addIncome' | 'cardConfig' | 'importReceipt'>('dashboard');
 
   const handleExpenseAdded = useCallback(() => {
     setCurrentView('dashboard');
   }, []);
 
   const handleIncomeAdded = useCallback(() => {
+    setCurrentView('dashboard');
+  }, []);
+
+  const handleImported = useCallback(() => {
     setCurrentView('dashboard');
   }, []);
 
@@ -54,7 +59,6 @@ export default function MainPage() {
 
           <hr className="border-gray-400 my-4" />
 
-          {/* 2. New Sidebar Button */}
           <button
             onClick={() => setCurrentView('cardConfig')}
             className={`w-full text-left p-2 rounded transition-colors ${
@@ -62,6 +66,15 @@ export default function MainPage() {
             }`}
           >
             💳 Fechamento Cartão
+          </button>
+
+          <button
+            onClick={() => setCurrentView('importReceipt')}
+            className={`w-full text-left p-2 rounded transition-colors ${
+              currentView === 'importReceipt' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+            }`}
+          >
+            📄 Importar NF
           </button>
         </nav>
       </div>
@@ -81,6 +94,10 @@ export default function MainPage() {
         
         {currentView === 'cardConfig' && (
           <CardConfigPage />
+        )}
+
+        {currentView === 'importReceipt' && (
+          <ImportReceipt onImported={handleImported} />
         )}
       </div>
     </div>

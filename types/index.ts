@@ -44,7 +44,32 @@ export const ExpenseSubtypes = {
     'Massa',
     'Lanche',
     'Água de coco',
-    'Azeite/Óleo'
+    'Azeite/Óleo',
+    'Barrinha',
+    'Biscoito',
+    'Guardanapo',
+    'Vinho',
+    'Biscoito de arroz',
+    'Arroz',
+    'Maionese/Mostarda/Ketchup',
+    'Creme de Leite',
+    'Conservas',
+    'Molho de Tomate',
+    'Farinha',
+    'Batata Palha',
+    'Leite Condensado',
+    'Fralda',
+    'Nina',
+    'Peixe',
+    'Chiclete/Bala',
+    'Feijão',
+    'Mariola',
+    'Batata Frita',
+    'Fermento',
+    'Açúcar',
+    'Papel alumínio/Papel filme',
+    'Carvão',
+    'Geleia'
   ],
   'feira': [
     'Fruta',
@@ -115,3 +140,23 @@ export type IncomeForm = {
   type: IncomeType | '';
   date: string;
 }
+
+export type ParsedReceiptItem = {
+  description: string;
+  value: number;
+  unitPrice?: number;
+  type: keyof typeof ExpenseSubtypes | null;
+  subtype: string | null;
+  recognized: boolean;
+  qty?: number;
+  unit?: string;
+};
+
+export type ConfirmedReceiptItem = {
+  description: string;
+  value: number;
+  type: keyof typeof ExpenseSubtypes;
+  subtype?: string;
+  qty?: number;
+  unit?: string;
+};
