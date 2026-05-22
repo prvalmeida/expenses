@@ -6,10 +6,11 @@ import AddIncome from './AddIncome';
 import DashBoard from './Dashboard';
 import CardConfigPage from './CardConfig';
 import ImportReceipt from './ImportReceipt';
+import ImportBill from './ImportBill';
 
 export default function MainPage() {
   // 1. Update the type to include 'cardConfig'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'addIncome' | 'cardConfig' | 'importReceipt'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'addIncome' | 'cardConfig' | 'importReceipt' | 'importBill'>('dashboard');
 
   const handleExpenseAdded = useCallback(() => {
     setCurrentView('dashboard');
@@ -76,6 +77,15 @@ export default function MainPage() {
           >
             📄 Importar NF
           </button>
+
+          <button
+            onClick={() => setCurrentView('importBill')}
+            className={`w-full text-left p-2 rounded transition-colors ${
+              currentView === 'importBill' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+            }`}
+          >
+            💳 Importar Fatura
+          </button>
         </nav>
       </div>
 
@@ -98,6 +108,10 @@ export default function MainPage() {
 
         {currentView === 'importReceipt' && (
           <ImportReceipt onImported={handleImported} />
+        )}
+
+        {currentView === 'importBill' && (
+          <ImportBill onDone={() => setCurrentView('dashboard')} />
         )}
       </div>
     </div>

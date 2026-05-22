@@ -24,6 +24,7 @@ Requires a `.env.local` file with:
 ```
 MONGODB_URI=<your MongoDB connection string>
 OPENAI_API_KEY=<OpenAI API key — required for receipt parsing>
+PDF_KEY=<CPF do titular, somente números>
 ```
 
 ## Architecture

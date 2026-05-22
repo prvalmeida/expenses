@@ -10,7 +10,13 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(npm install *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(python -c ' *)",
+      "Bash(node *)",
+      "Bash(python *)",
+      "Bash(dir /s /b E:\\\\projects\\\\expenses)",
+      "Bash(findstr /E \"\\\\.ts$ \\\\.tsx$ \\\\.js$\")",
+      "Bash(findstr /V node_modules)"
     ]
   }
 }

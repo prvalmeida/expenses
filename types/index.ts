@@ -15,7 +15,7 @@ export const ExpenseSubtypes = {
   'estudo': ['Curso', 'Colégio', 'Livro', 'Outros', 'IA'],
   'lazer': ['Streaming', 'Bar', 'Assinaturas', 'Outros', 'Cinema'],
   'taxas': ['Anuidade cartão', 'Seguro Cartão', 'Proteção conta', 'Conta bancária'],
-  'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café', 'Eletrônicos', 'Louça'],
+  'compras': ['Roupas', 'Outros', 'Brinquedos', 'Cosméticos', 'Jóias', 'Café', 'Eletrônicos', 'Louça', 'Presente'],
   'viagens': ['Passagens', 'Fidelidade CIA Aérea', 'Hotel'],
   'assinaturas': ['Google Drive', 'Icloud', 'Microsoft', 'GaúchaZH'],
   'supermercado': [
@@ -159,4 +159,24 @@ export type ConfirmedReceiptItem = {
   subtype?: string;
   qty?: number;
   unit?: string;
+};
+
+export type ParsedBillItem = {
+  date: string;
+  description: string;
+  value: number;
+  installmentCurrent?: number;
+  installmentTotal?: number;
+  type: keyof typeof ExpenseSubtypes | null;
+  subtype: string | null;
+};
+
+export type ConfirmedBillItem = {
+  date: string;
+  description: string;
+  value: number;
+  installmentCurrent?: number;
+  installmentTotal?: number;
+  type: keyof typeof ExpenseSubtypes | null;
+  subtype: string | null;
 };
