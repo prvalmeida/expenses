@@ -1,7 +1,7 @@
 import connectToDatabase from '../mongodb';
 import { Store } from '../models/Store';
 import { ProductMapping } from '../models/ProductMapping';
-import openai from '../openai';
+import getOpenAI from '../openai';
 import { ExpenseSubtypes, ParsedReceiptItem } from '@/types';
 
 const SUPERMERCADO_SUBTYPES = [...ExpenseSubtypes['supermercado']].join(', ');
@@ -47,7 +47,7 @@ export type ParseResponse = {
 };
 
 export async function interpretAndCrossReference(rawText: string): Promise<ParseResponse> {
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: 'gpt-4o-mini',
     response_format: { type: 'json_object' },
     messages: [

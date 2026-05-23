@@ -1,4 +1,4 @@
-import openai from '../openai';
+import getOpenAI from '../openai';
 import { CardBrand, ExpenseSubtypes, ParsedBillItem } from '@/types';
 
 const EXPENSE_TYPES = Object.keys(ExpenseSubtypes).join(', ');
@@ -272,7 +272,7 @@ async function classifyTransactions(transactions: PreprocessedTransaction[]): Pr
 
   const payload = transactions.map(t => ({ description: t.description, value: t.value }));
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: 'gpt-5-nano',
     response_format: { type: 'json_object' },
     messages: [
@@ -332,7 +332,7 @@ IMPORTANTE:
 // ─── Legacy path (GPT extraction for unknown banks) ───────────────────────────
 
 async function parseBillTextLegacy(rawText: string): Promise<ParsedBillItem[]> {
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: 'gpt-5-nano',
     response_format: { type: 'json_object' },
     messages: [
