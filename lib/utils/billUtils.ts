@@ -1,5 +1,7 @@
 import getOpenAI from '../openai';
 import { CardBrand, ExpenseSubtypes, ParsedBillItem } from '@/types';
+import connectToDatabase from '../mongodb';
+import { BillMapping } from '../models/BillMapping';
 
 const EXPENSE_TYPES = Object.keys(ExpenseSubtypes).join(', ');
 
@@ -325,6 +327,7 @@ IMPORTANTE:
       ...(tx.installmentTotal !== undefined && { installmentTotal: tx.installmentTotal }),
       type: resolvedType,
       subtype: resolvedSubtype,
+      recognized: false,
     };
   });
 }
@@ -410,6 +413,7 @@ Parte C — Contexto por banco (dicas de layout, não filtros):
         ...(item.installmentTotal !== undefined && { installmentTotal: item.installmentTotal }),
         type: resolvedType,
         subtype: resolvedSubtype,
+        recognized: false,
       };
     });
 }
@@ -442,22 +446,39 @@ export function extractClosingDate(rawText: string, cardBrand: CardBrand): strin
   return null;
 }
 
+// ─── BillMapping cross-reference ─────────────────────────────────────────────
+
+async function crossReferenceBillMappings(items: ParsedBillItem[]): Promise<ParsedBillItem[]> {
+  if (items.length === 0) return items;
+  await connectToDatabase();
+  const normalizedDescriptions = items.map(i => i.description.toLowerCase().trim());
+  const mappings = await BillMapping.find({ description: { $in: normalizedDescriptions } });
+  const mappingMap = new Map(mappings.map(m => [m.description, { type: m.type, subtype: m.subtype as string | null }]));
+  return items.map(item => {
+    const saved = mappingMap.get(item.description.toLowerCase().trim());
+    if (!saved) return item;
+    return { ...item, type: saved.type as keyof typeof ExpenseSubtypes, subtype: saved.subtype, recognized: true };
+  });
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function parseBillText(rawText: string, cardBrand?: CardBrand): Promise<ParsedBillItem[]> {
+  let items: ParsedBillItem[];
+
   if (cardBrand === CardBrand.MasterSantander) {
     console.log('[parseBillText] Santander — extracting deterministically');
     const transactions = preprocessSantanderText(rawText);
     console.log(`[parseBillText] Santander — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
-    return classifyTransactions(transactions);
-  }
-
-  if (cardBrand === CardBrand.Visa || cardBrand === CardBrand.EloCaixa) {
+    items = await classifyTransactions(transactions);
+  } else if (cardBrand === CardBrand.Visa || cardBrand === CardBrand.EloCaixa) {
     console.log('[parseBillText] Caixa — extracting deterministically');
     const transactions = preprocessCaixaText(rawText);
     console.log(`[parseBillText] Caixa — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
-    return classifyTransactions(transactions);
+    items = await classifyTransactions(transactions);
+  } else {
+    items = await parseBillTextLegacy(rawText);
   }
 
-  return parseBillTextLegacy(rawText);
+  return crossReferenceBillMappings(items);
 }

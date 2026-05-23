@@ -1,7 +1,7 @@
 'use client';
 
 import { Expense, ExpenseSubtypes, Income } from "@/types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import EditExpenseModal from "../components/EditExpenseModal";
 import ExpenseCharts from "../components/ExpenseCharts";
 
@@ -27,9 +27,11 @@ export default function DashBoard() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const [sortColumn, setSortColumn] = useState<'date' | 'name' | 'type' | 'value'>('date');
+  const [sortColumn, setSortColumn] = useState<'date' | 'name' | 'type' | 'value' | 'paymentType'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [typeFilter, setTypeFilter] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const filterAndCalculate = useCallback((expenses: Expense[], mode: 'purchase' | 'payment') => {
     const [year, month] = selectedMonth.split('-').map(Number);
@@ -64,12 +66,46 @@ export default function DashBoard() {
     setTotalIncomeThisMonth(filtered.reduce((sum, inc) => sum + inc.value, 0));
   }, [selectedMonth, allIncomes]);
 
-  const handleSort = (column: 'date' | 'name' | 'type' | 'value') => {
+  const handleSort = (column: 'date' | 'name' | 'type' | 'value' | 'paymentType') => {
     if (column === sortColumn) {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortColumn(column);
       setSortDirection(column === 'date' ? 'desc' : 'asc');
+    }
+  };
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [selectedMonth, typeFilter]);
+
+  useEffect(() => {
+    const visible = filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter);
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate =
+        selectedIds.size > 0 && selectedIds.size < visible.length;
+    }
+  }, [selectedIds, filteredExpenses, typeFilter]);
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    const n = selectedIds.size;
+    if (!confirm(`Excluir ${n} ${n === 1 ? 'gasto selecionado' : 'gastos selecionados'}?`)) return;
+
+    const res = await fetch('/api/expenses/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selectedIds] }),
+    });
+
+    if (res.ok) {
+      const deletedIds = new Set(selectedIds);
+      setAllExpenses(prev => {
+        const newAll = prev.filter(e => !deletedIds.has(e._id!));
+        filterAndCalculate(newAll, viewMode);
+        return newAll;
+      });
+      setSelectedIds(new Set());
     }
   };
 
@@ -263,7 +299,7 @@ export default function DashBoard() {
 
       {showDetailedView && (
         <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-wrap">
             <label className="text-xs font-bold text-gray-700 uppercase whitespace-nowrap">Filtrar por Categoria</label>
             <select
               value={typeFilter}
@@ -275,10 +311,32 @@ export default function DashBoard() {
                 <option key={type} value={type}>{type}</option>
               ))}
             </select>
+            {selectedIds.size > 0 && (
+              <button
+                onClick={handleBulkDelete}
+                className="ml-auto bg-red-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-red-700"
+              >
+                Excluir selecionados ({selectedIds.size})
+              </button>
+            )}
           </div>
           <table className="min-w-full divide-y divide-gray-300">
             <thead className="bg-gray-50">
               <tr>
+                <th className="py-3 px-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    ref={selectAllRef}
+                    checked={(() => {
+                      const visible = filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter);
+                      return visible.length > 0 && visible.every(e => selectedIds.has(e._id!));
+                    })()}
+                    onChange={(e) => {
+                      const visible = filteredExpenses.filter(exp => typeFilter === '' || exp.type === typeFilter);
+                      setSelectedIds(e.target.checked ? new Set(visible.map(exp => exp._id!)) : new Set());
+                    }}
+                  />
+                </th>
                 <th
                   className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
                   onClick={() => handleSort('date')}
@@ -297,7 +355,12 @@ export default function DashBoard() {
                 >
                   Categoria {sortColumn === 'type' && (sortDirection === 'asc' ? '▲' : '▼')}
                 </th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Pagamento</th>
+                <th
+                  className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
+                  onClick={() => handleSort('paymentType')}
+                >
+                  Pagamento {sortColumn === 'paymentType' && (sortDirection === 'asc' ? '▲' : '▼')}
+                </th>
                 <th
                   className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
                   onClick={() => handleSort('value')}
@@ -319,10 +382,31 @@ export default function DashBoard() {
                   }
                   if (sortColumn === 'name') return a.name.localeCompare(b.name) * dir;
                   if (sortColumn === 'type') return a.type.localeCompare(b.type) * dir;
+                  if (sortColumn === 'paymentType') {
+                    const cmp = a.paymentType.localeCompare(b.paymentType);
+                    if (cmp !== 0) return cmp * dir;
+                    const aCard = ('cardBrand' in a ? (a as { cardBrand?: string }).cardBrand : '') ?? '';
+                    const bCard = ('cardBrand' in b ? (b as { cardBrand?: string }).cardBrand : '') ?? '';
+                    return aCard.localeCompare(bCard) * dir;
+                  }
                   return (a.value - b.value) * dir;
                 })
                 .map((expense) => (
                 <tr key={expense._id} className="hover:bg-gray-50 transition-colors">
+                  <td className="py-4 px-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(expense._id!)}
+                      onChange={(e) => {
+                        setSelectedIds(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(expense._id!);
+                          else next.delete(expense._id!);
+                          return next;
+                        });
+                      }}
+                    />
+                  </td>
                   <td className="whitespace-nowrap py-4 px-4 text-sm text-gray-600 font-medium">
                     {new Date(`${viewMode === 'purchase' ? expense.date : expense.effectiveDate}T12:00:00Z`)
                       .toLocaleDateString('pt-BR', { timeZone: 'UTC' })}

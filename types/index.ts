@@ -169,6 +169,13 @@ export type ParsedBillItem = {
   installmentTotal?: number;
   type: keyof typeof ExpenseSubtypes | null;
   subtype: string | null;
+  recognized: boolean;
+};
+
+export type NewBillMapping = {
+  description: string;
+  type: keyof typeof ExpenseSubtypes;
+  subtype: string | null;
 };
 
 export type ConfirmedBillItem = {

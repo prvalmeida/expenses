@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { CardBrand, ExpenseSubtypes, ParsedBillItem } from '@/types';
+import { useEffect, useRef, useState } from 'react';
+import { CardBrand, ExpenseSubtypes, NewBillMapping, ParsedBillItem } from '@/types';
 
 type BillParseResponse = {
   items: ParsedBillItem[];
@@ -28,6 +28,8 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   const [items, setItems] = useState<ItemState[]>([]);
   const [closingDate, setClosingDate] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string | null>(null);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const selectAllBillRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFile(e.target.files?.[0] ?? null);
@@ -64,6 +66,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           resolvedSubtype: item.subtype,
         }))
       );
+      setSelectedIndices(new Set());
       setStep(2);
     } catch {
       setError('Erro de rede ao processar a fatura');
@@ -88,7 +91,20 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
 
   const removeItem = (index: number) => {
     setItems(prev => prev.filter((_, i) => i !== index));
+    setSelectedIndices(new Set());
   };
+
+  const removeBulkItems = () => {
+    setItems(prev => prev.filter((_, i) => !selectedIndices.has(i)));
+    setSelectedIndices(new Set());
+  };
+
+  useEffect(() => {
+    if (selectAllBillRef.current) {
+      selectAllBillRef.current.indeterminate =
+        selectedIndices.size > 0 && selectedIndices.size < items.length;
+    }
+  }, [selectedIndices, items.length]);
 
   const unclassifiedCount = items.filter(i => i.resolvedType === null).length;
   const total = items.reduce((s, i) => s + i.resolvedValue, 0);
@@ -182,6 +198,16 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-gray-100 text-left">
+              <th className="p-2 border border-gray-200 w-8 text-center">
+                <input
+                  type="checkbox"
+                  ref={selectAllBillRef}
+                  checked={items.length > 0 && selectedIndices.size === items.length}
+                  onChange={(e) => {
+                    setSelectedIndices(e.target.checked ? new Set(items.map((_, i) => i)) : new Set());
+                  }}
+                />
+              </th>
               <th className="p-2 border border-gray-200 whitespace-nowrap">Data</th>
               <th className="p-2 border border-gray-200">Descrição</th>
               <th className="p-2 border border-gray-200 whitespace-nowrap">Parcela</th>
@@ -206,6 +232,20 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
                       : 'bg-amber-50'
                   }
                 >
+                  <td className="p-1.5 border border-gray-200 text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIndices.has(index)}
+                      onChange={(e) => {
+                        setSelectedIndices(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(index);
+                          else next.delete(index);
+                          return next;
+                        });
+                      }}
+                    />
+                  </td>
                   <td className="p-1.5 border border-gray-200 whitespace-nowrap text-xs text-gray-600">
                     {item.date
                       ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
@@ -303,6 +343,14 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         >
           Voltar
         </button>
+        {selectedIndices.size > 0 && (
+          <button
+            onClick={removeBulkItems}
+            className="py-2 px-4 bg-red-100 text-red-700 border border-red-300 rounded text-sm font-bold hover:bg-red-200"
+          >
+            Remover selecionados ({selectedIndices.size})
+          </button>
+        )}
         <button
           onClick={async () => {
             const confirmed = items.map(item => ({
@@ -314,13 +362,24 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
               type: item.resolvedType,
               subtype: item.resolvedSubtype,
             }));
+            const newMappings: NewBillMapping[] = items
+              .filter(
+                item =>
+                  item.resolvedType !== null &&
+                  (item.resolvedType !== item.type || item.resolvedSubtype !== item.subtype)
+              )
+              .map(item => ({
+                description: item.resolvedDescription.toLowerCase().trim(),
+                type: item.resolvedType!,
+                subtype: item.resolvedSubtype,
+              }));
             setLoading(true);
             setError(null);
             try {
               const res = await fetch('/api/bills/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items: confirmed, cardBrand, closingDate, dueDate }),
+                body: JSON.stringify({ items: confirmed, cardBrand, closingDate, dueDate, newMappings }),
               });
               const data = await res.json();
               if (!res.ok) {

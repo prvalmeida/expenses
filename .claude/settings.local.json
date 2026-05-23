@@ -16,7 +16,9 @@
       "Bash(python *)",
       "Bash(dir /s /b E:\\\\projects\\\\expenses)",
       "Bash(findstr /E \"\\\\.ts$ \\\\.tsx$ \\\\.js$\")",
-      "Bash(findstr /V node_modules)"
+      "Bash(findstr /V node_modules)",
+      "Bash(Get-ChildItem -Path E:\\\\projects\\\\expenses -Recurse -Filter \"*.tsx\")",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ]
   }
 }
