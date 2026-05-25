@@ -170,6 +170,7 @@ export type ParsedBillItem = {
   type: keyof typeof ExpenseSubtypes | null;
   subtype: string | null;
   recognized: boolean;
+  isPossibleDuplicate?: boolean;
 };
 
 export type NewBillMapping = {

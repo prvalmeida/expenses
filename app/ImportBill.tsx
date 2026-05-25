@@ -29,7 +29,8 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   const [closingDate, setClosingDate] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
-  const selectAllBillRef = useRef<HTMLInputElement>(null);
+  const selectAllNormalRef = useRef<HTMLInputElement>(null);
+  const selectAllDuplicatesRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFile(e.target.files?.[0] ?? null);
@@ -58,13 +59,15 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       setClosingDate(response.closingDate ?? null);
       setDueDate(response.dueDate ?? null);
       setItems(
-        response.items.map(item => ({
-          ...item,
-          resolvedDescription: item.description,
-          resolvedValue: item.value,
-          resolvedType: item.type,
-          resolvedSubtype: item.subtype,
-        }))
+        response.items
+          .map(item => ({
+            ...item,
+            resolvedDescription: item.description,
+            resolvedValue: item.value,
+            resolvedType: item.type,
+            resolvedSubtype: item.subtype,
+          }))
+          .sort((a, b) => a.date.localeCompare(b.date))
       );
       setSelectedIndices(new Set());
       setStep(2);
@@ -80,7 +83,6 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       prev.map((item, i) => {
         if (i !== index) return item;
         const updated = { ...item, [field]: value };
-        // Reset subtype when type changes
         if (field === 'resolvedType') {
           updated.resolvedSubtype = null;
         }
@@ -100,11 +102,59 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   };
 
   useEffect(() => {
-    if (selectAllBillRef.current) {
-      selectAllBillRef.current.indeterminate =
-        selectedIndices.size > 0 && selectedIndices.size < items.length;
+    if (selectAllNormalRef.current) {
+      const normalIndices = items.flatMap((item, i) => (!item.isPossibleDuplicate ? [i] : []));
+      const normalSelected = normalIndices.filter(i => selectedIndices.has(i)).length;
+      selectAllNormalRef.current.indeterminate = normalSelected > 0 && normalSelected < normalIndices.length;
     }
-  }, [selectedIndices, items.length]);
+    if (selectAllDuplicatesRef.current) {
+      const dupIndices = items.flatMap((item, i) => (item.isPossibleDuplicate ? [i] : []));
+      const dupSelected = dupIndices.filter(i => selectedIndices.has(i)).length;
+      selectAllDuplicatesRef.current.indeterminate = dupSelected > 0 && dupSelected < dupIndices.length;
+    }
+  }, [selectedIndices, items]);
+
+  const handleImport = async (subset: ItemState[]) => {
+    const confirmed = subset.map(item => ({
+      date: item.date,
+      description: item.resolvedDescription,
+      value: item.resolvedValue,
+      ...(item.installmentCurrent !== undefined && { installmentCurrent: item.installmentCurrent }),
+      ...(item.installmentTotal !== undefined && { installmentTotal: item.installmentTotal }),
+      type: item.resolvedType,
+      subtype: item.resolvedSubtype,
+    }));
+    const newMappings: NewBillMapping[] = subset
+      .filter(
+        item =>
+          item.resolvedType !== null &&
+          (item.resolvedType !== item.type || item.resolvedSubtype !== item.subtype)
+      )
+      .map(item => ({
+        description: item.resolvedDescription.toLowerCase().trim(),
+        type: item.resolvedType!,
+        subtype: item.resolvedSubtype,
+      }));
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/bills/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: confirmed, cardBrand, closingDate, dueDate, newMappings }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? 'Erro ao importar fatura');
+        return;
+      }
+      onDone();
+    } catch {
+      setError('Erro de rede ao importar a fatura');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const unclassifiedCount = items.filter(i => i.resolvedType === null).length;
   const total = items.reduce((s, i) => s + i.resolvedValue, 0);
@@ -170,13 +220,118 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   }
 
   // ── Step 2: Review table ─────────────────────────────────────────────────────
+  const normalPairs = items.flatMap((item, i) => (!item.isPossibleDuplicate ? [{ item, index: i }] : []));
+  const duplicatePairs = items.flatMap((item, i) => (item.isPossibleDuplicate ? [{ item, index: i }] : []));
+
+  const renderRow = ({ item, index }: { item: ItemState; index: number }) => {
+    const subtypes = item.resolvedType
+      ? ([...ExpenseSubtypes[item.resolvedType]] as string[]).sort()
+      : [];
+
+    return (
+      <tr
+        key={index}
+        className={item.resolvedType !== null ? 'bg-green-50' : 'bg-amber-50'}
+      >
+        <td className="p-1.5 border border-gray-200 text-center">
+          <input
+            type="checkbox"
+            checked={selectedIndices.has(index)}
+            onChange={(e) => {
+              setSelectedIndices(prev => {
+                const next = new Set(prev);
+                if (e.target.checked) next.add(index);
+                else next.delete(index);
+                return next;
+              });
+            }}
+          />
+        </td>
+        <td className="p-1.5 border border-gray-200 whitespace-nowrap text-xs text-gray-600">
+          {item.date
+            ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+            : '—'}
+        </td>
+        <td className="p-1.5 border border-gray-200">
+          <input
+            type="text"
+            value={item.resolvedDescription}
+            onChange={e => updateItem(index, 'resolvedDescription', e.target.value)}
+            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
+          />
+        </td>
+        <td className="p-1.5 border border-gray-200 text-xs text-center whitespace-nowrap text-gray-600">
+          {item.installmentCurrent !== undefined && item.installmentTotal !== undefined
+            ? `${item.installmentCurrent}/${item.installmentTotal}`
+            : '—'}
+        </td>
+        <td className="p-1.5 border border-gray-200">
+          <select
+            value={item.resolvedType ?? ''}
+            onChange={e =>
+              updateItem(
+                index,
+                'resolvedType',
+                e.target.value === '' ? null : (e.target.value as keyof typeof ExpenseSubtypes)
+              )
+            }
+            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
+          >
+            <option value="">Selecione...</option>
+            {(Object.keys(ExpenseSubtypes).sort() as (keyof typeof ExpenseSubtypes)[]).map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </td>
+        <td className="p-1.5 border border-gray-200">
+          <select
+            value={item.resolvedSubtype ?? ''}
+            onChange={e =>
+              updateItem(index, 'resolvedSubtype', e.target.value === '' ? null : e.target.value)
+            }
+            disabled={!item.resolvedType}
+            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white disabled:opacity-40"
+          >
+            <option value="">Selecione...</option>
+            {subtypes.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </td>
+        <td className="p-1.5 border border-gray-200">
+          <input
+            type="number"
+            value={item.resolvedValue}
+            min="0"
+            step="0.01"
+            onChange={e =>
+              updateItem(index, 'resolvedValue', parseFloat(e.target.value) || 0)
+            }
+            className="w-24 p-0.5 border rounded text-xs text-right bg-transparent focus:bg-white [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+        </td>
+        <td className="p-1.5 border border-gray-200 text-center">
+          <button
+            onClick={() => removeItem(index)}
+            className="text-red-400 hover:text-red-600 font-bold px-2"
+          >
+            ✕
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div className="max-w-5xl mx-auto p-4">
       <h2 className="text-xl font-bold mb-2">Revisar Fatura</h2>
       <div className="text-sm text-gray-600 mb-4 space-y-1">
         <p>
           <span className="font-semibold">Cartão:</span> {parsed?.cardBrand}
-          <span className="ml-4 font-semibold">Transações:</span> {items.length}
+          <span className="ml-4 font-semibold">Novos:</span> {normalPairs.length}
+          {duplicatePairs.length > 0 && (
+            <span className="ml-4 font-semibold text-amber-700">Possíveis duplicatas: {duplicatePairs.length}</span>
+          )}
           <span className="ml-4 font-semibold">Total:</span>{' '}
           R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
         </p>
@@ -194,135 +349,83 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         </p>
       </div>
 
-      <div className="overflow-x-auto mb-6">
-        <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="bg-gray-100 text-left">
-              <th className="p-2 border border-gray-200 w-8 text-center">
-                <input
-                  type="checkbox"
-                  ref={selectAllBillRef}
-                  checked={items.length > 0 && selectedIndices.size === items.length}
-                  onChange={(e) => {
-                    setSelectedIndices(e.target.checked ? new Set(items.map((_, i) => i)) : new Set());
-                  }}
-                />
-              </th>
-              <th className="p-2 border border-gray-200 whitespace-nowrap">Data</th>
-              <th className="p-2 border border-gray-200">Descrição</th>
-              <th className="p-2 border border-gray-200 whitespace-nowrap">Parcela</th>
-              <th className="p-2 border border-gray-200">Categoria</th>
-              <th className="p-2 border border-gray-200">Subcategoria</th>
-              <th className="p-2 border border-gray-200 text-right whitespace-nowrap">Valor</th>
-              <th className="p-2 border border-gray-200" />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, index) => {
-              const subtypes = item.resolvedType
-                ? ([...ExpenseSubtypes[item.resolvedType]] as string[]).sort()
-                : [];
+      {/* Normal items */}
+      {normalPairs.length > 0 && (
+        <div className="overflow-x-auto mb-6">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-gray-100 text-left">
+                <th className="p-2 border border-gray-200 w-8 text-center">
+                  <input
+                    type="checkbox"
+                    ref={selectAllNormalRef}
+                    checked={normalPairs.length > 0 && normalPairs.every(({ index }) => selectedIndices.has(index))}
+                    onChange={(e) => {
+                      setSelectedIndices(prev => {
+                        const next = new Set(prev);
+                        normalPairs.forEach(({ index }) => { if (e.target.checked) next.add(index); else next.delete(index); });
+                        return next;
+                      });
+                    }}
+                  />
+                </th>
+                <th className="p-2 border border-gray-200 whitespace-nowrap">Data</th>
+                <th className="p-2 border border-gray-200">Descrição</th>
+                <th className="p-2 border border-gray-200 whitespace-nowrap">Parcela</th>
+                <th className="p-2 border border-gray-200">Categoria</th>
+                <th className="p-2 border border-gray-200">Subcategoria</th>
+                <th className="p-2 border border-gray-200 text-right whitespace-nowrap">Valor</th>
+                <th className="p-2 border border-gray-200" />
+              </tr>
+            </thead>
+            <tbody>
+              {normalPairs.map(renderRow)}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-              return (
-                <tr
-                  key={index}
-                  className={
-                    item.resolvedType !== null
-                      ? 'bg-green-50'
-                      : 'bg-amber-50'
-                  }
-                >
-                  <td className="p-1.5 border border-gray-200 text-center">
+      {/* Possible duplicates */}
+      {duplicatePairs.length > 0 && (
+        <>
+          <div className="flex items-center gap-3 mb-2 mt-2">
+            <h3 className="text-base font-bold text-amber-700">Possíveis duplicatas</h3>
+            <span className="text-xs text-gray-500">Já existem gastos com a mesma data e valor</span>
+          </div>
+          <div className="overflow-x-auto mb-6 border border-amber-200 rounded">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-amber-50 text-left">
+                  <th className="p-2 border border-amber-200 w-8 text-center">
                     <input
                       type="checkbox"
-                      checked={selectedIndices.has(index)}
+                      ref={selectAllDuplicatesRef}
+                      checked={duplicatePairs.length > 0 && duplicatePairs.every(({ index }) => selectedIndices.has(index))}
                       onChange={(e) => {
                         setSelectedIndices(prev => {
                           const next = new Set(prev);
-                          if (e.target.checked) next.add(index);
-                          else next.delete(index);
+                          duplicatePairs.forEach(({ index }) => { if (e.target.checked) next.add(index); else next.delete(index); });
                           return next;
                         });
                       }}
                     />
-                  </td>
-                  <td className="p-1.5 border border-gray-200 whitespace-nowrap text-xs text-gray-600">
-                    {item.date
-                      ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
-                      : '—'}
-                  </td>
-                  <td className="p-1.5 border border-gray-200">
-                    <input
-                      type="text"
-                      value={item.resolvedDescription}
-                      onChange={e => updateItem(index, 'resolvedDescription', e.target.value)}
-                      className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
-                    />
-                  </td>
-                  <td className="p-1.5 border border-gray-200 text-xs text-center whitespace-nowrap text-gray-600">
-                    {item.installmentCurrent !== undefined && item.installmentTotal !== undefined
-                      ? `${item.installmentCurrent}/${item.installmentTotal}`
-                      : '—'}
-                  </td>
-                  <td className="p-1.5 border border-gray-200">
-                    <select
-                      value={item.resolvedType ?? ''}
-                      onChange={e =>
-                        updateItem(
-                          index,
-                          'resolvedType',
-                          e.target.value === '' ? null : (e.target.value as keyof typeof ExpenseSubtypes)
-                        )
-                      }
-                      className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
-                    >
-                      <option value="">Selecione...</option>
-                      {(Object.keys(ExpenseSubtypes).sort() as (keyof typeof ExpenseSubtypes)[]).map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-1.5 border border-gray-200">
-                    <select
-                      value={item.resolvedSubtype ?? ''}
-                      onChange={e =>
-                        updateItem(index, 'resolvedSubtype', e.target.value === '' ? null : e.target.value)
-                      }
-                      disabled={!item.resolvedType}
-                      className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white disabled:opacity-40"
-                    >
-                      <option value="">Selecione...</option>
-                      {subtypes.map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-1.5 border border-gray-200">
-                    <input
-                      type="number"
-                      value={item.resolvedValue}
-                      min="0"
-                      step="0.01"
-                      onChange={e =>
-                        updateItem(index, 'resolvedValue', parseFloat(e.target.value) || 0)
-                      }
-                      className="w-24 p-0.5 border rounded text-xs text-right bg-transparent focus:bg-white [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                  </td>
-                  <td className="p-1.5 border border-gray-200 text-center">
-                    <button
-                      onClick={() => removeItem(index)}
-                      className="text-red-400 hover:text-red-600 font-bold px-2"
-                    >
-                      ✕
-                    </button>
-                  </td>
+                  </th>
+                  <th className="p-2 border border-amber-200 whitespace-nowrap">Data</th>
+                  <th className="p-2 border border-amber-200">Descrição</th>
+                  <th className="p-2 border border-amber-200 whitespace-nowrap">Parcela</th>
+                  <th className="p-2 border border-amber-200">Categoria</th>
+                  <th className="p-2 border border-amber-200">Subcategoria</th>
+                  <th className="p-2 border border-amber-200 text-right whitespace-nowrap">Valor</th>
+                  <th className="p-2 border border-amber-200" />
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {duplicatePairs.map(renderRow)}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-4">
@@ -339,7 +442,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       <div className="flex gap-3">
         <button
           onClick={() => setStep(1)}
-          className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+          className="py-2 px-4 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
         >
           Voltar
         </button>
@@ -351,53 +454,25 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             Remover selecionados ({selectedIndices.size})
           </button>
         )}
-        <button
-          onClick={async () => {
-            const confirmed = items.map(item => ({
-              date: item.date,
-              description: item.resolvedDescription,
-              value: item.resolvedValue,
-              ...(item.installmentCurrent !== undefined && { installmentCurrent: item.installmentCurrent }),
-              ...(item.installmentTotal !== undefined && { installmentTotal: item.installmentTotal }),
-              type: item.resolvedType,
-              subtype: item.resolvedSubtype,
-            }));
-            const newMappings: NewBillMapping[] = items
-              .filter(
-                item =>
-                  item.resolvedType !== null &&
-                  (item.resolvedType !== item.type || item.resolvedSubtype !== item.subtype)
-              )
-              .map(item => ({
-                description: item.resolvedDescription.toLowerCase().trim(),
-                type: item.resolvedType!,
-                subtype: item.resolvedSubtype,
-              }));
-            setLoading(true);
-            setError(null);
-            try {
-              const res = await fetch('/api/bills/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items: confirmed, cardBrand, closingDate, dueDate, newMappings }),
-              });
-              const data = await res.json();
-              if (!res.ok) {
-                setError(data.error ?? 'Erro ao importar fatura');
-                return;
-              }
-              onDone();
-            } catch {
-              setError('Erro de rede ao importar a fatura');
-            } finally {
-              setLoading(false);
-            }
-          }}
-          disabled={items.length === 0 || loading}
-          className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Importando...' : `Confirmar ${items.length} ${items.length === 1 ? 'transação' : 'transações'}`}
-        </button>
+        <div className="flex-1" />
+        {normalPairs.length > 0 && (
+          <button
+            onClick={() => handleImport(normalPairs.map(p => p.item))}
+            disabled={loading}
+            className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Importando...' : `Confirmar ${normalPairs.length} ${normalPairs.length === 1 ? 'transação' : 'transações'}`}
+          </button>
+        )}
+        {duplicatePairs.length > 0 && (
+          <button
+            onClick={() => handleImport(duplicatePairs.map(p => p.item))}
+            disabled={loading}
+            className="py-2 px-4 bg-amber-500 text-white rounded text-sm font-bold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Importando...' : `Importar ${duplicatePairs.length} ${duplicatePairs.length === 1 ? 'duplicata' : 'duplicatas'}`}
+          </button>
+        )}
       </div>
     </div>
   );

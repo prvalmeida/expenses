@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { CardBrand } from '@/types';
 import { parseBillText, extractClosingDate, extractFullDueDate } from '../../../../lib/utils/billUtils';
+import connectToDatabase from '../../../../lib/mongodb';
+import Expense from '../../../../lib/models/Expense';
 
 // pdfjs-dist v5 legacy build ships ESM only; dynamic import is required for Node.js compatibility
 // useWorkerFetch + isEvalSupported=false disables browser-only features
@@ -77,9 +79,19 @@ export async function POST(request: NextRequest) {
 
     console.log(`Texto extraído do PDF: ${rawText}`);
 
-    const items = await parseBillText(rawText, cardBrand);
+    const parsed = await parseBillText(rawText, cardBrand);
     const closingDate = extractClosingDate(rawText, cardBrand);
     const dueDate = extractFullDueDate(rawText);
+
+    await connectToDatabase();
+    const dates = [...new Set(parsed.map(i => i.date))];
+    const existing = await Expense.find({ date: { $in: dates } }).select('date value').lean() as { date: string; value: number }[];
+    const existingKeys = new Set(existing.map(e => `${e.date}|${e.value}`));
+    const items = parsed.map(item => ({
+      ...item,
+      isPossibleDuplicate: existingKeys.has(`${item.date}|${item.value}`),
+    }));
+
     return NextResponse.json({ items, cardBrand, closingDate, dueDate });
   } catch (error) {
     return NextResponse.json({ error: `Falha ao processar fatura: ${error}` }, { status: 500 });
