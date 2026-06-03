@@ -168,7 +168,10 @@ const C_ANUIDADE_SEC   = /^ANUIDADE\s*$/;
 const C_ANUIDADE_LINE  = /^ANUIDADE\s{2,}([\d,]+)([DC])\s*$/;
 const C_SUBTOTAL       = /^(Total|TOTAL)\b/;
 const C_COL_HEADER     = /^(Data|Quantidade)\s+(Descrição|Parcela|Data)\s+/;
-const C_END_MARKER     = /^Central de Atendimento Cartões Caixa\s*$/;
+// Page-break noise lines injected by the PDF renderer — can appear mid-section
+const C_NOISE_FOOTER   = /^Central de Atendimento Cartões Caixa\s*$/;
+const C_INFO_COMPL     = /^Informações Complementares\s*$/;
+const C_DEMONSTRATIVO  = /^Demonstrativo\s*$/;
 const C_CREDITO_HDR    = /^Crédito\/Débito R\$\s*$/;
 
 // Installment field in COMPRAS PARCELADAS: "05 DE 10"
@@ -225,7 +228,9 @@ function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
     const line = rawLine.trim();
     if (!line) continue;
 
-    if (C_END_MARKER.test(line) && currentCardholder !== null) break;
+    if (C_NOISE_FOOTER.test(line)) continue;
+    if (C_INFO_COMPL.test(line)) continue;
+    if (C_DEMONSTRATIVO.test(line)) continue;
 
     if (C_PARCELADAS_HDR.test(line)) { currentSubsection = 'COMPRAS_PARCELADAS'; continue; }
     if (C_COMPRAS_HDR.test(line))    { currentSubsection = 'COMPRAS';            continue; }
