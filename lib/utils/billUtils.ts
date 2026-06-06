@@ -208,6 +208,13 @@ function parseCaixaLine(
       if (installMatch) {
         return { date, description: parts[1].trim(), value, installmentCurrent: parseInt(installMatch[1], 10), installmentTotal: parseInt(installMatch[2], 10), cardholder, subsection };
       }
+      // Merchant name split into two fields by 2+ spaces (e.g. "KIWIFY" + "*TNG" before "11 DE 12")
+      if (parts.length >= 6) {
+        const installMatch2 = parts[3].match(C_INSTALL_FIELD);
+        if (installMatch2) {
+          return { date, description: `${parts[1]} ${parts[2]}`.trim(), value, installmentCurrent: parseInt(installMatch2[1], 10), installmentTotal: parseInt(installMatch2[2], 10), cardholder, subsection };
+        }
+      }
     }
     // Fallback: include without installment info
     return { date, description: parts[1].trim(), value, cardholder, subsection };
