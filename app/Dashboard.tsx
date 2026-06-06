@@ -1,6 +1,8 @@
 'use client';
 
 import { Expense, ExpenseSubtypes, Income } from "@/types";
+
+const VOUCHER_PAYMENT_TYPES = ['food-voucher', 'meal-voucher', 'fuel-voucher'];
 import { useCallback, useEffect, useRef, useState } from "react";
 import EditExpenseModal from "../components/EditExpenseModal";
 import ExpenseCharts from "../components/ExpenseCharts";
@@ -47,7 +49,11 @@ export default function DashBoard() {
       );
     });
 
-    setTotalThisMonth(filtered.reduce((sum, exp) => sum + exp.value, 0));
+    setTotalThisMonth(
+      filtered
+        .filter(exp => !VOUCHER_PAYMENT_TYPES.includes(exp.paymentType ?? ''))
+        .reduce((sum, exp) => sum + exp.value, 0)
+    );
     setFilteredExpenses(filtered);
   }, [selectedMonth]);
 

@@ -202,17 +202,20 @@ function parseCaixaLine(
   const date = buildDate(dd, mm, dueMonth, dueYear);
 
   if (subsection === 'COMPRAS_PARCELADAS') {
-    // Expect: [date, description, "NN DE NN", city, value+D/C]
+    // Scan parts[2..n-3] for installment field — handles merchant names split across multiple fields
     if (parts.length >= 5) {
-      const installMatch = parts[2].match(C_INSTALL_FIELD);
-      if (installMatch) {
-        return { date, description: parts[1].trim(), value, installmentCurrent: parseInt(installMatch[1], 10), installmentTotal: parseInt(installMatch[2], 10), cardholder, subsection };
-      }
-      // Merchant name split into two fields by 2+ spaces (e.g. "KIWIFY" + "*TNG" before "11 DE 12")
-      if (parts.length >= 6) {
-        const installMatch2 = parts[3].match(C_INSTALL_FIELD);
-        if (installMatch2) {
-          return { date, description: `${parts[1]} ${parts[2]}`.trim(), value, installmentCurrent: parseInt(installMatch2[1], 10), installmentTotal: parseInt(installMatch2[2], 10), cardholder, subsection };
+      for (let i = 2; i < parts.length - 2; i++) {
+        const installMatch = parts[i].match(C_INSTALL_FIELD);
+        if (installMatch) {
+          return {
+            date,
+            description: parts.slice(1, i).join(' ').trim(),
+            value,
+            installmentCurrent: parseInt(installMatch[1], 10),
+            installmentTotal:   parseInt(installMatch[2], 10),
+            cardholder,
+            subsection,
+          };
         }
       }
     }
@@ -220,8 +223,13 @@ function parseCaixaLine(
     return { date, description: parts[1].trim(), value, cardholder, subsection };
   }
 
-  // COMPRAS — [date, description, city, value+D/C]
-  return { date, description: parts[1].trim(), value, cardholder, subsection };
+  // COMPRAS — [date, description, (optional *suffix...), city, value+D/C]
+  // Merchant name may be split by 2+ spaces when the suffix starts with '*'
+  let description = parts[1].trim();
+  for (let i = 2; i < parts.length - 1 && parts[i].startsWith('*'); i++) {
+    description += ' ' + parts[i];
+  }
+  return { date, description, value, cardholder, subsection };
 }
 
 function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
