@@ -148,6 +148,7 @@ export type ParsedReceiptItem = {
   type: keyof typeof ExpenseSubtypes | null;
   subtype: string | null;
   recognized: boolean;
+  fromMapping?: boolean;
   qty?: number;
   unit?: string;
 };

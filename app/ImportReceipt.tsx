@@ -10,11 +10,13 @@ type ParseResponse = {
   total?: number;
   discounts?: number;
   amountDue?: number;
+  storeDefaultType?: keyof typeof ExpenseSubtypes;
   items: ParsedReceiptItem[];
 };
 
 type ItemState = ParsedReceiptItem & {
   resolvedValue: number;
+  resolvedType?: keyof typeof ExpenseSubtypes;
   resolvedSubtype?: string;
   resolvedQty?: number;
   resolvedUnitPrice?: number;
@@ -43,6 +45,8 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [items, setItems] = useState<ItemState[]>([]);
   const [importedCount, setImportedCount] = useState(0);
+  const [storeType, setStoreType] = useState<keyof typeof ExpenseSubtypes | undefined>(undefined);
+  const [installments, setInstallments] = useState(1);
 
   const switchMode = (mode: 'pdf' | 'url') => {
     setInputMode(mode);
@@ -88,10 +92,12 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
       setParsed(data);
       setPaymentType(data.paymentType ?? '');
       setCardBrand(undefined);
+      setStoreType(data.storeDefaultType);
       setItems(
         (data.items as ParsedReceiptItem[]).map(item => ({
           ...item,
           resolvedValue: round2(item.value),
+          resolvedType: item.type ?? data.storeDefaultType,
           resolvedSubtype: item.recognized ? (item.subtype ?? '') : undefined,
           ...(item.qty !== undefined && { resolvedQty: item.qty }),
           ...(item.qty !== undefined && item.qty > 0 && { resolvedUnitPrice: round2(item.unitPrice ?? item.value / item.qty) }),
@@ -141,7 +147,26 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     );
   };
 
-  const allResolved = items.every(item => !!item.resolvedSubtype);
+  const handleStoreTypeChange = (newType: keyof typeof ExpenseSubtypes | '') => {
+    const type = newType || undefined;
+    setStoreType(type);
+    setItems(prev =>
+      prev.map(item =>
+        item.fromMapping ? item : { ...item, resolvedType: type, resolvedSubtype: undefined }
+      )
+    );
+  };
+
+  const handleTypeChange = (index: number, newType: keyof typeof ExpenseSubtypes | '') => {
+    const type = newType || undefined;
+    setItems(prev =>
+      prev.map((item, i) =>
+        i === index ? { ...item, resolvedType: type, resolvedSubtype: undefined } : item
+      )
+    );
+  };
+
+  const allResolved = items.every(item => !!item.resolvedType && !!item.resolvedSubtype);
 
   const handleImport = async () => {
     if (!parsed || !allResolved) return;
@@ -151,18 +176,21 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
       const confirmedItems: ConfirmedReceiptItem[] = items.map(item => ({
         description: item.description,
         value: item.resolvedValue,
-        type: 'supermercado' as keyof typeof ExpenseSubtypes,
+        type: item.resolvedType!,
         subtype: item.resolvedSubtype,
         ...(item.resolvedQty !== undefined && { qty: item.resolvedQty }),
         ...(item.unit && { unit: item.unit }),
       }));
 
       const newMappings: ConfirmedReceiptItem[] = items
-        .filter(item => item.resolvedSubtype !== (item.subtype ?? null))
+        .filter(item =>
+          (item.resolvedType ?? null) !== item.type ||
+          (item.resolvedSubtype ?? null) !== item.subtype
+        )
         .map(item => ({
           description: item.description,
           value: item.value,
-          type: 'supermercado' as keyof typeof ExpenseSubtypes,
+          type: item.resolvedType!,
           subtype: item.resolvedSubtype,
         }));
 
@@ -177,6 +205,8 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           ...(paymentType === 'credit' && { cardBrand }),
           items: confirmedItems,
           newMappings,
+          storeDefaultType: storeType,
+          installments,
         }),
       });
 
@@ -269,7 +299,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
 
   // ── Step 2: Review ──────────────────────────────────────────────────────────
   if (step === 2 && parsed) {
-    const unknownCount = items.filter(i => !i.recognized).length;
+    const unknownCount = items.filter(i => !i.resolvedType || !i.resolvedSubtype).length;
     const total = parsed.total ?? items.reduce((s, i) => s + i.resolvedValue, 0);
     const canImport = allResolved && !!paymentType && (paymentType !== 'credit' || !!cardBrand);
 
@@ -308,7 +338,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             <label className="block text-sm font-medium mb-1">Forma de Pagamento</label>
             <select
               value={paymentType}
-              onChange={e => { setPaymentType(e.target.value); setCardBrand(undefined); }}
+              onChange={e => { const v = e.target.value; setPaymentType(v); setCardBrand(undefined); if (v !== 'credit') setInstallments(1); }}
               className="w-full p-2 border rounded text-sm"
             >
               <option value="">Selecione...</option>
@@ -318,26 +348,56 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             </select>
           </div>
           {paymentType === 'credit' && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Cartão Utilizado</label>
-              <select
-                value={cardBrand ?? ''}
-                onChange={e => setCardBrand(e.target.value === '' ? undefined : e.target.value as CardBrand)}
-                className="w-full p-2 border rounded text-sm"
-              >
-                <option value="">Selecione o cartão utilizado</option>
-                {Object.entries(CardBrand).map(([key, value]) => (
-                  <option key={key} value={value}>{value}</option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium mb-1">Cartão Utilizado</label>
+                <select
+                  value={cardBrand ?? ''}
+                  onChange={e => setCardBrand(e.target.value === '' ? undefined : e.target.value as CardBrand)}
+                  className="w-full p-2 border rounded text-sm"
+                >
+                  <option value="">Selecione o cartão utilizado</option>
+                  {Object.entries(CardBrand).map(([key, value]) => (
+                    <option key={key} value={value}>{value}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Número de Parcelas</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={installments}
+                  onChange={e => setInstallments(Math.max(1, Math.round(+e.target.value || 1)))}
+                  className="w-full p-2 border rounded text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+              </div>
+            </>
           )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Categoria do Estabelecimento</label>
+            <select
+              value={storeType ?? ''}
+              onChange={e => handleStoreTypeChange(e.target.value as keyof typeof ExpenseSubtypes | '')}
+              className="w-full p-2 border rounded text-sm"
+            >
+              <option value="">Selecione a categoria padrão...</option>
+              {(Object.keys(ExpenseSubtypes) as Array<keyof typeof ExpenseSubtypes>)
+                .sort((a, b) => a.localeCompare(b))
+                .map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+            </select>
+            <p className="text-[11px] text-gray-400 mt-1">
+              Define o tipo padrão para itens desta loja em importações futuras.
+            </p>
+          </div>
         </div>
 
         {unknownCount > 0 && (
           <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
-            {unknownCount} {unknownCount === 1 ? 'item não reconhecido' : 'itens não reconhecidos'}.
-            Classifique-os antes de importar.
+            {unknownCount} {unknownCount === 1 ? 'item precisa' : 'itens precisam'} de classificação.
+            Defina categoria e subcategoria antes de importar.
           </p>
         )}
 
@@ -346,7 +406,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             <div
               key={index}
               className={`p-3 rounded-lg border ${
-                item.recognized && item.resolvedSubtype === item.subtype
+                item.recognized && item.resolvedType === item.type && item.resolvedSubtype === item.subtype
                   ? 'bg-green-50 border-green-200'
                   : 'bg-amber-50 border-amber-200'
               }`}
@@ -384,18 +444,33 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   className="w-24 p-1 border rounded text-sm text-right font-black [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
               </div>
-              <div className="mt-2">
+              <div className="mt-2 flex gap-2">
+                <select
+                  value={item.resolvedType ?? ''}
+                  onChange={e => handleTypeChange(index, e.target.value as keyof typeof ExpenseSubtypes | '')}
+                  className="flex-1 p-1.5 border rounded text-sm"
+                >
+                  <option value="">Tipo...</option>
+                  {(Object.keys(ExpenseSubtypes) as Array<keyof typeof ExpenseSubtypes>)
+                    .sort((a, b) => a.localeCompare(b))
+                    .map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                </select>
                 <select
                   value={item.resolvedSubtype ?? ''}
                   onChange={e => handleSubtypeChange(index, e.target.value)}
-                  className="w-full p-1.5 border rounded text-sm"
+                  disabled={!item.resolvedType}
+                  className="flex-1 p-1.5 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Subcategoria...</option>
-                  {([...ExpenseSubtypes['supermercado']] as string[])
-                    .sort((a, b) => a.localeCompare(b))
-                    .map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
+                  {item.resolvedType
+                    ? ([...ExpenseSubtypes[item.resolvedType]] as string[])
+                        .sort((a, b) => a.localeCompare(b))
+                        .map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))
+                    : null}
                 </select>
               </div>
             </div>

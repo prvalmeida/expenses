@@ -43,6 +43,7 @@ export type ParseResponse = {
   total?: number;
   discounts?: number;
   amountDue?: number;
+  storeDefaultType?: keyof typeof ExpenseSubtypes;
   items: ParsedReceiptItem[];
 };
 
@@ -97,18 +98,21 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
   const address = raw.address ?? null;
   const storeName = raw.storeName ?? (address ? nameFromAddress(address) : raw.cnpj);
 
-  await Store.updateOne(
+  const storeDoc = await Store.findOneAndUpdate(
     { cnpj: raw.cnpj, address },
     { $set: { name: storeName } },
-    { upsert: true }
+    { upsert: true, new: true }
   );
+  const storeDefaultType = (storeDoc?.defaultType as keyof typeof ExpenseSubtypes | undefined) ?? undefined;
 
   const mappings = await ProductMapping.find({ cnpj: raw.cnpj, address });
   const mappingMap = new Map(
     mappings.map(m => [m.description, { type: m.type, subtype: m.subtype as string | undefined }])
   );
 
-  const supermercadoSubtypes: readonly string[] = ExpenseSubtypes['supermercado'];
+  const validationSubtypes: readonly string[] = storeDefaultType
+    ? ExpenseSubtypes[storeDefaultType]
+    : ExpenseSubtypes['supermercado'];
 
   const items: ParsedReceiptItem[] = raw.items.map(item => {
     const key = normalize(item.description);
@@ -121,18 +125,20 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
       return {
         description: item.description,
         value: itemValue,
-        type: 'supermercado' as keyof typeof ExpenseSubtypes,
+        type: saved.type as keyof typeof ExpenseSubtypes,
         subtype: saved.subtype ?? null,
         recognized: true,
+        fromMapping: true,
         ...qtyUnit,
       };
     }
 
-    if (item.subtype && supermercadoSubtypes.includes(item.subtype)) {
+    const inferredType = (storeDefaultType ?? 'supermercado') as keyof typeof ExpenseSubtypes;
+    if (item.subtype && validationSubtypes.includes(item.subtype)) {
       return {
         description: item.description,
         value: itemValue,
-        type: 'supermercado' as keyof typeof ExpenseSubtypes,
+        type: inferredType,
         subtype: item.subtype,
         recognized: true,
         ...qtyUnit,
@@ -142,7 +148,7 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
     return {
       description: item.description,
       value: itemValue,
-      type: null,
+      type: storeDefaultType ?? null,
       subtype: null,
       recognized: false,
       ...qtyUnit,
@@ -156,6 +162,7 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
     ...(raw.total !== undefined && { total: raw.total }),
     ...(raw.discounts !== undefined && { discounts: raw.discounts }),
     ...(raw.amountDue !== undefined && { amountDue: raw.amountDue }),
+    ...(storeDefaultType !== undefined && { storeDefaultType }),
     items,
   };
 }
