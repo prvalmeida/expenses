@@ -75,12 +75,27 @@ export async function POST(request: NextRequest) {
 
     // SEFAZ portals sometimes return a short "loading" page on the first request
     // and cache the actual content for subsequent ones — retry with a delay.
+    // Network errors (DNS, TLS) on first attempt are also retried.
     let fetchResult = { text: '', httpStatus: 0 };
+    let lastFetchError: unknown = null;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
-      fetchResult = await fetchReceiptText(url);
-      if (fetchResult.httpStatus !== 200) break;   // HTTP error — retry won't help
-      if (fetchResult.text.length >= 200) break;   // sufficient content — done
+      try {
+        fetchResult = await fetchReceiptText(url);
+        lastFetchError = null;
+        if (fetchResult.httpStatus !== 200) break;  // HTTP error — retry won't help
+        if (fetchResult.text.length >= 200) break;  // sufficient content — done
+      } catch (err) {
+        lastFetchError = err;
+        // network error (DNS, TLS, connection reset) — retry on next iteration
+      }
+    }
+
+    if (lastFetchError) {
+      return NextResponse.json(
+        { error: `Falha ao acessar o portal: ${lastFetchError}` },
+        { status: 502 }
+      );
     }
 
     if (fetchResult.httpStatus !== 200) {

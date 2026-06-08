@@ -152,7 +152,9 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     setStoreType(type);
     setItems(prev =>
       prev.map(item =>
-        item.fromMapping ? item : { ...item, resolvedType: type, resolvedSubtype: undefined }
+        item.fromMapping || item.resolvedSubtype
+          ? item
+          : { ...item, resolvedType: type, resolvedSubtype: undefined }
       )
     );
   };
