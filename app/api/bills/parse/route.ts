@@ -11,6 +11,43 @@ async function getPdfjs() {
   return import('pdfjs-dist/legacy/build/pdf.mjs');
 }
 
+// Coordinate-aware text reconstruction. Some statement PDFs are rendered glyph-by-glyph
+// (each item is a single character), so the naive `item.str + ' '` join inserts a space
+// between every letter and breaks the parsers. Instead, derive spacing from item geometry:
+// insert a newline when y changes, and a space only when there is a real horizontal gap
+// between consecutive items. This keeps glued glyphs as words while preserving the
+// multi-space column separators (\s{2,}) the bill parsers rely on.
+function reconstructPageText(
+  items: Array<{ str: string; transform: number[]; width: number }>
+): string {
+  let out = '';
+  let prevY: number | null = null;
+  let prevEndX = 0;
+  for (const it of items) {
+    if (it.str === undefined || it.transform === undefined) continue;
+    const x = it.transform[4];
+    const y = it.transform[5];
+    const w = it.width ?? 0;
+    if (prevY === null) {
+      out += it.str;
+    } else if (Math.abs(y - prevY) > 2) {
+      out += '\n' + it.str; // new line (y changed)
+    } else {
+      const gap = x - prevEndX;
+      const charW = w && it.str.length ? w / it.str.length : 3;
+      if (gap > charW * 0.5) {
+        const n = Math.min(Math.max(1, Math.round(gap / charW)), 6);
+        out += ' '.repeat(n) + it.str; // real gap → space(s)
+      } else {
+        out += it.str; // glued glyphs → no space
+      }
+    }
+    prevY = y;
+    prevEndX = x + w;
+  }
+  return out;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -62,9 +99,9 @@ export async function POST(request: NextRequest) {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      const pageText = (content.items as Array<{ str: string; hasEOL: boolean }>)
-        .map(item => item.str + (item.hasEOL ? '\n' : ' '))
-        .join('');
+      const pageText = reconstructPageText(
+        content.items as Array<{ str: string; transform: number[]; width: number }>
+      );
       pageTexts.push(pageText);
     }
 
