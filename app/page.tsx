@@ -4,13 +4,27 @@ import { useCallback, useState } from 'react';
 import AddExpense from './AddExpense';
 import AddIncome from './AddIncome';
 import DashBoard from './Dashboard';
+import DashboardDetails from './DashboardDetails';
 import CardConfigPage from './CardConfig';
 import ImportReceipt from './ImportReceipt';
 import ImportBill from './ImportBill';
 
 export default function MainPage() {
   // 1. Update the type to include 'cardConfig'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'addExpense' | 'addIncome' | 'cardConfig' | 'importReceipt' | 'importBill'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'dashboardDetails' | 'addExpense' | 'addIncome' | 'cardConfig' | 'importReceipt' | 'importBill'>('dashboard');
+
+  // Carries the dashboard's selected month / view mode into the details view
+  const [detailsMonth, setDetailsMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [detailsViewMode, setDetailsViewMode] = useState<'purchase' | 'payment'>('purchase');
+
+  const handleOpenDetails = useCallback((month: string, viewMode: 'purchase' | 'payment') => {
+    setDetailsMonth(month);
+    setDetailsViewMode(viewMode);
+    setCurrentView('dashboardDetails');
+  }, []);
 
   const handleExpenseAdded = useCallback(() => {
     setCurrentView('dashboard');
@@ -34,7 +48,7 @@ export default function MainPage() {
           <button
             onClick={() => setCurrentView('dashboard')}
             className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+              currentView === 'dashboard' || currentView === 'dashboardDetails' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
             }`}
           >
             📊 Dashboard
@@ -92,8 +106,16 @@ export default function MainPage() {
       {/* Main Content */}
       <div className="flex-1 p-6 overflow-y-auto">
         {/* 3. Conditional Rendering Logic */}
-        {currentView === 'dashboard' && <DashBoard />}
-        
+        {currentView === 'dashboard' && <DashBoard onOpenDetails={handleOpenDetails} />}
+
+        {currentView === 'dashboardDetails' && (
+          <DashboardDetails
+            initialMonth={detailsMonth}
+            initialViewMode={detailsViewMode}
+            onBack={() => setCurrentView('dashboard')}
+          />
+        )}
+
         {currentView === 'addExpense' && (
           <AddExpense onExpenseAdded={handleExpenseAdded} />
         )}

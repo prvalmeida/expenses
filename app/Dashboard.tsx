@@ -1,177 +1,81 @@
 'use client';
 
-import { Expense, ExpenseSubtypes, Income } from "@/types";
+import { Expense, Income } from "@/types";
 
 const VOUCHER_PAYMENT_TYPES = ['food-voucher', 'meal-voucher', 'fuel-voucher'];
-import { useCallback, useEffect, useRef, useState } from "react";
-import EditExpenseModal from "../components/EditExpenseModal";
-import ExpenseCharts from "../components/ExpenseCharts";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-export default function DashBoard() {
+type Props = {
+  onOpenDetails: (month: string, viewMode: 'purchase' | 'payment') => void;
+};
+
+export default function DashBoard({ onOpenDetails }: Props) {
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
-  const [filteredExpenses, setFilteredExpenses] = useState<Expense[]>([]);
-  const [totalThisMonth, setTotalThisMonth] = useState(0);
-  const [showDetailedView, setShowDetailedView] = useState<boolean>(false);
-  const [showIncomeView, setShowIncomeView] = useState<boolean>(false);
-  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
-  const [editingOriginalDate, setEditingOriginalDate] = useState<string | undefined>();
-  
-  // Income states
   const [allIncomes, setAllIncomes] = useState<Income[]>([]);
-  const [totalIncomeThisMonth, setTotalIncomeThisMonth] = useState(0);
-  
+
   // Toggle: 'purchase' (Data da Compra) vs 'payment' (Fluxo de Caixa)
   const [viewMode, setViewMode] = useState<'purchase' | 'payment'>('purchase');
-  const [showCharts, setShowCharts] = useState(false);
-  
+
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const [sortColumn, setSortColumn] = useState<'date' | 'name' | 'type' | 'value' | 'paymentType'>('date');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const selectAllRef = useRef<HTMLInputElement>(null);
-
-  const filterAndCalculate = useCallback((expenses: Expense[], mode: 'purchase' | 'payment') => {
+  const isInMonth = useCallback((dateStr: string) => {
+    if (!dateStr) return false;
     const [year, month] = selectedMonth.split('-').map(Number);
-
-    const filtered = expenses.filter(expense => {
-      // Both are now guaranteed YYYY-MM-DD
-      const dateStr = mode === 'payment' ? expense.effectiveDate : expense.date;
-      const expenseDate = new Date(`${dateStr}T12:00:00Z`);
-      
-      return (
-        expenseDate.getUTCMonth() === month - 1 && 
-        expenseDate.getUTCFullYear() === year
-      );
-    });
-
-    setTotalThisMonth(
-      filtered
-        .filter(exp => !VOUCHER_PAYMENT_TYPES.includes(exp.paymentType ?? ''))
-        .reduce((sum, exp) => sum + exp.value, 0)
-    );
-    setFilteredExpenses(filtered);
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    return d.getUTCMonth() === month - 1 && d.getUTCFullYear() === year;
   }, [selectedMonth]);
 
-  const filterIncomes = useCallback(() => {
-    const [year, month] = selectedMonth.split('-').map(Number);
+  // Expenses of the month under the current view mode (purchase vs payment date)
+  const monthExpenses = useMemo(
+    () => allExpenses.filter(e => isInMonth(viewMode === 'payment' ? e.effectiveDate : e.date)),
+    [allExpenses, viewMode, isInMonth]
+  );
 
-    const filtered = allIncomes.filter(income => {
-      const incomeDate = new Date(`${income.date}T12:00:00Z`);
-      
-      return (
-        incomeDate.getUTCMonth() === month - 1 && 
-        incomeDate.getUTCFullYear() === year
-      );
-    });
+  // Total excludes voucher payment types
+  const totalThisMonth = useMemo(
+    () => monthExpenses
+      .filter(exp => !VOUCHER_PAYMENT_TYPES.includes(exp.paymentType ?? ''))
+      .reduce((sum, exp) => sum + exp.value, 0),
+    [monthExpenses]
+  );
 
-    setTotalIncomeThisMonth(filtered.reduce((sum, inc) => sum + inc.value, 0));
-  }, [selectedMonth, allIncomes]);
-
-  const handleSort = (column: 'date' | 'name' | 'type' | 'value' | 'paymentType') => {
-    if (column === sortColumn) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortColumn(column);
-      setSortDirection(column === 'date' ? 'desc' : 'asc');
+  // Category summary: ALWAYS by purchase date (date), INCLUDES vouchers
+  const summaryByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of allExpenses) {
+      if (!isInMonth(e.date)) continue;
+      map.set(e.type, (map.get(e.type) ?? 0) + e.value);
     }
-  };
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+  }, [allExpenses, isInMonth]);
 
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [selectedMonth, typeFilter]);
+  const summaryTotal = useMemo(
+    () => summaryByCategory.reduce((sum, [, v]) => sum + v, 0),
+    [summaryByCategory]
+  );
 
-  useEffect(() => {
-    const visible = filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter);
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate =
-        selectedIds.size > 0 && selectedIds.size < visible.length;
-    }
-  }, [selectedIds, filteredExpenses, typeFilter]);
+  const monthIncomes = useMemo(
+    () => allIncomes
+      .filter(income => isInMonth(income.date))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+    [allIncomes, isInMonth]
+  );
 
-  const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return;
-    const n = selectedIds.size;
-    if (!confirm(`Excluir ${n} ${n === 1 ? 'gasto selecionado' : 'gastos selecionados'}?`)) return;
-
-    const res = await fetch('/api/expenses/bulk-delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: [...selectedIds] }),
-    });
-
-    if (res.ok) {
-      const deletedIds = new Set(selectedIds);
-      setAllExpenses(prev => {
-        const newAll = prev.filter(e => !deletedIds.has(e._id!));
-        filterAndCalculate(newAll, viewMode);
-        return newAll;
-      });
-      setSelectedIds(new Set());
-    }
-  };
-
-  const onExpenseDeleted = (id: string, deleteAll: boolean) => {
-    setAllExpenses(prev => {
-      // 1. Pegamos a despesa que vai ser deletada para saber o transactionId dela
-      const targetExpense = prev.find(e => e._id === id);
-      let newAllExpenses;
-      
-      if (deleteAll && targetExpense?.transactionId) {
-        newAllExpenses = prev.filter(exp => exp.transactionId !== targetExpense.transactionId);
-      } else {
-        newAllExpenses = prev.filter(exp => exp._id !== id);
-      }
-
-      filterAndCalculate(newAllExpenses, viewMode);
-
-      return newAllExpenses;
-    });
-  };
-
-  const handleEdit = (updated: Expense | Expense[]) => {
-    setAllExpenses(prev => {
-      let newExpenses: Expense[];
-      if (Array.isArray(updated)) {
-        const tid = updated[0]?.transactionId;
-        newExpenses = tid
-          ? [...prev.filter(e => e.transactionId !== tid), ...updated]
-          : [...prev, ...updated];
-      } else {
-        newExpenses = prev.map(e => e._id === updated._id ? updated : e);
-      }
-      filterAndCalculate(newExpenses, viewMode);
-      return newExpenses;
-    });
-    setEditingExpense(null);
-    setEditingOriginalDate(undefined);
-  };
-
-  const handleDelete = async (id: string, hasMultiple: boolean) => {
-    const message = hasMultiple
-      ? "Este gasto é parcelado. Todas as parcelas serão excluídas. Confirma?"
-      : "Excluir este gasto?";
-    if (!confirm(message)) return;
-
-    const url = hasMultiple ? `/api/expenses/${id}?all=true` : `/api/expenses/${id}`;
-    const res = await fetch(url, { method: 'DELETE' });
-    if (res.ok) {
-      onExpenseDeleted(id, hasMultiple);
-    }
-  };
+  const totalIncomeThisMonth = useMemo(
+    () => monthIncomes.reduce((sum, inc) => sum + inc.value, 0),
+    [monthIncomes]
+  );
 
   const onIncomeDeleted = (id: string) => {
     setAllIncomes(prev => prev.filter(inc => inc._id !== id));
-    filterIncomes();
   };
 
   const handleDeleteIncome = async (id: string) => {
     if (!confirm("Excluir esta receita?")) return;
-    
+
     const res = await fetch(`/api/income/${id}`, { method: 'DELETE' });
     if (res.ok) {
       onIncomeDeleted(id);
@@ -183,34 +87,26 @@ export default function DashBoard() {
       const response = await fetch('/api/expenses');
       if (response.ok) {
         const data: Expense[] = await response.json();
-
         setAllExpenses(data);
-        filterAndCalculate(data, viewMode);
       }
 
       const incomeResponse = await fetch('/api/income');
       if (incomeResponse.ok) {
         const incomeData: Income[] = await incomeResponse.json();
-        console.log(`incomeData: ${JSON.stringify(incomeData)}`)
         setAllIncomes(incomeData);
       }
     };
     fetchData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, viewMode]);
-
-  useEffect(() => {
-    filterIncomes();
-  }, [filterIncomes]);
+  }, []);
 
   return (
     <div className="space-y-6">
+      {/* Header + Switcher de Visualização */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
         <h1 className="text-2xl font-bold">Dashboard de Gastos</h1>
-        
-        {/* Switcher de Visualização */}
+
         <div className="flex bg-gray-200 p-1 rounded-lg self-start">
-          <button 
+          <button
             onClick={() => setViewMode('purchase')}
             className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
               viewMode === 'purchase' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600'
@@ -218,7 +114,7 @@ export default function DashBoard() {
           >
             DATA DA COMPRA
           </button>
-          <button 
+          <button
             onClick={() => setViewMode('payment')}
             className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
               viewMode === 'payment' ? 'bg-white shadow-sm text-green-600' : 'text-gray-600'
@@ -229,350 +125,124 @@ export default function DashBoard() {
         </div>
       </div>
 
-      {/* Card de Resumo Financeiro */}
-      <div className={`p-6 rounded-xl border-l-4 shadow-sm bg-white transition-all ${viewMode === 'purchase' ? 'border-blue-500' : 'border-green-500'}`}>
-        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-          Total {viewMode === 'purchase' ? 'em Gastos' : 'a Pagar'} (Mês Selecionado)
-        </p>
-        <p className="text-3xl font-black mt-1 text-gray-900">
-          R$ {totalThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-        </p>
-        <p className="text-[10px] text-gray-400 mt-2 italic">
-          {viewMode === 'purchase' 
-            ? "* Mostra o quanto você decidiu gastar neste mês." 
-            : "* Mostra o quanto sairá efetivamente da sua conta (faturas e débitos)."}
-        </p>
+      {/* Month picker (above totals) */}
+      <div className="w-full sm:w-48">
+        <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Mês de Referência</label>
+        <input
+          type="month"
+          value={selectedMonth}
+          onChange={(e) => setSelectedMonth(e.target.value)}
+          className="w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+        />
       </div>
 
-      {/* Card de Receitas */}
-      <div className="p-6 rounded-xl border-l-4 border-purple-500 shadow-sm bg-white">
-        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-          Total em Receitas (Mês Selecionado)
-        </p>
-        <p className="text-3xl font-black mt-1 text-gray-900">
-          R$ {totalIncomeThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-        </p>
-        <p className="text-[10px] text-gray-400 mt-2 italic">
-          * Receitas recebidas neste mês.
-        </p>
-      </div>
-
-      {/* Card de Poupança */}
-      {viewMode === 'payment' && (
-        <div className="p-6 rounded-xl border-l-4 border-yellow-500 shadow-sm bg-white">
-          <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-            Poupança (Mês Selecionado)
+      {/* Totals side by side (compact) */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className={`p-4 rounded-xl border-l-4 shadow-sm bg-white ${viewMode === 'purchase' ? 'border-blue-500' : 'border-green-500'}`}>
+          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+            {viewMode === 'purchase' ? 'Gastos' : 'A Pagar'}
           </p>
-          <p className={`text-3xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            R$ {(totalIncomeThisMonth - totalThisMonth).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-          </p>
-          <p className="text-[10px] text-gray-400 mt-2 italic">
-            * Diferença entre receitas e gastos efetivos.
+          <p className="text-xl font-black mt-1 text-gray-900">
+            R$ {totalThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </p>
         </div>
-      )}
 
-      {/* Filtros */}
-      <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col sm:flex-row items-end gap-4">
-        <div className="w-full sm:w-48">
-          <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Mês de Referência</label>
-          <input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
-          />
+        <div className="p-4 rounded-xl border-l-4 border-purple-500 shadow-sm bg-white">
+          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Receitas</p>
+          <p className="text-xl font-black mt-1 text-gray-900">
+            R$ {totalIncomeThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          </p>
         </div>
-        <button 
-          onClick={() => setShowDetailedView(!showDetailedView)}
-          className="bg-gray-800 text-white px-4 py-2 rounded text-sm font-bold hover:bg-gray-700"
-        >
-          {showDetailedView ? "OCULTAR GASTOS" : "VER GASTOS"}
-        </button>
-        <button 
-          onClick={() => setShowIncomeView(!showIncomeView)}
-          className="bg-purple-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-purple-700"
-        >
-          {showIncomeView ? "OCULTAR RECEITAS" : "VER RECEITAS"}
-        </button>
-        <button
-          onClick={() => setShowCharts(!showCharts)}
-          className="bg-green-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-green-700"
-        >
-          {showCharts ? "OCULTAR DETALHES" : "VER DETALHES"}
-        </button>
-      </div>
 
-      {showDetailedView && (
-        <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-wrap">
-            <label className="text-xs font-bold text-gray-700 uppercase whitespace-nowrap">Filtrar por Categoria</label>
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="rounded-md border-gray-300 shadow-sm text-sm p-2 border"
-            >
-              <option value="">Todos os Tipos</option>
-              {Object.keys(ExpenseSubtypes).sort().map((type) => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-            {selectedIds.size > 0 && (
-              <button
-                onClick={handleBulkDelete}
-                className="ml-auto bg-red-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-red-700"
-              >
-                Excluir selecionados ({selectedIds.size})
-              </button>
-            )}
+        {viewMode === 'payment' && (
+          <div className="p-4 rounded-xl border-l-4 border-yellow-500 shadow-sm bg-white">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Poupança</p>
+            <p className={`text-xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              R$ {(totalIncomeThisMonth - totalThisMonth).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
           </div>
-          <table className="min-w-full divide-y divide-gray-300">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="py-3 px-3 w-10 text-center">
-                  <input
-                    type="checkbox"
-                    ref={selectAllRef}
-                    checked={(() => {
-                      const visible = filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter);
-                      return visible.length > 0 && visible.every(e => selectedIds.has(e._id!));
-                    })()}
-                    onChange={(e) => {
-                      const visible = filteredExpenses.filter(exp => typeFilter === '' || exp.type === typeFilter);
-                      setSelectedIds(e.target.checked ? new Set(visible.map(exp => exp._id!)) : new Set());
-                    }}
-                  />
-                </th>
-                <th
-                  className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
-                  onClick={() => handleSort('date')}
-                >
-                  Data {sortColumn === 'date' && (sortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th
-                  className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
-                  onClick={() => handleSort('name')}
-                >
-                  Nome {sortColumn === 'name' && (sortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th
-                  className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
-                  onClick={() => handleSort('type')}
-                >
-                  Categoria {sortColumn === 'type' && (sortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th
-                  className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
-                  onClick={() => handleSort('paymentType')}
-                >
-                  Pagamento {sortColumn === 'paymentType' && (sortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th
-                  className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase cursor-pointer select-none hover:text-gray-800"
-                  onClick={() => handleSort('value')}
-                >
-                  Valor {sortColumn === 'value' && (sortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-bold text-gray-500 uppercase">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {filteredExpenses
-                .filter((expense) => typeFilter === '' || expense.type === typeFilter)
-                .sort((a, b) => {
-                  const dir = sortDirection === 'asc' ? 1 : -1;
-                  if (sortColumn === 'date') {
-                    const dateA = viewMode === 'purchase' ? a.date : a.effectiveDate;
-                    const dateB = viewMode === 'purchase' ? b.date : b.effectiveDate;
-                    return (dateA < dateB ? -1 : dateA > dateB ? 1 : 0) * dir;
-                  }
-                  if (sortColumn === 'name') return a.name.localeCompare(b.name) * dir;
-                  if (sortColumn === 'type') return a.type.localeCompare(b.type) * dir;
-                  if (sortColumn === 'paymentType') {
-                    const cmp = a.paymentType.localeCompare(b.paymentType);
-                    if (cmp !== 0) return cmp * dir;
-                    const aCard = ('cardBrand' in a ? (a as { cardBrand?: string }).cardBrand : '') ?? '';
-                    const bCard = ('cardBrand' in b ? (b as { cardBrand?: string }).cardBrand : '') ?? '';
-                    return aCard.localeCompare(bCard) * dir;
-                  }
-                  return (a.value - b.value) * dir;
-                })
-                .map((expense) => (
-                <tr key={expense._id} className="hover:bg-gray-50 transition-colors">
-                  <td className="py-4 px-3 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(expense._id!)}
-                      onChange={(e) => {
-                        setSelectedIds(prev => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(expense._id!);
-                          else next.delete(expense._id!);
-                          return next;
-                        });
-                      }}
-                    />
-                  </td>
-                  <td className="whitespace-nowrap py-4 px-4 text-sm text-gray-600 font-medium">
-                    {new Date(`${viewMode === 'purchase' ? expense.date : expense.effectiveDate}T12:00:00Z`)
-                      .toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
-                  </td>
-                  <td className="px-3 py-4 text-sm text-gray-900 font-semibold">{expense.name}</td>
-                  <td className="px-3 py-4">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-1.5 py-0.5 rounded w-fit">
-                        {expense.type}
-                      </span>
-                      <span className="text-[10px] text-gray-400 font-bold uppercase mt-1">{expense.subtype}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-4 text-xs">
-                    <span className="capitalize font-medium text-gray-600 block">{expense.paymentType}</span>
-                    {expense.paymentType === 'credit' && (
-                      <span className="text-[10px] text-blue-500 font-bold">
-                        {expense.cardBrand} ({expense.installment}/{expense.totalInstallments})
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-4 text-right text-sm font-black text-gray-900">
-                    R$ {expense.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-3 py-4 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={() => {
-                          setEditingExpense(expense);
-                          if (expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1 && expense.transactionId) {
-                            const first = allExpenses
-                              .filter(e => e.transactionId === expense.transactionId)
-                              .sort((a, b) => {
-                                const aI = a.paymentType === 'credit' ? a.installment : 0;
-                                const bI = b.paymentType === 'credit' ? b.installment : 0;
-                                return aI - bI;
-                              })[0];
-                            setEditingOriginalDate(first?.date);
-                          } else {
-                            setEditingOriginalDate(undefined);
-                          }
-                        }}
-                        className="text-blue-400 hover:text-blue-600 transition-colors p-1"
-                        title="Editar despesa"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (expense._id) {
-                            const isInstallment = (expense.totalInstallments ?? 0) > 1;
-                            handleDelete(expense._id, isInstallment);
-                          }
-                        }}
-                        className="text-red-400 hover:text-red-600 transition-colors p-1"
-                        title={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredExpenses.length === 0 && (
+        )}
+      </div>
+
+      {/* Two columns: category summary (left) + incomes (right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Resumo por Categoria */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Resumo por Categoria</h2>
+              <p className="text-[10px] text-gray-400 italic">* Por data da compra.</p>
+            </div>
+            <button
+              onClick={() => onOpenDetails(selectedMonth, viewMode)}
+              className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50"
+              title="Ver detalhes"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {summaryByCategory.map(([type, value]) => (
+              <li key={type} className="flex items-center justify-between px-5 py-2.5">
+                <span className="text-xs font-bold text-blue-700 uppercase bg-blue-50 px-2 py-0.5 rounded">{type}</span>
+                <span className="text-sm font-black text-gray-900">
+                  R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </li>
+            ))}
+            {summaryByCategory.length > 0 && (
+              <li className="flex items-center justify-between px-5 py-2.5 bg-gray-50">
+                <span className="text-xs font-black text-gray-700 uppercase">Total</span>
+                <span className="text-sm font-black text-gray-900">
+                  R$ {summaryTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </li>
+            )}
+          </ul>
+          {summaryByCategory.length === 0 && (
             <div className="p-10 text-center text-gray-400 text-sm">Nenhum gasto encontrado.</div>
           )}
         </div>
-      )}
 
-      {editingExpense && (
-        <EditExpenseModal
-          expense={editingExpense}
-          originalDate={editingOriginalDate}
-          onSave={handleEdit}
-          onClose={() => {
-            setEditingExpense(null);
-            setEditingOriginalDate(undefined);
-          }}
-        />
-      )}
-
-      {showCharts && (
-        <ExpenseCharts allExpenses={allExpenses} viewMode={viewMode} defaultMonth={selectedMonth} onClose={() => setShowCharts(false)} />
-      )}
-
-      {showIncomeView && (
-        <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-300">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Data</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nome</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
-                <th className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase">Valor</th>
-                <th className="px-3 py-3 text-center text-xs font-bold text-gray-500 uppercase">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {allIncomes
-                .filter(income => {
-                  const [year, month] = selectedMonth.split('-').map(Number);
-                  const incomeDate = new Date(`${income.date}T12:00:00Z`);
-                  return incomeDate.getUTCMonth() === month - 1 && incomeDate.getUTCFullYear() === year;
-                })
-                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                .map((income) => (
-                <tr key={income._id} className="hover:bg-gray-50 transition-colors">
-                  <td className="whitespace-nowrap py-4 px-4 text-sm text-gray-600 font-medium">
-                    {new Date(`${income.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
-                  </td>
-                  <td className="px-3 py-4 text-sm text-gray-900 font-semibold">{income.name}</td>
-                  <td className="px-3 py-4 text-sm text-gray-600 capitalize">{income.type}</td>
-                  <td className="px-3 py-4 text-right text-sm font-black text-gray-900">
+        {/* Receitas */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-200">
+            <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Receitas</h2>
+            <p className="text-[10px] text-gray-400 italic">* Recebidas no mês.</p>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {monthIncomes.map((income) => (
+              <li key={income._id} className="flex items-center justify-between px-5 py-2.5 gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-gray-900 font-semibold truncate">{income.name}</p>
+                  <p className="text-[10px] text-gray-400 uppercase font-bold">
+                    {new Date(`${income.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })} · {income.type}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-black text-gray-900">
                     R$ {income.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-3 py-4 text-center">
-                    <button
-                      onClick={() => {
-                        if (income._id) {
-                          handleDeleteIncome(income._id);
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-600 transition-colors p-1"
-                      title="Excluir receita"
-                    >
-                      <svg 
-                        xmlns="http://www.w3.org/2000/svg" 
-                        className="h-5 w-5" 
-                        fill="none" 
-                        viewBox="0 0 24 24" 
-                        stroke="currentColor"
-                      >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" 
-                        />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {allIncomes.filter(income => {
-            const [year, month] = selectedMonth.split('-').map(Number);
-            const incomeDate = new Date(`${income.date}T12:00:00Z`);
-            return incomeDate.getUTCMonth() === month - 1 && incomeDate.getUTCFullYear() === year;
-          }).length === 0 && (
+                  </span>
+                  <button
+                    onClick={() => income._id && handleDeleteIncome(income._id)}
+                    className="text-red-400 hover:text-red-600 transition-colors p-1"
+                    title="Excluir receita"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {monthIncomes.length === 0 && (
             <div className="p-10 text-center text-gray-400 text-sm">Nenhuma receita encontrada.</div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
