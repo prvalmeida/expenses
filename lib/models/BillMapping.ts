@@ -1,9 +1,8 @@
 import mongoose from 'mongoose';
-import { ExpenseSubtypes } from '@/types';
 
 const BillMappingSchema = new mongoose.Schema({
   description: { type: String, required: true },
-  type: { type: String, required: true, enum: Object.keys(ExpenseSubtypes) },
+  type: { type: String, required: true },
   subtype: { type: String, required: false },
 });
 

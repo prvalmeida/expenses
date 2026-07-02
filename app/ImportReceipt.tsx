@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { CardBrand, ConfirmedReceiptItem, ExpenseSubtypes, ParsedReceiptItem } from '@/types';
+import { CardBrand, ConfirmedReceiptItem, ParsedReceiptItem } from '@/types';
+import { useCategories } from '@/hooks/useCategories';
 
 type ParseResponse = {
   store: { cnpj: string; name: string; address: string | null };
@@ -10,13 +11,13 @@ type ParseResponse = {
   total?: number;
   discounts?: number;
   amountDue?: number;
-  storeDefaultType?: keyof typeof ExpenseSubtypes;
+  storeDefaultType?: string;
   items: ParsedReceiptItem[];
 };
 
 type ItemState = ParsedReceiptItem & {
   resolvedValue: number;
-  resolvedType?: keyof typeof ExpenseSubtypes;
+  resolvedType?: string;
   resolvedSubtype?: string;
   resolvedQty?: number;
   resolvedUnitPrice?: number;
@@ -34,6 +35,7 @@ const PAYMENT_OPTIONS = [
 ];
 
 export default function ImportReceipt({ onImported }: { onImported: () => void }) {
+  const { expenseTypes, subtypesFor } = useCategories();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [inputMode, setInputMode] = useState<'pdf' | 'url'>('pdf');
   const [file, setFile] = useState<File | null>(null);
@@ -45,7 +47,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [items, setItems] = useState<ItemState[]>([]);
   const [importedCount, setImportedCount] = useState(0);
-  const [storeType, setStoreType] = useState<keyof typeof ExpenseSubtypes | undefined>(undefined);
+  const [storeType, setStoreType] = useState<string | undefined>(undefined);
   const [installments, setInstallments] = useState(1);
 
   const switchMode = (mode: 'pdf' | 'url') => {
@@ -147,7 +149,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     );
   };
 
-  const handleStoreTypeChange = (newType: keyof typeof ExpenseSubtypes | '') => {
+  const handleStoreTypeChange = (newType: string) => {
     const type = newType || undefined;
     setStoreType(type);
     setItems(prev =>
@@ -159,7 +161,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     );
   };
 
-  const handleTypeChange = (index: number, newType: keyof typeof ExpenseSubtypes | '') => {
+  const handleTypeChange = (index: number, newType: string) => {
     const type = newType || undefined;
     setItems(prev =>
       prev.map((item, i) =>
@@ -380,11 +382,11 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             <label className="block text-sm font-medium mb-1">Categoria do Estabelecimento</label>
             <select
               value={storeType ?? ''}
-              onChange={e => handleStoreTypeChange(e.target.value as keyof typeof ExpenseSubtypes | '')}
+              onChange={e => handleStoreTypeChange(e.target.value)}
               className="w-full p-2 border rounded text-sm"
             >
               <option value="">Selecione a categoria padrão...</option>
-              {(Object.keys(ExpenseSubtypes) as Array<keyof typeof ExpenseSubtypes>)
+              {[...expenseTypes]
                 .sort((a, b) => a.localeCompare(b))
                 .map(t => (
                   <option key={t} value={t}>{t}</option>
@@ -449,11 +451,11 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
               <div className="mt-2 flex gap-2">
                 <select
                   value={item.resolvedType ?? ''}
-                  onChange={e => handleTypeChange(index, e.target.value as keyof typeof ExpenseSubtypes | '')}
+                  onChange={e => handleTypeChange(index, e.target.value)}
                   className="flex-1 p-1.5 border rounded text-sm"
                 >
                   <option value="">Tipo...</option>
-                  {(Object.keys(ExpenseSubtypes) as Array<keyof typeof ExpenseSubtypes>)
+                  {[...expenseTypes]
                     .sort((a, b) => a.localeCompare(b))
                     .map(t => (
                       <option key={t} value={t}>{t}</option>
@@ -467,7 +469,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                 >
                   <option value="">Subcategoria...</option>
                   {item.resolvedType
-                    ? ([...ExpenseSubtypes[item.resolvedType]] as string[])
+                    ? [...subtypesFor(item.resolvedType)]
                         .sort((a, b) => a.localeCompare(b))
                         .map(s => (
                           <option key={s} value={s}>{s}</option>

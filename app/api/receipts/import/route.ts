@@ -5,6 +5,7 @@ import { ProductMapping } from '../../../../lib/models/ProductMapping';
 import { Store } from '../../../../lib/models/Store';
 import { computeEffectiveDate } from '../../../../lib/utils/cycleUtils';
 import { addMonthsClamped } from '../../../../lib/utils/dateUtils';
+import { getExpenseCategories } from '../../../../lib/utils/categoryUtils';
 import { ConfirmedReceiptItem } from '@/types';
 
 interface ImportBody {
@@ -28,6 +29,21 @@ export async function POST(request: NextRequest) {
     if (!cnpj || !date || !paymentType || !items?.length) {
       return NextResponse.json(
         { error: 'cnpj, date, paymentType e items são obrigatórios' },
+        { status: 400 }
+      );
+    }
+
+    const categories = await getExpenseCategories();
+    const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
+    const isValidPair = (type: string, subtype?: string) => {
+      const subs = subtypesByType.get(type);
+      if (!subs) return false;
+      return !subtype || subs.has(subtype);
+    };
+    const invalid = [...items, ...(newMappings ?? [])].find(item => !isValidPair(item.type, item.subtype));
+    if (invalid) {
+      return NextResponse.json(
+        { error: `Categoria ou subcategoria inválida: ${invalid.type}${invalid.subtype ? ` / ${invalid.subtype}` : ''}` },
         { status: 400 }
       );
     }

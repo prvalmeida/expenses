@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CardBrand, ExpenseSubtypes, NewBillMapping, ParsedBillItem } from '@/types';
+import { CardBrand, NewBillMapping, ParsedBillItem } from '@/types';
+import { useCategories } from '@/hooks/useCategories';
 
 type BillParseResponse = {
   items: ParsedBillItem[];
@@ -13,11 +14,12 @@ type BillParseResponse = {
 type ItemState = ParsedBillItem & {
   resolvedDescription: string;
   resolvedValue: number;
-  resolvedType: keyof typeof ExpenseSubtypes | null;
+  resolvedType: string | null;
   resolvedSubtype: string | null;
 };
 
 export default function ImportBill({ onDone }: { onDone: () => void }) {
+  const { expenseTypes, subtypesFor } = useCategories();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [file, setFile] = useState<File | null>(null);
@@ -225,7 +227,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
 
   const renderRow = ({ item, index }: { item: ItemState; index: number }) => {
     const subtypes = item.resolvedType
-      ? ([...ExpenseSubtypes[item.resolvedType]] as string[]).sort()
+      ? [...subtypesFor(item.resolvedType)].sort()
       : [];
 
     return (
@@ -272,13 +274,13 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
               updateItem(
                 index,
                 'resolvedType',
-                e.target.value === '' ? null : (e.target.value as keyof typeof ExpenseSubtypes)
+                e.target.value === '' ? null : e.target.value
               )
             }
             className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
           >
             <option value="">Selecione...</option>
-            {(Object.keys(ExpenseSubtypes).sort() as (keyof typeof ExpenseSubtypes)[]).map(t => (
+            {[...expenseTypes].sort().map(t => (
               <option key={t} value={t}>{t}</option>
             ))}
           </select>

@@ -2,9 +2,8 @@ import connectToDatabase from '../mongodb';
 import { Store } from '../models/Store';
 import { ProductMapping } from '../models/ProductMapping';
 import getOpenAI from '../openai';
-import { ExpenseSubtypes, ParsedReceiptItem } from '@/types';
-
-const SUPERMERCADO_SUBTYPES = [...ExpenseSubtypes['supermercado']].join(', ');
+import { ParsedReceiptItem } from '@/types';
+import { getExpenseCategories } from './categoryUtils';
 
 export function normalize(str: string): string {
   return str.toLowerCase().trim();
@@ -43,11 +42,17 @@ export type ParseResponse = {
   total?: number;
   discounts?: number;
   amountDue?: number;
-  storeDefaultType?: keyof typeof ExpenseSubtypes;
+  storeDefaultType?: string;
   items: ParsedReceiptItem[];
 };
 
 export async function interpretAndCrossReference(rawText: string): Promise<ParseResponse> {
+  await connectToDatabase();
+  const expenseCategories = await getExpenseCategories();
+  const subtypesOf = (type: string): string[] =>
+    expenseCategories.find(c => c.name === type)?.subtypes ?? [];
+  const supermercadoSubtypes = subtypesOf('supermercado').join(', ');
+
   const completion = await getOpenAI().chat.completions.create({
     model: 'gpt-4o-mini',
     response_format: { type: 'json_object' },
@@ -81,7 +86,7 @@ Para cada item, extraia:
 
 Para o campo paymentType, identifique a forma de pagamento da nota (campo "FORMA DE PAGAMENTO") e mapeie para um destes valores exatos: Crédito→"credit", Débito→"debit", PIX→"pix", Dinheiro/Espécie→"cash", Vale Alimentação→"food-voucher", Vale Refeição→"meal-voucher", Vale Combustível→"fuel-voucher". Se não identificar, omita o campo.
 
-Todos os itens são do tipo supermercado. Para cada item, tente classificar com uma das seguintes subcategorias: ${SUPERMERCADO_SUBTYPES}. Se conseguir, adicione "subtype" ao objeto do item. Se não conseguir classificar, omita "subtype".`,
+Todos os itens são do tipo supermercado. Para cada item, tente classificar com uma das seguintes subcategorias: ${supermercadoSubtypes}. Se conseguir, adicione "subtype" ao objeto do item. Se não conseguir classificar, omita "subtype".`,
       },
       { role: 'user', content: rawText },
     ],
@@ -93,8 +98,6 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
     throw new Error('Não foi possível extrair dados válidos da nota fiscal');
   }
 
-  await connectToDatabase();
-
   const address = raw.address ?? null;
   const storeName = raw.storeName ?? (address ? nameFromAddress(address) : raw.cnpj);
 
@@ -103,7 +106,7 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
     { $set: { name: storeName } },
     { upsert: true, new: true }
   );
-  const storeDefaultType = (storeDoc?.defaultType as keyof typeof ExpenseSubtypes | undefined) ?? undefined;
+  const storeDefaultType = (storeDoc?.defaultType as string | undefined) ?? undefined;
 
   const mappings = await ProductMapping.find({ cnpj: raw.cnpj, address });
   const mappingMap = new Map(
@@ -111,8 +114,8 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
   );
 
   const validationSubtypes: readonly string[] = storeDefaultType
-    ? ExpenseSubtypes[storeDefaultType]
-    : ExpenseSubtypes['supermercado'];
+    ? subtypesOf(storeDefaultType)
+    : subtypesOf('supermercado');
 
   const items: ParsedReceiptItem[] = raw.items.map(item => {
     const key = normalize(item.description);
@@ -125,7 +128,7 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
       return {
         description: item.description,
         value: itemValue,
-        type: saved.type as keyof typeof ExpenseSubtypes,
+        type: saved.type as string,
         subtype: saved.subtype ?? null,
         recognized: true,
         fromMapping: true,
@@ -133,7 +136,7 @@ Todos os itens são do tipo supermercado. Para cada item, tente classificar com 
       };
     }
 
-    const inferredType = (storeDefaultType ?? 'supermercado') as keyof typeof ExpenseSubtypes;
+    const inferredType = storeDefaultType ?? 'supermercado';
     if (item.subtype && validationSubtypes.includes(item.subtype)) {
       return {
         description: item.description,

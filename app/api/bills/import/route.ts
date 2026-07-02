@@ -4,6 +4,7 @@ import Expense from '../../../../lib/models/Expense';
 import { CardCycle } from '../../../../lib/models/CardCycle';
 import { computeEffectiveDate } from '../../../../lib/utils/cycleUtils';
 import { addMonthsClamped } from '../../../../lib/utils/dateUtils';
+import { getExpenseCategories } from '../../../../lib/utils/categoryUtils';
 import { CardBrand, ConfirmedBillItem, NewBillMapping } from '@/types';
 import { BillMapping } from '../../../../lib/models/BillMapping';
 
@@ -50,6 +51,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const categories = await getExpenseCategories();
+    const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
+
     let imported = 0;
     let skipped = 0;
 
@@ -59,6 +63,14 @@ export async function POST(request: NextRequest) {
         skipped++;
         continue;
       }
+
+      // Skip items whose category no longer exists; drop subtypes not valid for the type
+      const validSubtypes = subtypesByType.get(item.type);
+      if (!validSubtypes) {
+        skipped++;
+        continue;
+      }
+      const subtype = item.subtype && validSubtypes.has(item.subtype) ? item.subtype : undefined;
 
       const isInstallment =
         item.installmentCurrent !== undefined &&
@@ -71,7 +83,7 @@ export async function POST(request: NextRequest) {
           name: item.description,
           value: item.value,
           type: item.type,
-          subtype: item.subtype ?? undefined,
+          subtype,
           paymentType: 'credit',
           cardBrand,
           date: item.date,
@@ -117,7 +129,7 @@ export async function POST(request: NextRequest) {
           name: item.description,
           value: item.value,
           type: item.type,
-          subtype: item.subtype ?? undefined,
+          subtype,
           paymentType: 'credit',
           cardBrand,
           date: date_k,

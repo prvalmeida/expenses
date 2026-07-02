@@ -1,8 +1,9 @@
 'use client';
 
-import { Expense, ExpenseSubtypes } from "@/types";
+import { Expense } from "@/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import EditExpenseModal from "../components/EditExpenseModal";
+import { useCategories } from "@/hooks/useCategories";
 
 type Props = {
   initialMonth: string;
@@ -21,6 +22,11 @@ function prevMonth(ym: string) {
 }
 
 export default function DashboardDetails({ initialMonth, initialViewMode, onBack }: Props) {
+  const { expenseTypes, isValidType, isValidPair } = useCategories();
+  const isOrphan = useCallback(
+    (e: Expense) => !isValidType(e.type) || (!!e.subtype && !isValidPair(e.type, e.subtype)),
+    [isValidType, isValidPair]
+  );
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [viewMode, setViewMode] = useState<'purchase' | 'payment'>(initialViewMode);
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
@@ -373,7 +379,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
             className="rounded-md border-gray-300 shadow-sm text-sm p-2 border"
           >
             <option value="">Todos os Tipos</option>
-            {Object.keys(ExpenseSubtypes).sort().map((type) => (
+            {[...expenseTypes].sort().map((type) => (
               <option key={type} value={type}>{type}</option>
             ))}
           </select>
@@ -480,7 +486,8 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                 <td className="px-3 py-4 text-sm text-gray-900 font-semibold">{expense.name}</td>
                 <td className="px-3 py-4">
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-1.5 py-0.5 rounded w-fit">
+                    <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded w-fit ${isOrphan(expense) ? 'text-amber-800 bg-amber-100' : 'text-blue-700 bg-blue-50'}`}>
+                      {isOrphan(expense) && <span title="Categoria ou subcategoria inexistente — edite para corrigir">⚠ </span>}
                       {expense.type}
                     </span>
                     <span className="text-[10px] text-gray-400 font-bold uppercase mt-1">{expense.subtype}</span>
