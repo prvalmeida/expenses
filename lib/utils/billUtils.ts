@@ -1,9 +1,15 @@
 import getOpenAI from '../openai';
-import { CardBrand, ExpenseSubtypes, ParsedBillItem } from '@/types';
+import { CardBrand, ParsedBillItem } from '@/types';
 import connectToDatabase from '../mongodb';
 import { BillMapping } from '../models/BillMapping';
+import { getExpenseCategories } from './categoryUtils';
 
-const EXPENSE_TYPES = Object.keys(ExpenseSubtypes).join(', ');
+async function loadCategoryIndex(): Promise<{ typesLabel: string; subtypesByType: Map<string, Set<string>> }> {
+  await connectToDatabase();
+  const categories = await getExpenseCategories();
+  const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
+  return { typesLabel: categories.map(c => c.name).join(', '), subtypesByType };
+}
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -292,6 +298,7 @@ function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
 async function classifyTransactions(transactions: PreprocessedTransaction[]): Promise<ParsedBillItem[]> {
   if (transactions.length === 0) return [];
 
+  const { typesLabel, subtypesByType } = await loadCategoryIndex();
   const payload = transactions.map(t => ({ description: t.description, value: t.value }));
 
   const completion = await getOpenAI().chat.completions.create({
@@ -311,7 +318,7 @@ Retorne APENAS um JSON com a estrutura:
 
 IMPORTANTE:
 - O array "items" deve ter EXATAMENTE o mesmo número de elementos que o array de entrada, na mesma ordem.
-- Para "type", use EXATAMENTE uma das categorias: ${EXPENSE_TYPES}. Se não conseguir classificar, use null.
+- Para "type", use EXATAMENTE uma das categorias: ${typesLabel}. Se não conseguir classificar, use null.
 - Para "subtype", use uma subcategoria compatível com o "type" escolhido. Se não conseguir, use null.
 - Não extraia nem omita transações. Apenas classifique.`,
       },
@@ -324,19 +331,13 @@ IMPORTANTE:
   );
 
   const classifications = raw.items ?? [];
-  const validTypes = new Set(Object.keys(ExpenseSubtypes));
 
   return transactions.map((tx, i) => {
     const cls = classifications[i] ?? { type: null, subtype: null };
-    const resolvedType =
-      cls.type && validTypes.has(cls.type)
-        ? (cls.type as keyof typeof ExpenseSubtypes)
-        : null;
+    const resolvedType = cls.type && subtypesByType.has(cls.type) ? cls.type : null;
     const resolvedSubtype =
-      resolvedType && cls.subtype
-        ? (ExpenseSubtypes[resolvedType] as readonly string[]).includes(cls.subtype)
-          ? cls.subtype
-          : null
+      resolvedType && cls.subtype && subtypesByType.get(resolvedType)!.has(cls.subtype)
+        ? cls.subtype
         : null;
 
     return {
@@ -355,6 +356,7 @@ IMPORTANTE:
 // ─── Legacy path (GPT extraction for unknown banks) ───────────────────────────
 
 async function parseBillTextLegacy(rawText: string): Promise<ParsedBillItem[]> {
+  const { typesLabel, subtypesByType } = await loadCategoryIndex();
   const completion = await getOpenAI().chat.completions.create({
     model: 'gpt-5-nano',
     response_format: { type: 'json_object' },
@@ -397,7 +399,7 @@ Parte C — Contexto por banco (dicas de layout, não filtros):
 - Santander: a fatura pode conter múltiplas seções de cartão (titular, adicionais, virtuais). Processe CADA seção de cartão de forma independente, do início ao fim. Dentro de cada seção: compras no formato "[DD/MM] [ESTABELECIMENTO] [X/Y?] [R$ valor]"; compras parceladas ficam em subseção "Parcelamentos" — incluir TODOS os itens; taxas e encargos ficam em subseção "DESPESAS" ou "ENCARGOS" — incluir TODOS os itens.
 - O campo "date" deve ser "YYYY-MM-DD". Infira o ano com base na data de vencimento mencionada na fatura.
 - Se a compra tiver parcelas, preencha "installmentCurrent" e "installmentTotal" (ambos inteiros). Se não houver, omita esses campos.
-- Para "type", use EXATAMENTE uma das categorias: ${EXPENSE_TYPES}. Se não conseguir classificar com certeza, use null — o item AINDA ASSIM deve aparecer no JSON.
+- Para "type", use EXATAMENTE uma das categorias: ${typesLabel}. Se não conseguir classificar com certeza, use null — o item AINDA ASSIM deve aparecer no JSON.
 - Para "subtype", use uma subcategoria compatível com o "type" escolhido. Se não conseguir classificar, use null.
 - Valores devem ser números positivos (ponto como separador decimal).`,
       },
@@ -409,20 +411,13 @@ Parte C — Contexto por banco (dicas de layout, não filtros):
 
   if (!raw.items?.length) return [];
 
-  const validTypes = new Set(Object.keys(ExpenseSubtypes));
-
   return raw.items
     .filter(item => item.description && item.value !== undefined)
     .map(item => {
-      const resolvedType =
-        item.type && validTypes.has(item.type)
-          ? (item.type as keyof typeof ExpenseSubtypes)
-          : null;
+      const resolvedType = item.type && subtypesByType.has(item.type) ? item.type : null;
       const resolvedSubtype =
-        resolvedType && item.subtype
-          ? (ExpenseSubtypes[resolvedType] as readonly string[]).includes(item.subtype)
-            ? item.subtype
-            : null
+        resolvedType && item.subtype && subtypesByType.get(resolvedType)!.has(item.subtype)
+          ? item.subtype
           : null;
 
       return {
@@ -477,7 +472,7 @@ async function crossReferenceBillMappings(items: ParsedBillItem[]): Promise<Pars
   return items.map(item => {
     const saved = mappingMap.get(item.description.toLowerCase().trim());
     if (!saved) return item;
-    return { ...item, type: saved.type as keyof typeof ExpenseSubtypes, subtype: saved.subtype, recognized: true };
+    return { ...item, type: saved.type as string, subtype: saved.subtype, recognized: true };
   });
 }
 

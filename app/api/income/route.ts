@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../lib/mongodb';
 import Income from '../../../lib/models/Income';
+import { validateIncomeType } from '../../../lib/utils/categoryUtils';
 
 export async function GET() {
   try {
@@ -17,6 +18,9 @@ export async function POST(request: NextRequest) {
     await connectToDatabase();
     const body = await request.json();
     console.log(`income request body: ${JSON.stringify(body)}`)
+    if (!(await validateIncomeType(body.type))) {
+      return NextResponse.json({ error: 'Tipo de receita inválido.' }, { status: 400 });
+    }
     const income = new Income(body);
     console.log(`income: ${JSON.stringify(income)}`)
     await income.save();

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../../lib/mongodb';
 import Expense from '../../../../lib/models/Expense';
 import { computeEffectiveDate } from '../../../../lib/utils/cycleUtils';
+import { validateExpensePair } from '../../../../lib/utils/categoryUtils';
 
 export async function GET(
   request: NextRequest,
@@ -28,6 +29,10 @@ export async function PUT(
   try {
     await connectToDatabase();
     const { name, value, type, subtype, paymentType, cardBrand, date, effectiveDate: clientEffectiveDate } = await request.json();
+
+    if (!(await validateExpensePair(type, subtype))) {
+      return NextResponse.json({ error: 'Categoria ou subcategoria inválida.' }, { status: 400 });
+    }
 
     const effectiveDate = paymentType === 'credit' && cardBrand && date
       ? await computeEffectiveDate(date, cardBrand, paymentType)

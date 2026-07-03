@@ -1,9 +1,11 @@
 'use client';
 
-import { IncomeForm, IncomeTypes, IncomeType } from "@/types";
+import { IncomeForm } from "@/types";
 import { useState } from "react";
+import { useCategories } from "@/hooks/useCategories";
 
 export default function AddIncome({ onIncomeAdded }: { onIncomeAdded: () => void }) {
+  const { incomeTypes } = useCategories();
   const [incomeForm, setIncomeForm] = useState<IncomeForm>({
     name: '',
     value: '',
@@ -66,12 +68,12 @@ export default function AddIncome({ onIncomeAdded }: { onIncomeAdded: () => void
           <label className="block text-sm font-medium text-gray-700">Tipo</label>
           <select
             value={incomeForm.type}
-            onChange={(e) => setIncomeForm({ ...incomeForm, type: e.target.value as IncomeType | '' })}
+            onChange={(e) => setIncomeForm({ ...incomeForm, type: e.target.value })}
             className="w-full p-2 border rounded"
             required
           >
             <option value="">Selecione</option>
-            {IncomeTypes.map(type => (
+            {incomeTypes.map(type => (
               <option key={type} value={type}>{type}</option>
             ))}
           </select>

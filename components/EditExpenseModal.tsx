@@ -1,6 +1,6 @@
 'use client';
 
-import { CardBrand, Expense, ExpenseForm, ExpenseSubtypes } from '@/types';
+import { CardBrand, Expense, ExpenseForm } from '@/types';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import ExpenseTypeSelect from './ExpenseTypeSelect';
@@ -41,7 +41,7 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
         case 'installments':
           return { ...prev, installments: value === '' ? undefined : parseInt(value) };
         case 'type':
-          return { ...prev, type: value as keyof typeof ExpenseSubtypes | '', subtype: '' };
+          return { ...prev, type: value, subtype: '' };
         case 'paymentType':
           return { ...prev, paymentType: value as ExpenseForm['paymentType'] };
         case 'cardBrand':

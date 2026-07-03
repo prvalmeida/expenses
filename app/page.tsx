@@ -8,10 +8,11 @@ import DashboardDetails from './DashboardDetails';
 import CardConfigPage from './CardConfig';
 import ImportReceipt from './ImportReceipt';
 import ImportBill from './ImportBill';
+import CategoryConfig from './CategoryConfig';
 
 export default function MainPage() {
   // 1. Update the type to include 'cardConfig'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'dashboardDetails' | 'addExpense' | 'addIncome' | 'cardConfig' | 'importReceipt' | 'importBill'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'dashboardDetails' | 'addExpense' | 'addIncome' | 'cardConfig' | 'categoryConfig' | 'importReceipt' | 'importBill'>('dashboard');
 
   // Carries the dashboard's selected month / view mode into the details view
   const [detailsMonth, setDetailsMonth] = useState<string>(() => {
@@ -84,6 +85,15 @@ export default function MainPage() {
           </button>
 
           <button
+            onClick={() => setCurrentView('categoryConfig')}
+            className={`w-full text-left p-2 rounded transition-colors ${
+              currentView === 'categoryConfig' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+            }`}
+          >
+            🏷️ Categorias
+          </button>
+
+          <button
             onClick={() => setCurrentView('importReceipt')}
             className={`w-full text-left p-2 rounded transition-colors ${
               currentView === 'importReceipt' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
@@ -126,6 +136,10 @@ export default function MainPage() {
         
         {currentView === 'cardConfig' && (
           <CardConfigPage />
+        )}
+
+        {currentView === 'categoryConfig' && (
+          <CategoryConfig />
         )}
 
         {currentView === 'importReceipt' && (

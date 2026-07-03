@@ -1,11 +1,10 @@
 import mongoose from 'mongoose';
-import { ExpenseSubtypes } from '@/types';
 
 const ProductMappingSchema = new mongoose.Schema({
   cnpj: { type: String, required: true },
   address: { type: String },
   description: { type: String, required: true },
-  type: { type: String, required: true, enum: Object.keys(ExpenseSubtypes) },
+  type: { type: String, required: true },
   subtype: { type: String, required: false },
 });
 

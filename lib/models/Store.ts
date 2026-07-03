@@ -1,11 +1,10 @@
 import mongoose from 'mongoose';
-import { ExpenseSubtypes } from '@/types';
 
 const StoreSchema = new mongoose.Schema({
   cnpj: { type: String, required: true },
   name: { type: String, required: true },
   address: { type: String },
-  defaultType: { type: String, enum: Object.keys(ExpenseSubtypes) },
+  defaultType: { type: String },
 });
 
 StoreSchema.index({ cnpj: 1, address: 1 }, { unique: true });

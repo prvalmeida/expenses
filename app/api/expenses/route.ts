@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../lib/mongodb';
 import Expense from '../../../lib/models/Expense';
+import { validateExpensePair } from '../../../lib/utils/categoryUtils';
 
 export async function GET() {
   try {
@@ -17,6 +18,9 @@ export async function POST(request: NextRequest) {
     await connectToDatabase();
     const body = await request.json();
     console.log(`request body: ${JSON.stringify(body)}`)
+    if (!(await validateExpensePair(body.type, body.subtype))) {
+      return NextResponse.json({ error: 'Categoria ou subcategoria inválida.' }, { status: 400 });
+    }
     const expense = new Expense(body);
     console.log(`expense: ${JSON.stringify(expense)}`)
     await expense.save();

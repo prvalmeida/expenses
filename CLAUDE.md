@@ -51,6 +51,14 @@ The Dashboard lets users toggle between "DATA DA COMPRA" (purchase view) and "FL
 
 **Dashboard table:** Supports column sorting (date/name/type/value, click headers to toggle asc/desc) and category filtering via a dropdown above the table. Both are purely client-side — no extra API calls.
 
+**Dynamic categories (DB-driven):** Expense/income categories and expense subtypes live in the `Category` collection (`{ kind: 'expense' | 'income', name, subtypes[], order? }`, unique on `(kind, name)`), NOT in `types/index.ts`. `lib/utils/categoryUtils.ts` is the server-side single source of truth (fetch with a short per-request cache, validate `(type, subtype)` pairs, count associated data, and run rename/reassign cascades). Client code reads categories through the `hooks/useCategories.ts` hook (shared module-level cache + `refetch`). The `ExpenseSubtypes`/`IncomeTypes` constants in `types/index.ts` are retained ONLY as seed data for `POST /api/categories/seed`; do not consume them elsewhere. All `type`/`subtype` fields are plain `string`, validated at API boundaries.
+
+**Category cascade & delete-guard:** Renaming a type/subtype cascades via `updateMany` to `Expense` (+ `Income` for income kind), `ProductMapping`, `BillMapping`, and `Store.defaultType` (subtype renames are scoped to their parent type) — subtypes travel with the renamed category, so no orphaning occurs. Renaming a subtype rejects with 409 if the target name already exists on the category. Deleting a category/subtype that still has associated records returns HTTP 409 `{ hasAssociated: true, count }` (no delete). The UI (`CategoryConfig`) then offers two distinct paths: reassign (`?reassignTo=`) or force (`?force=true`, deletes and leaves records orphaned). Reassigning a **type** merges into a *different* target via `cascadeReassignExpenseType`, which also `$unset`s any subtype not present on the target (a plain rename cannot orphan subtypes, but a merge can) — never use `cascadeRenameExpenseType` for the merge path.
+
+**Orphan detection:** There is NO schema flag for orphans. The Dashboard and DashboardDetails compare each expense's `type`/`subtype` against the live category list (`useCategories`) at read time and render a ⚠ marker when the category/subtype no longer exists; `ExpenseTypeSelect` (used by both add and edit flows) shows an inline warning and forces re-selection when the current value is invalid.
+
+**Category validation at import boundaries:** Besides the expense/income POST/PUT routes, the bulk import routes validate against `Category` too: `/api/receipts/import` rejects the whole batch (400) if any item/mapping has an invalid `(type, subtype)` pair; `/api/bills/import` skips items whose type no longer exists and drops subtypes not valid for the type (the schema no longer enum-validates, so this is the only guard).
+
 ### Directory structure
 
 - `app/` — Next.js App Router pages and API routes; all UI pages are co-located here as `.tsx` files
@@ -61,18 +69,22 @@ The Dashboard lets users toggle between "DATA DA COMPRA" (purchase view) and "FL
 - `app/api/receipts/parse/` — POST: accepts a PDF file, extracts text via `pdf-parse`, parses with GPT
 - `app/api/receipts/parse-url/` — POST: accepts a SEFAZ NFC-e URL (*.gov.br only), fetches HTML, parses with GPT
 - `app/api/receipts/import/` — POST: saves confirmed receipt items as expenses; upserts new `ProductMapping` entries
-- `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store` and `ProductMapping` models
+- `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, and `Category` models
+- `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
+- `app/api/categories/seed/` — POST: idempotent upsert of `Category` docs from the `ExpenseSubtypes`/`IncomeTypes` seed constants
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
-- `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`
+- `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
 - `lib/utils/cycleUtils.ts` — `getCycle`, `computeEffectiveDate`, `DEFAULT_SETTINGS` (single source of truth — do not duplicate)
-- `lib/utils/receiptUtils.ts` — `interpretAndCrossReference`: calls GPT, upserts `Store`, cross-references `ProductMapping`
+- `lib/utils/categoryUtils.ts` — category fetch/cache, `validateExpensePair`, `validateIncomeType`, `count*` and `cascadeRename*` helpers (single source of truth — do not duplicate)
+- `lib/utils/receiptUtils.ts` — `interpretAndCrossReference`: calls GPT, upserts `Store`, cross-references `ProductMapping`; supermercado subtypes come from `Category` via `categoryUtils`
+- `hooks/useCategories.ts` — client hook exposing `expenseTypes`, `incomeTypes`, `subtypesFor`, `isValidType`, `isValidPair`, `refetch`
 - `components/` — Shared React components (`ExpenseCharts`, `ExpenseTypeSelect`, `EditExpenseModal`)
-- `types/index.ts` — All shared TypeScript types, the `ExpenseSubtypes` map (type → subtypes), `CardBrand` enum, `IncomeTypes`, `ParsedReceiptItem`, `ConfirmedReceiptItem`
+- `types/index.ts` — All shared TypeScript types; `ExpenseSubtypes`/`IncomeTypes` remain ONLY as seed data for the seed route (not the runtime source of truth), plus `CardBrand` enum and parsed/confirmed item types
 
 ### Data model highlights
 
-- `ExpenseSubtypes` in `types/index.ts` is the single source of truth for expense categories and their subtypes — both the Mongoose schema validator and the UI `ExpenseTypeSelect` component derive from it.
+- The `Category` collection is the single source of truth for expense/income categories and expense subtypes. Model schemas no longer enum-validate `type`/`subtype`; validation happens at API boundaries via `categoryUtils`. `Category` docs must be seeded (`POST /api/categories/seed`) before the UI can read categories.
 - `CardBrand` enum values (`Master Santander`, `Visa Caixa`, `Elo Caixa`) are used as keys in the card-cycles default settings.
 - `CardCycle` stores per-card, per-month closing/due date overrides; the API falls back to `DEFAULT_SETTINGS` from `cycleUtils.ts` when no override exists.
 - `Store` stores `{ cnpj, address, name }` — upserted on every receipt parse, keyed by `(cnpj, address)`.
@@ -80,4 +92,4 @@ The Dashboard lets users toggle between "DATA DA COMPRA" (purchase view) and "FL
 
 ### Navigation
 
-`app/page.tsx` is a single-page shell that renders one of five views based on `currentView` state: `dashboard`, `addExpense`, `addIncome`, `cardConfig`, or `importReceipt`. There is no client-side router — view switching is purely state-driven.
+`app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, or `importBill`. There is no client-side router — view switching is purely state-driven.

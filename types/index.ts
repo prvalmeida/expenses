@@ -81,15 +81,12 @@ export const ExpenseSubtypes = {
   'trabalho': ['assinaturas', 'serviços']
 } as const;
 
-// Helper to get the union of all possible subtypes
-export type Subtype = (typeof ExpenseSubtypes)[keyof typeof ExpenseSubtypes][number];
-
 interface BaseExpense {
   _id?: string;
   name: string;
   value: number;
-  type: keyof typeof ExpenseSubtypes;
-  subtype?: Subtype;
+  type: string;
+  subtype?: string;
   date: string;
   effectiveDate: string;
   transactionId?: string;
@@ -114,7 +111,7 @@ export type Expense = CreditExpense | OtherExpense;
 export type ExpenseForm = {
   name: string;
   value: number | '';
-  type: keyof typeof ExpenseSubtypes | ''; 
+  type: string;
   subtype?: string;
   paymentType: 'credit' | 'cash' | 'debit' | 'pix' | 'food-voucher' | 'meal-voucher' |'fuel-voucher' | '';
   cardBrand: CardBrand | undefined;
@@ -124,20 +121,20 @@ export type ExpenseForm = {
 
 export const IncomeTypes = ['salary', 'bonus', 'other'] as const;
 
-export type IncomeType = typeof IncomeTypes[number];
+export type IncomeType = string;
 
 export interface Income {
   _id?: string;
   name: string;
   value: number;
-  type: IncomeType;
+  type: string;
   date: string;
 }
 
 export type IncomeForm = {
   name: string;
   value: number | '';
-  type: IncomeType | '';
+  type: string;
   date: string;
 }
 
@@ -145,7 +142,7 @@ export type ParsedReceiptItem = {
   description: string;
   value: number;
   unitPrice?: number;
-  type: keyof typeof ExpenseSubtypes | null;
+  type: string | null;
   subtype: string | null;
   recognized: boolean;
   fromMapping?: boolean;
@@ -156,7 +153,7 @@ export type ParsedReceiptItem = {
 export type ConfirmedReceiptItem = {
   description: string;
   value: number;
-  type: keyof typeof ExpenseSubtypes;
+  type: string;
   subtype?: string;
   qty?: number;
   unit?: string;
@@ -168,7 +165,7 @@ export type ParsedBillItem = {
   value: number;
   installmentCurrent?: number;
   installmentTotal?: number;
-  type: keyof typeof ExpenseSubtypes | null;
+  type: string | null;
   subtype: string | null;
   recognized: boolean;
   isPossibleDuplicate?: boolean;
@@ -176,7 +173,7 @@ export type ParsedBillItem = {
 
 export type NewBillMapping = {
   description: string;
-  type: keyof typeof ExpenseSubtypes;
+  type: string;
   subtype: string | null;
 };
 
@@ -186,6 +183,6 @@ export type ConfirmedBillItem = {
   value: number;
   installmentCurrent?: number;
   installmentTotal?: number;
-  type: keyof typeof ExpenseSubtypes | null;
+  type: string | null;
   subtype: string | null;
 };

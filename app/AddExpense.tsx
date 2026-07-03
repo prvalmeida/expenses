@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import ExpenseTypeSelect from '../components/ExpenseTypeSelect';
 import { addMonthsClamped } from '../lib/utils/dateUtils';
-import { CardBrand, Expense, ExpenseForm, ExpenseSubtypes, Subtype } from '../types';
+import { CardBrand, Expense, ExpenseForm } from '../types';
 
 function randomUUID(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -78,8 +78,8 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
 
       const common = {
         name: expense.name,
-        type: expense.type as keyof typeof ExpenseSubtypes,
-        subtype: expense.subtype as Subtype,
+        type: expense.type,
+        subtype: expense.subtype,
         date: dateString,
         effectiveDate: effectiveDateString,
         transactionId: isCredit ? transactionId : undefined
@@ -121,10 +121,10 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
           return { ...prev, installments: value === '' ? undefined : parseInt(value) };
         
         case 'type':
-          return { 
-            ...prev, 
-            type: value as keyof typeof ExpenseSubtypes | '', 
-            subtype: '' 
+          return {
+            ...prev,
+            type: value,
+            subtype: ''
           };
         
         case 'paymentType':

@@ -1,6 +1,7 @@
 'use client';
 
 import { Expense, Income } from "@/types";
+import { useCategories } from "@/hooks/useCategories";
 
 const VOUCHER_PAYMENT_TYPES = ['food-voucher', 'meal-voucher', 'fuel-voucher'];
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -10,6 +11,7 @@ type Props = {
 };
 
 export default function DashBoard({ onOpenDetails }: Props) {
+  const { isValidType } = useCategories();
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [allIncomes, setAllIncomes] = useState<Income[]>([]);
 
@@ -186,7 +188,10 @@ export default function DashBoard({ onOpenDetails }: Props) {
           <ul className="divide-y divide-gray-100">
             {summaryByCategory.map(([type, value]) => (
               <li key={type} className="flex items-center justify-between px-5 py-2.5">
-                <span className="text-xs font-bold text-blue-700 uppercase bg-blue-50 px-2 py-0.5 rounded">{type}</span>
+                <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${isValidType(type) ? 'text-blue-700 bg-blue-50' : 'text-amber-800 bg-amber-100'}`}>
+                  {!isValidType(type) && <span title="Categoria inexistente — edite os gastos para corrigir">⚠ </span>}
+                  {type}
+                </span>
                 <span className="text-sm font-black text-gray-900">
                   R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
