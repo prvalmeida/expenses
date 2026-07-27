@@ -18,7 +18,16 @@
       "Bash(findstr /E \"\\\\.ts$ \\\\.tsx$ \\\\.js$\")",
       "Bash(findstr /V node_modules)",
       "Bash(Get-ChildItem -Path E:\\\\projects\\\\expenses -Recurse -Filter \"*.tsx\")",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(docker info *)",
+      "Bash(rtk grep *)",
+      "Bash(rtk ls *)",
+      "Bash(cmd //c \"dir /AL .next\\\\dev\\\\node_modules & echo ==== & dir /AL .next\\\\node_modules\")",
+      "Bash(cmd //c \"for /f \\\\\"delims=\\\\\" %d in \\('dir /b /al /s .next 2^>nul'\\) do @rmdir \\\\\"%d\\\\\"\")",
+      "Bash(cmd //c \"dir /b /al /s .next 2>nul\")",
+      "PowerShell(Get-ChildItem -Path .next -Recurse -Force -Attributes ReparsePoint | ForEach-Object { cmd /c rmdir \"`\"$\\($_.FullName\\)`\"\" }; Write-Output \"remaining:\"; \\(Get-ChildItem -Path .next -Recurse -Force -Attributes ReparsePoint | Measure-Object\\).Count)",
+      "PowerShell(Get-Process *)",
+      "PowerShell($p = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess; if \\($p\\) { Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" | Select-Object ProcessId,CommandLine | Format-List } else { \"no listener\" })"
     ]
   }
 }

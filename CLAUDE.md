@@ -14,9 +14,13 @@ npm run lint     # Run ESLint
 ### Docker
 
 ```bash
-docker compose up --build app   # Development with hot-reload
-docker compose up --build web   # Production build
+docker compose --profile dev up --build    # Development with hot-reload (app)
+docker compose --profile prod up --build   # Production standalone build (web)
 ```
+
+The `app` (dev) and `web` (prod) services are in mutually exclusive Compose profiles (`dev`/`prod`) since both publish host port 3000 — run one at a time. A bare `docker compose up` starts only `mongodb`. Tear down with `docker compose down --remove-orphans` (a bare `down` leaves the profiled container up and fails network removal with "has active endpoints").
+
+The production `runner` image uses Next.js **standalone output** (`output: 'standalone'` in `next.config.ts`): it copies only `.next/standalone`, `.next/static`, and `public`, runs as a non-root user, binds `0.0.0.0:$PORT`, and starts via `node server.js`. Secrets are **never baked into the image** — `MONGODB_URI`, `OPENAI_API_KEY`, and `PDF_KEY` are injected at runtime (compose `env_file`, or the cloud platform's secret manager). Packages in `serverExternalPackages` (`pdf-parse`, `pdfjs-dist`) are copied to `.next/standalone/node_modules`; all other deps (e.g. `openai`) are bundled into the compiled server chunks. See `README_DOCKER.md` and `.env.example`.
 
 ## Environment
 

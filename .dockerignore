@@ -5,8 +5,11 @@ build
 .git
 *.log
 .env
+.env.*
 .DS_Store
 .vscode
 .idea
+.claude
 coverage
 npm-debug.log
+README_DOCKER.md
