@@ -53,6 +53,12 @@ function parseBRLAmount(raw: string): number {
   return parseFloat(raw.replace(/\./g, '').replace(',', '.'));
 }
 
+// Column gaps inside a merchant name survive as runs of spaces in some renderings and as a
+// single space in others — collapse them so BillMapping keys stay stable across both.
+function normalizeDescription(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ');
+}
+
 function extractDueDate(rawText: string): { dueMonth: number; dueYear: number } {
   const match = rawText.match(/\b\d{2}\/(\d{2})\/(\d{4})\b/);
   if (match) return { dueMonth: parseInt(match[1], 10), dueYear: parseInt(match[2], 10) };
@@ -67,17 +73,15 @@ function buildDate(dd: number, mm: number, dueMonth: number, dueYear: number): s
 
 // ─── Santander parser ─────────────────────────────────────────────────────────
 
-// Parcelamentos — has installment field "DD/MM" between description and value
-// Format C: leading digit  "3   03/02 PANVEL FARMACIAS   03/03   83,18"
-const S_FMT_C = /^(\d+)\s+(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{2}\/\d{2})\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
-// Format D: no leading digit  "22/07 GRAN EDUCACAO   09/12   59,90"
-const S_FMT_D = /^(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{2}\/\d{2})\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
-
-// Despesas — value immediately after description (no installment field)
-// Format A: leading digit  "3   22/03 PASTEL DA BANCA 71 LTD   29,00"
-const S_FMT_A = /^(\d+)\s+(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
-// Format B: no leading digit  "08/04 SCP COMPLETO- ABR/26   23,45"
-const S_FMT_B = /^(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
+// Rows are anchored by the "DD/MM" purchase date and the trailing amount; the optional
+// leading digit is the (unused) card-sequence column. Column separators are NOT reliable —
+// the PDF renderer may emit a single space — so only the anchors are trusted.
+// Parcelamentos — installment field "NN/NN" sits between description and value
+// "3   03/02 PANVEL FARMACIAS   03/03   83,18" · "22/07 GRAN EDUCACAO   09/12   59,90"
+const S_PARCELADO = /^(?:\d+\s+)?(\d{2})\/(\d{2})\s+(.+?)\s+(\d{2})\/(\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
+// Despesas — value immediately after description, no installment field
+// "3   22/03 PASTEL DA BANCA 71 LTD   29,00" · "08/04 SCP COMPLETO- ABR/26   23,45"
+const S_DESPESA   = /^(?:\d+\s+)?(\d{2})\/(\d{2})\s+(.+?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
 
 // Section markers — state machine uses these to track context
 const S_CARDHOLDER   = /^(@?\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔÕÚÇ\s]+)\s*-\s*\d{4}\s+X{4}\s+X{4}\s+\d{4}\s*$/;
@@ -102,23 +106,30 @@ function parseSantanderLine(
   dueYear: number,
 ): PreprocessedTransaction | null {
   if (subsection === 'Parcelamentos') {
-    let m = line.match(S_FMT_C);
+    const m = line.match(S_PARCELADO);
     if (m) {
-      const [cur, tot] = m[5].split('/').map(Number);
-      return { date: buildDate(+m[2], +m[3], dueMonth, dueYear), description: m[4].trim(), value: parseBRLAmount(m[6]), installmentCurrent: cur, installmentTotal: tot, cardholder, subsection };
+      return {
+        date: buildDate(+m[1], +m[2], dueMonth, dueYear),
+        description: normalizeDescription(m[3]),
+        value: parseBRLAmount(m[6]),
+        installmentCurrent: parseInt(m[4], 10),
+        installmentTotal:   parseInt(m[5], 10),
+        cardholder,
+        subsection,
+      };
     }
-    m = line.match(S_FMT_D);
-    if (m) {
-      const [cur, tot] = m[4].split('/').map(Number);
-      return { date: buildDate(+m[1], +m[2], dueMonth, dueYear), description: m[3].trim(), value: parseBRLAmount(m[5]), installmentCurrent: cur, installmentTotal: tot, cardholder, subsection };
-    }
+    return null;
   }
 
-  if (subsection === 'Despesas') {
-    let m = line.match(S_FMT_A);
-    if (m) return { date: buildDate(+m[2], +m[3], dueMonth, dueYear), description: m[4].trim(), value: parseBRLAmount(m[5]), cardholder, subsection };
-    m = line.match(S_FMT_B);
-    if (m) return { date: buildDate(+m[1], +m[2], dueMonth, dueYear), description: m[3].trim(), value: parseBRLAmount(m[4]), cardholder, subsection };
+  const m = line.match(S_DESPESA);
+  if (m) {
+    return {
+      date: buildDate(+m[1], +m[2], dueMonth, dueYear),
+      description: normalizeDescription(m[3]),
+      value: parseBRLAmount(m[4]),
+      cardholder,
+      subsection,
+    };
   }
 
   return null;
@@ -200,12 +211,12 @@ function parseCaixaLine(
 
   const date = buildDate(parseInt(m[1], 10), parseInt(m[2], 10), dueMonth, dueYear);
   const value = parseBRLAmount(m[4]);
-  const middle = m[3].trim();
+  const middle = normalizeDescription(m[3]);
 
   // Installments show up in both subsections — "ALLIANZ SEGU 07 de 12" sits under COMPRAS
   const install = middle.match(C_INSTALL_TOKEN);
   if (install) {
-    const description = middle.slice(0, install.index ?? 0).trim();
+    const description = normalizeDescription(middle.slice(0, install.index ?? 0));
     if (description) {
       return {
         date,
