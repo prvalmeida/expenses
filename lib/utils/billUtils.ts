@@ -171,7 +171,7 @@ const C_CARDHOLDER     = /^([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔ�
 const C_COMPRAS_HDR    = /^COMPRAS\s+\(Cartão\s+\d{4}\)\s*$/;
 const C_PARCELADAS_HDR = /^COMPRAS PARCELADAS\s+\(Cartão\s+\d{4}\)\s*$/;
 const C_ANUIDADE_SEC   = /^ANUIDADE\s*$/;
-const C_ANUIDADE_LINE  = /^ANUIDADE\s{2,}([\d,]+)([DC])\s*$/;
+const C_ANUIDADE_LINE  = /^ANUIDADE\s+([\d.,]+)([DC])\s*$/;
 const C_SUBTOTAL       = /^(Total|TOTAL)\b/;
 const C_COL_HEADER     = /^(Data|Quantidade)\s+(Descrição|Parcela|Data)\s+/;
 // Page-break noise lines injected by the PDF renderer — can appear mid-section
@@ -180,62 +180,48 @@ const C_INFO_COMPL     = /^Informações Complementares\s*$/;
 const C_DEMONSTRATIVO  = /^Demonstrativo\s*$/;
 const C_CREDITO_HDR    = /^Crédito\/Débito R\$\s*$/;
 
-// Installment field in COMPRAS PARCELADAS: "05 DE 10"
-const C_INSTALL_FIELD  = /^(\d{2}) DE (\d{2})$/i;
-// Value + D/C marker at end of field
-const C_VALUE_DC       = /^(\d{1,3}(?:\.\d{3})*,\d{2})([DC])$/;
+// A transaction row is anchored by a leading "DD/MM" date and a trailing "1.234,56D" amount.
+// Column separators are NOT reliable here: the PDF renderer may emit a single space between
+// date, description, city and value, so everything between the two anchors is one segment.
+const C_ROW            = /^(\d{2})\/(\d{2})\s+(.+?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*([DC])\s*$/;
+// Installment token inside the middle segment: "01 DE 03" or "07 de 12"
+const C_INSTALL_TOKEN  = /\b(\d{2})\s+DE\s+(\d{2})\b/i;
 
 function parseCaixaLine(
-  parts: string[],
+  line: string,
   subsection: 'COMPRAS' | 'COMPRAS_PARCELADAS',
   cardholder: string,
   dueMonth: number,
   dueYear: number,
 ): PreprocessedTransaction | null {
-  if (parts.length < 4) return null;
+  const m = line.match(C_ROW);
+  if (!m) return null;
+  if (m[5] === 'C') return null; // credit line — exclude
 
-  const dateMatch = parts[0].match(/^(\d{2})\/(\d{2})$/);
-  if (!dateMatch) return null;
+  const date = buildDate(parseInt(m[1], 10), parseInt(m[2], 10), dueMonth, dueYear);
+  const value = parseBRLAmount(m[4]);
+  const middle = m[3].trim();
 
-  const lastPart = parts[parts.length - 1];
-  const valueMatch = lastPart.match(C_VALUE_DC);
-  if (!valueMatch) return null;
-  if (valueMatch[2] === 'C') return null; // credit line — exclude
-
-  const dd = parseInt(dateMatch[1], 10);
-  const mm = parseInt(dateMatch[2], 10);
-  const value = parseBRLAmount(valueMatch[1]);
-  const date = buildDate(dd, mm, dueMonth, dueYear);
-
-  if (subsection === 'COMPRAS_PARCELADAS') {
-    // Scan parts[2..n-3] for installment field — handles merchant names split across multiple fields
-    if (parts.length >= 5) {
-      for (let i = 2; i < parts.length - 2; i++) {
-        const installMatch = parts[i].match(C_INSTALL_FIELD);
-        if (installMatch) {
-          return {
-            date,
-            description: parts.slice(1, i).join(' ').trim(),
-            value,
-            installmentCurrent: parseInt(installMatch[1], 10),
-            installmentTotal:   parseInt(installMatch[2], 10),
-            cardholder,
-            subsection,
-          };
-        }
-      }
+  // Installments show up in both subsections — "ALLIANZ SEGU 07 de 12" sits under COMPRAS
+  const install = middle.match(C_INSTALL_TOKEN);
+  if (install) {
+    const description = middle.slice(0, install.index ?? 0).trim();
+    if (description) {
+      return {
+        date,
+        description,
+        value,
+        installmentCurrent: parseInt(install[1], 10),
+        installmentTotal:   parseInt(install[2], 10),
+        cardholder,
+        subsection,
+      };
     }
-    // Fallback: include without installment info
-    return { date, description: parts[1].trim(), value, cardholder, subsection };
   }
 
-  // COMPRAS — [date, description, (optional *suffix...), city, value+D/C]
-  // Merchant name may be split by 2+ spaces when the suffix starts with '*'
-  let description = parts[1].trim();
-  for (let i = 2; i < parts.length - 1 && parts[i].startsWith('*'); i++) {
-    description += ' ' + parts[i];
-  }
-  return { date, description, value, cardholder, subsection };
+  // No installment token: merchant and city are separated only by a space and both may
+  // contain spaces, so the boundary is not recoverable — keep the whole segment.
+  return { date, description: middle, value, cardholder, subsection };
 }
 
 function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
@@ -285,8 +271,7 @@ function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
 
     if (!currentSubsection || (currentSubsection !== 'COMPRAS' && currentSubsection !== 'COMPRAS_PARCELADAS')) continue;
 
-    const parts = line.split(/\s{2,}/).map(s => s.trim()).filter(s => s.length > 0);
-    const tx = parseCaixaLine(parts, currentSubsection, currentCardholder, dueMonth, dueYear);
+    const tx = parseCaixaLine(line, currentSubsection, currentCardholder, dueMonth, dueYear);
     if (tx) results.push(tx);
   }
 
@@ -481,16 +466,22 @@ async function crossReferenceBillMappings(items: ParsedBillItem[]): Promise<Pars
 export async function parseBillText(rawText: string, cardBrand?: CardBrand): Promise<ParsedBillItem[]> {
   let items: ParsedBillItem[];
 
-  if (cardBrand === CardBrand.MasterSantander) {
-    console.log('[parseBillText] Santander — extracting deterministically');
-    const transactions = preprocessSantanderText(rawText);
-    console.log(`[parseBillText] Santander — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
-    items = await classifyTransactions(transactions);
-  } else if (cardBrand === CardBrand.Visa || cardBrand === CardBrand.EloCaixa) {
-    console.log('[parseBillText] Caixa — extracting deterministically');
-    const transactions = preprocessCaixaText(rawText);
-    console.log(`[parseBillText] Caixa — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
-    items = await classifyTransactions(transactions);
+  if (cardBrand === CardBrand.MasterSantander || cardBrand === CardBrand.Visa || cardBrand === CardBrand.EloCaixa) {
+    const bank = cardBrand === CardBrand.MasterSantander ? 'Santander' : 'Caixa';
+    console.log(`[parseBillText] ${bank} — extracting deterministically`);
+    const transactions = cardBrand === CardBrand.MasterSantander
+      ? preprocessSantanderText(rawText)
+      : preprocessCaixaText(rawText);
+    console.log(`[parseBillText] ${bank} — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
+
+    if (transactions.length === 0) {
+      // A layout/renderer change silently yields an empty import screen — degrade to the
+      // GPT extractor instead, and make the regression visible in the logs.
+      console.warn(`[parseBillText] ${bank} — 0 transactions, falling back to GPT extraction`);
+      items = await parseBillTextLegacy(rawText);
+    } else {
+      items = await classifyTransactions(transactions);
+    }
   } else {
     items = await parseBillTextLegacy(rawText);
   }
