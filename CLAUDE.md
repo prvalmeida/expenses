@@ -14,9 +14,29 @@ npm run lint     # Run ESLint
 ### Docker
 
 ```bash
-docker compose up --build app   # Development with hot-reload
-docker compose up --build web   # Production build
+docker compose --profile dev up --build    # Development with hot-reload (app)
+docker compose --profile prod up --build   # Production standalone build (web)
 ```
+
+The `app` (dev) and `web` (prod) services are in mutually exclusive Compose profiles (`dev`/`prod`) since both publish host port 3000 — run one at a time. A bare `docker compose up` starts only `mongodb`. Tear down with `docker compose down --remove-orphans` (a bare `down` leaves the profiled container up and fails network removal with "has active endpoints").
+
+The production `runner` image uses Next.js **standalone output** (`output: 'standalone'` in `next.config.ts`): it copies only `.next/standalone`, `.next/static`, and `public`, runs as a non-root user, binds `0.0.0.0:$PORT`, and starts via `node server.js`. Secrets are **never baked into the image** — `MONGODB_URI`, `OPENAI_API_KEY`, and `PDF_KEY` are injected at runtime (compose `env_file`, or the cloud platform's secret manager). Packages in `serverExternalPackages` (`pdf-parse`, `pdfjs-dist`) are copied to `.next/standalone/node_modules`; all other deps (e.g. `openai`) are bundled into the compiled server chunks. See `README_DOCKER.md` and `.env.example`.
+
+### CI/CD
+
+`.github/workflows/ci.yml` runs on every push, any branch. There is deliberately **no** `pull_request` trigger — it would double every run for branches with an open PR (a concurrency group cannot dedupe them: the two events produce different `github.ref` values, `refs/heads/<branch>` vs `refs/pull/N/merge`). The cost is that fork branches go unchecked. Job graph:
+
+```
+lint ∥ build ∥ verify-tag → docker → release
+```
+
+`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
+
+The last three jobs are tag-only (`refs/tags/v*`). **Releases must be tagged on `main`**: Actions has no native "tag on branch X" filter, so `verify-tag` checks out with `fetch-depth: 0` (a shallow checkout makes the check silently unreliable) and fails if the tagged commit is not an ancestor of `origin/main`.
+
+Images publish to **`ghcr.io/prvalmeida/expenses`** authenticated with the built-in `GITHUB_TOKEN` — no registry secrets. A `vX.Y.Z` tag yields `X.Y.Z`, `X.Y`, `X`, and `sha-<short>`; `latest` moves only when the tag has no hyphen, so prereleases (`v2.0.0-rc.1`) never claim it. The build sets **no** `target` — the Dockerfile's final stage is `runner`, and naming a target would ship the hot-reload `dev` stage. `release` gates on `docker` so no release ever points at a version with no image.
+
+All third-party actions are pinned to full commit SHAs: the `docker` and `release` jobs hold `packages: write` / `contents: write`, and a mutable tag there is a supply-chain hole.
 
 ## Environment
 
