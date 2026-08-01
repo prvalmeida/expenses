@@ -94,8 +94,31 @@ Notes for cloud hosts:
   managed database (MongoDB Atlas, DocumentDB, etc.).
 - Inject `MONGODB_URI`, `OPENAI_API_KEY`, and `PDF_KEY` via the platform's secret
   manager (Cloud Run secrets, ECS task secrets, Fly secrets), not into the image.
-- The image exposes a `HEALTHCHECK` on `/`; wire it to the platform's liveness/
-  readiness probe if desired.
+- The image exposes a `HEALTHCHECK` on `GET /api/health`. The route pings MongoDB
+  with a ~2.5s internal deadline and returns **200** (`{ status, uptime,
+  timestamp }`) when the database answers, **503** otherwise — never a `500`, and
+  never any failure detail in the body, since the endpoint is unauthenticated and
+  driver errors carry the cluster hostname. Both responses carry
+  `Cache-Control: no-store`.
+
+  Wire it to the platform probe:
+
+  - **EasyPanel** — health check path `/api/health`, interval 30s, timeout 5s,
+    retries 3, start period 40s (matches the image's own `HEALTHCHECK`).
+  - **AWS ALB target group** — protocol `HTTP`, path `/api/health`, success codes
+    `200`, timeout `4` seconds (must stay above the route's 2.5s deadline and
+    below the interval), interval `30` seconds, healthy threshold `2`, unhealthy
+    threshold `3`.
+
+  Note this is stricter than the previous check on `/`: an instance whose
+  database is unreachable now fails the probe instead of serving the React shell.
+  This is a *readiness* signal delivered through a channel some platforms treat as
+  *liveness* — Docker Swarm and EasyPanel restart containers whose healthcheck
+  fails. A database outage will therefore cycle every container, and a restarted
+  one comes back unhealthy too (`instrumentation.ts` `register()` fails, caught),
+  so the loop lasts as long as the outage. Size the platform's restart policy
+  accordingly, or point the probe at a shallower path if you want restarts to
+  track only process death.
 
 ## Releasing
 

@@ -96,6 +96,7 @@ The Dashboard lets users toggle between "DATA DA COMPRA" (purchase view) and "FL
 - `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, and `Category` models
 - `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
 - `app/api/categories/seed/` — POST: forced reseed; thin wrapper over `seedCategories()` in `categoryUtils.ts`
+- `app/api/health/` — GET: container/load-balancer probe. `dynamic = 'force-dynamic'` + `runtime = 'nodejs'` (a cached 200 would hide an unhealthy instance, and Mongoose cannot run on Edge). Pings MongoDB under a ~2.5s deadline: 200 `{ status, uptime, timestamp }` or 503, both `Cache-Control: no-store`, never leaking error detail. **Unauthenticated by design** — the planned LGPD auth work must exempt this path or every probe breaks.
 - `instrumentation.ts` — Next.js boot hook (`register()`); in the Node runtime it auto-runs `seedCategories()` **only when the `Category` collection is empty** (first-run seeding). Guarded by an empty-count check so cloud instances don't re-seed on every cold start; wrapped in try/catch so a DB hiccup never crashes boot. Forced reseed still goes through the POST route.
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
