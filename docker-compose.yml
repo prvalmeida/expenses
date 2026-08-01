@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: builder
+      target: dev
     volumes:
       - ./:/app
       - /app/node_modules
@@ -21,9 +21,10 @@ services:
     environment:
       - NODE_ENV=development
       - CHOKIDAR_USEPOLLING=true
+      # MONGO_USER / MONGO_PASSWORD are interpolated by Compose from the host env
+      # or a root `.env` — never from `.env.local`, which Compose only loads via
+      # `env_file` (see `web` below).
       - MONGODB_URI=mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-password}@mongodb:27017/expenses?authSource=admin
-    command: npm run dev
-    working_dir: /app
     depends_on:
       mongodb:
         condition: service_healthy
@@ -37,12 +38,14 @@ services:
       target: runner
     ports:
       - "3000:3000"
-    # OPENAI_API_KEY / PDF_KEY are supplied at runtime, not baked into the image.
+    # MONGODB_URI / OPENAI_API_KEY / PDF_KEY come from `.env.local` at runtime,
+    # never baked into the image. MONGODB_URI is deliberately NOT set below:
+    # `environment` outranks `env_file`, so hardcoding it here would silently
+    # redirect a managed-database URI to the bundled `mongodb` service.
     env_file:
       - .env.local
     environment:
       - NODE_ENV=production
-      - MONGODB_URI=mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-password}@mongodb:27017/expenses?authSource=admin
     depends_on:
       mongodb:
         condition: service_healthy
@@ -50,8 +53,12 @@ services:
 
   mongodb:
     image: mongo:8
+    # Published on 27018 because a native Windows MongoDB service binds
+    # 127.0.0.1:27017 and shadows Docker's 0.0.0.0 bind for localhost clients
+    # (Compass, mongosh). Only the host side moves — in-network clients still
+    # reach this service at mongodb:27017.
     ports:
-      - "27017:27017"
+      - "27018:27017"
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER:-admin}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-password}
