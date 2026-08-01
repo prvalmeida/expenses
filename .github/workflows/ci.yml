@@ -3,20 +3,19 @@ name: CI
 # A single `push` block listing both `branches` and `tags` fires on either.
 # The tag trigger is required so that a `vX.Y.Z` push also produces the
 # `lint` / `build` jobs that the `docker` job declares as `needs`.
+#
+# Deliberately no `pull_request` trigger: it would fire a second, redundant run
+# of lint/build for every push to a branch with an open PR. The trade-off is
+# that pushes to fork branches are never checked, since `push` only fires on
+# this repo.
 on:
   push:
     branches: ['**']
     tags: ['v*.*.*']
-  pull_request:
 
-# Pushes to a branch of this repo fire twice (push + pull_request). Keying on
-# `github.ref` alone would NOT dedupe them — on a pull_request event the ref is
-# `refs/pull/N/merge`, a different group from `refs/heads/<branch>`. Falling
-# back through `head_ref` puts both events in the same branch-named group so
-# one cancels the other. On tag pushes head_ref is empty, so each tag still
-# gets its own group.
+# Supersede in-flight runs when a branch is pushed again.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

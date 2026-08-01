@@ -24,7 +24,7 @@ The production `runner` image uses Next.js **standalone output** (`output: 'stan
 
 ### CI/CD
 
-`.github/workflows/ci.yml` runs on every push (any branch) and every PR. Job graph:
+`.github/workflows/ci.yml` runs on every push, any branch. There is deliberately **no** `pull_request` trigger — it would double every run for branches with an open PR (a concurrency group cannot dedupe them: the two events produce different `github.ref` values, `refs/heads/<branch>` vs `refs/pull/N/merge`). The cost is that fork branches go unchecked. Job graph:
 
 ```
 lint ∥ build ∥ verify-tag → docker → release
