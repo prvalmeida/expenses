@@ -14,8 +14,13 @@ is baked into the image. Required:
 | `OPENAI_API_KEY` | OpenAI key — required for receipt parsing |
 | `PDF_KEY` | CPF do titular (somente números) |
 
-Copy `.env.example` to `.env.local` for local runs. For local `docker compose`,
-`MONGO_USER` / `MONGO_PASSWORD` override the bundled MongoDB credentials.
+Copy `.env.example` to `.env.local` for local runs.
+
+To override the bundled MongoDB credentials for local `docker compose`, set
+`MONGO_USER` / `MONGO_PASSWORD` in a **root `.env` file** (or export them in your
+shell) — *not* in `.env.local`. Compose resolves `${...}` interpolation from the
+host environment and the root `.env` only; `.env.local` is loaded via `env_file`,
+which affects the container's runtime env but never the Compose file itself.
 
 ## Local development (hot-reload)
 
@@ -23,8 +28,15 @@ Copy `.env.example` to `.env.local` for local runs. For local `docker compose`,
 docker compose --profile dev up --build
 ```
 
-Builds the `builder` stage, mounts the project into the container, and runs
-`npm run dev` on port `3000`. A local MongoDB starts alongside it.
+Builds the `dev` stage (full dependency tree, no production build), mounts the
+project into the container, and runs `npm run dev` on port `3000`. A local
+MongoDB starts alongside it.
+
+The container's `node_modules` lives in an anonymous volume that is seeded from
+the image the first time the container is created. If you changed dependencies —
+or are coming from an older image — drop it so it is re-seeded:
+`docker compose --profile dev down -v` (this also drops `mongo-data`) or
+`docker volume rm` the anonymous volume listed by `docker volume ls -f dangling=true`.
 
 ## Local production build
 
@@ -33,11 +45,18 @@ docker compose --profile prod up --build
 ```
 
 Builds the optimized standalone image (`runner` stage) and serves it on port
-`3000`, reading secrets from `.env.local`.
+`3000`, reading secrets — including `MONGODB_URI` — from `.env.local`.
 
 > **`.env.local` is required for the `web` target.** Compose loads it via
 > `env_file`, so the `prod` profile fails if the file is missing. Copy
 > `.env.example` to `.env.local` and fill in real values before starting.
+
+`MONGODB_URI` is intentionally not set in the `web` service's `environment`
+block: Compose gives `environment` precedence over `env_file`, so a hardcoded
+value there would silently override the connection string you put in
+`.env.local`. To target the bundled compose MongoDB, set it in `.env.local` to
+`mongodb://admin:password@mongodb:27017/expenses?authSource=admin` (matching your
+`MONGO_USER` / `MONGO_PASSWORD`).
 
 The `app` (dev) and `web` (prod) services live in mutually exclusive Compose
 profiles (`dev` / `prod`) because both bind host port `3000` — run one profile

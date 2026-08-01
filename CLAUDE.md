@@ -20,6 +20,10 @@ docker compose --profile prod up --build   # Production standalone build (web)
 
 The `app` (dev) and `web` (prod) services are in mutually exclusive Compose profiles (`dev`/`prod`) since both publish host port 3000 — run one at a time. A bare `docker compose up` starts only `mongodb`. Tear down with `docker compose down --remove-orphans` (a bare `down` leaves the profiled container up and fails network removal with "has active endpoints").
 
+The Dockerfile has three stages: `deps` (locked `npm ci`, **no** `NODE_ENV` — npm derives `omit=dev` from `NODE_ENV=production` and would drop tailwind/typescript, breaking `next build`), `dev` (hot-reload target, no production build), and `builder` → `runner`. Set `NODE_ENV=production` only in `runner`.
+
+Compose env precedence matters here: `environment` outranks `env_file`, so `MONGODB_URI` is deliberately absent from `web.environment` and comes from `.env.local`. Conversely, `${MONGO_USER}` / `${MONGO_PASSWORD}` interpolation is resolved from the host env or a root `.env` — Compose never reads `.env.local` for interpolation, so those two must not live there.
+
 The production `runner` image uses Next.js **standalone output** (`output: 'standalone'` in `next.config.ts`): it copies only `.next/standalone`, `.next/static`, and `public`, runs as a non-root user, binds `0.0.0.0:$PORT`, and starts via `node server.js`. Secrets are **never baked into the image** — `MONGODB_URI`, `OPENAI_API_KEY`, and `PDF_KEY` are injected at runtime (compose `env_file`, or the cloud platform's secret manager). Packages in `serverExternalPackages` (`pdf-parse`, `pdfjs-dist`) are copied to `.next/standalone/node_modules`; all other deps (e.g. `openai`) are bundled into the compiled server chunks. See `README_DOCKER.md` and `.env.example`.
 
 ### CI/CD

@@ -1,14 +1,22 @@
 # Multi-stage Dockerfile for building and running the Next.js app
-FROM node:22-alpine AS builder
+# NODE_ENV must stay unset here: npm derives `omit=dev` from NODE_ENV=production,
+# which would drop the devDependencies (tailwind, typescript) the build needs.
+FROM node:22-alpine AS deps
 WORKDIR /app
-ENV NODE_ENV=production
 
-# Install dependencies (dev deps included — needed to build).
 # npm ci installs the exact locked tree and fails on package-lock drift.
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
 
+# Hot-reload target: full dependency tree, no production build — `next dev`
+# compiles on demand.
+FROM deps AS dev
+ENV NODE_ENV=development
+COPY . ./
+CMD ["npm", "run", "dev"]
+
 # Copy sources and build. Secrets are injected at runtime, never baked in.
+FROM deps AS builder
 COPY . ./
 RUN npm run build
 
