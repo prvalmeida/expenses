@@ -77,3 +77,37 @@ Notes for cloud hosts:
   manager (Cloud Run secrets, ECS task secrets, Fly secrets), not into the image.
 - The image exposes a `HEALTHCHECK` on `/`; wire it to the platform's liveness/
   readiness probe if desired.
+
+## Releasing
+
+Released images are published to `ghcr.io/prvalmeida/expenses` by
+`.github/workflows/ci.yml`.
+
+```bash
+git checkout main && git pull
+git tag v1.2.3          # must be an annotated or lightweight tag on main
+git push origin v1.2.3
+```
+
+The tag **must be reachable from `main`** — the `verify-tag` job fails the run
+otherwise, and neither the image nor the release is produced. Tags containing a
+hyphen (`v2.0.0-rc.1`) are marked as prereleases and do **not** move `latest`.
+
+Pull a published image with:
+
+```bash
+docker pull ghcr.io/prvalmeida/expenses:1.2.3
+docker run --rm -p 3000:3000 --env-file .env.local ghcr.io/prvalmeida/expenses:1.2.3
+```
+
+### One-time setup after the first tag
+
+The first GHCR push creates a **private package owned by the user, not the
+repo**, so later runs fail with a permissions error until it is linked. This is
+invisible from the workflow file and bites exactly once:
+
+1. Open the package at `https://github.com/users/prvalmeida/packages/container/expenses/settings`.
+2. Under **Manage Actions access**, add the `prvalmeida/expenses` repository with
+   the `Write` role.
+3. Under **Danger Zone → Change visibility**, set the package to public if it
+   should be pullable without a GHCR login.
