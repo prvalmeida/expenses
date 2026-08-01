@@ -1,9 +1,11 @@
+import connectToDatabase from '../mongodb';
 import { Category } from '../models/Category';
 import Expense from '../models/Expense';
 import Income from '../models/Income';
 import { ProductMapping } from '../models/ProductMapping';
 import { BillMapping } from '../models/BillMapping';
 import { Store } from '../models/Store';
+import { ExpenseSubtypes, IncomeTypes } from '../../types';
 
 export type CategoryKind = 'expense' | 'income';
 
@@ -36,6 +38,42 @@ export async function getCategories(): Promise<CategoryData[]> {
 
 export function invalidateCategoryCache(): void {
   cache = null;
+}
+
+// Idempotent upsert of the seed categories. Safe to call repeatedly — existing
+// docs keep their `order` ($setOnInsert) while their subtype lists are refreshed.
+// Consumed by POST /api/categories/seed (forced reseed) and the boot hook
+// (first-run auto-seed); this is the only sanctioned consumer of the
+// ExpenseSubtypes/IncomeTypes seed constants.
+export async function seedCategories(): Promise<{ expense: number; income: number }> {
+  await connectToDatabase();
+
+  const ops = [
+    ...Object.entries(ExpenseSubtypes).map(([name, subtypes], index) =>
+      Category.updateOne(
+        { kind: 'expense', name },
+        { $set: { subtypes: [...subtypes] }, $setOnInsert: { order: index } },
+        { upsert: true }
+      )
+    ),
+    ...IncomeTypes.map((name, index) =>
+      Category.updateOne(
+        { kind: 'income', name },
+        { $set: { subtypes: [] }, $setOnInsert: { order: index } },
+        { upsert: true }
+      )
+    ),
+  ];
+
+  await Promise.all(ops);
+  invalidateCategoryCache();
+
+  const [expense, income] = await Promise.all([
+    Category.countDocuments({ kind: 'expense' }),
+    Category.countDocuments({ kind: 'income' }),
+  ]);
+
+  return { expense, income };
 }
 
 export async function getExpenseCategories(): Promise<CategoryData[]> {

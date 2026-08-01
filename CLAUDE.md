@@ -91,7 +91,8 @@ The Dashboard lets users toggle between "DATA DA COMPRA" (purchase view) and "FL
 - `app/api/receipts/import/` — POST: saves confirmed receipt items as expenses; upserts new `ProductMapping` entries
 - `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, and `Category` models
 - `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
-- `app/api/categories/seed/` — POST: idempotent upsert of `Category` docs from the `ExpenseSubtypes`/`IncomeTypes` seed constants
+- `app/api/categories/seed/` — POST: forced reseed; thin wrapper over `seedCategories()` in `categoryUtils.ts`
+- `instrumentation.ts` — Next.js boot hook (`register()`); in the Node runtime it auto-runs `seedCategories()` **only when the `Category` collection is empty** (first-run seeding). Guarded by an empty-count check so cloud instances don't re-seed on every cold start; wrapped in try/catch so a DB hiccup never crashes boot. Forced reseed still goes through the POST route.
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
 - `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
@@ -104,7 +105,7 @@ The Dashboard lets users toggle between "DATA DA COMPRA" (purchase view) and "FL
 
 ### Data model highlights
 
-- The `Category` collection is the single source of truth for expense/income categories and expense subtypes. Model schemas no longer enum-validate `type`/`subtype`; validation happens at API boundaries via `categoryUtils`. `Category` docs must be seeded (`POST /api/categories/seed`) before the UI can read categories.
+- The `Category` collection is the single source of truth for expense/income categories and expense subtypes. Model schemas no longer enum-validate `type`/`subtype`; validation happens at API boundaries via `categoryUtils`. `Category` docs must be seeded before the UI can read categories; this now happens automatically on first server boot via `instrumentation.ts` (empty-collection guard), with `POST /api/categories/seed` available for a forced reseed. Shared logic lives in `seedCategories()` in `categoryUtils.ts` — the only sanctioned consumer of the `ExpenseSubtypes`/`IncomeTypes` seed constants.
 - `CardBrand` enum values (`Master Santander`, `Visa Caixa`, `Elo Caixa`) are used as keys in the card-cycles default settings.
 - `CardCycle` stores per-card, per-month closing/due date overrides; the API falls back to `DEFAULT_SETTINGS` from `cycleUtils.ts` when no override exists.
 - `Store` stores `{ cnpj, address, name }` — upserted on every receipt parse, keyed by `(cnpj, address)`.
