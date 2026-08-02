@@ -7,6 +7,7 @@ import { addMonthsClamped } from '../../../../lib/utils/dateUtils';
 import { getExpenseCategories } from '../../../../lib/utils/categoryUtils';
 import { CardBrand, ConfirmedBillItem, NewBillMapping } from '@/types';
 import { BillMapping } from '../../../../lib/models/BillMapping';
+import { billMappingKey } from '../../../../lib/utils/billUtils';
 
 interface ImportBody {
   items: ConfirmedBillItem[];
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
       await Promise.all(
         newMappings.map(m =>
           BillMapping.updateOne(
-            { description: m.description.toLowerCase().trim() },
+            { description: billMappingKey(m.description) },
             { $set: { type: m.type, subtype: m.subtype } },
             { upsert: true }
           )
