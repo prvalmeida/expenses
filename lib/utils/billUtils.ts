@@ -53,6 +53,20 @@ function parseBRLAmount(raw: string): number {
   return parseFloat(raw.replace(/\./g, '').replace(',', '.'));
 }
 
+// Column gaps inside a merchant name survive as runs of spaces in some renderings and as a
+// single space in others — collapse them so BillMapping keys stay stable across both.
+function normalizeDescription(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ');
+}
+
+// The lookup key for BillMapping. Must collapse interior whitespace as well as case: mappings
+// learned before the parsers normalized descriptions were stored with the multi-space runs
+// intact, and would otherwise stop matching (and re-upsert as duplicates) under the new
+// single-space rendering. Both the read and the write side must go through this.
+export function billMappingKey(description: string): string {
+  return normalizeDescription(description).toLowerCase();
+}
+
 function extractDueDate(rawText: string): { dueMonth: number; dueYear: number } {
   const match = rawText.match(/\b\d{2}\/(\d{2})\/(\d{4})\b/);
   if (match) return { dueMonth: parseInt(match[1], 10), dueYear: parseInt(match[2], 10) };
@@ -65,19 +79,22 @@ function buildDate(dd: number, mm: number, dueMonth: number, dueYear: number): s
   return `${year}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 }
 
+// Every amount on a bill is BRL with thousands dots and a two-digit cent comma ("1.234,56").
+// Shared by both parsers so the pattern cannot drift: `parseBRLAmount` strips all dots, so a
+// looser class (e.g. `[\d.,]+`) would silently turn a dot-decimal "12.00" into 1200.
+const BRL_AMOUNT = String.raw`\d{1,3}(?:\.\d{3})*,\d{2}`;
+
 // ─── Santander parser ─────────────────────────────────────────────────────────
 
-// Parcelamentos — has installment field "DD/MM" between description and value
-// Format C: leading digit  "3   03/02 PANVEL FARMACIAS   03/03   83,18"
-const S_FMT_C = /^(\d+)\s+(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{2}\/\d{2})\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
-// Format D: no leading digit  "22/07 GRAN EDUCACAO   09/12   59,90"
-const S_FMT_D = /^(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{2}\/\d{2})\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
-
-// Despesas — value immediately after description (no installment field)
-// Format A: leading digit  "3   22/03 PASTEL DA BANCA 71 LTD   29,00"
-const S_FMT_A = /^(\d+)\s+(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
-// Format B: no leading digit  "08/04 SCP COMPLETO- ABR/26   23,45"
-const S_FMT_B = /^(\d{2})\/(\d{2})\s+(.+?)\s{2,}(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
+// Rows are anchored by the "DD/MM" purchase date and the trailing amount; the optional
+// leading digit is the (unused) card-sequence column. Column separators are NOT reliable —
+// the PDF renderer may emit a single space — so only the anchors are trusted.
+// Parcelamentos — installment field "NN/NN" sits between description and value
+// "3   03/02 PANVEL FARMACIAS   03/03   83,18" · "22/07 GRAN EDUCACAO   09/12   59,90"
+const S_PARCELADO = new RegExp(String.raw`^(?:\d+\s+)?(\d{2})\/(\d{2})\s+(.+?)\s+(\d{2})\/(\d{2})\s+(${BRL_AMOUNT})\s*$`);
+// Despesas — value immediately after description, no installment field
+// "3   22/03 PASTEL DA BANCA 71 LTD   29,00" · "08/04 SCP COMPLETO- ABR/26   23,45"
+const S_DESPESA   = new RegExp(String.raw`^(?:\d+\s+)?(\d{2})\/(\d{2})\s+(.+?)\s+(${BRL_AMOUNT})\s*$`);
 
 // Section markers — state machine uses these to track context
 const S_CARDHOLDER   = /^(@?\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔÕÚÇ\s]+)\s*-\s*\d{4}\s+X{4}\s+X{4}\s+\d{4}\s*$/;
@@ -102,23 +119,30 @@ function parseSantanderLine(
   dueYear: number,
 ): PreprocessedTransaction | null {
   if (subsection === 'Parcelamentos') {
-    let m = line.match(S_FMT_C);
+    const m = line.match(S_PARCELADO);
     if (m) {
-      const [cur, tot] = m[5].split('/').map(Number);
-      return { date: buildDate(+m[2], +m[3], dueMonth, dueYear), description: m[4].trim(), value: parseBRLAmount(m[6]), installmentCurrent: cur, installmentTotal: tot, cardholder, subsection };
+      return {
+        date: buildDate(+m[1], +m[2], dueMonth, dueYear),
+        description: normalizeDescription(m[3]),
+        value: parseBRLAmount(m[6]),
+        installmentCurrent: parseInt(m[4], 10),
+        installmentTotal:   parseInt(m[5], 10),
+        cardholder,
+        subsection,
+      };
     }
-    m = line.match(S_FMT_D);
-    if (m) {
-      const [cur, tot] = m[4].split('/').map(Number);
-      return { date: buildDate(+m[1], +m[2], dueMonth, dueYear), description: m[3].trim(), value: parseBRLAmount(m[5]), installmentCurrent: cur, installmentTotal: tot, cardholder, subsection };
-    }
+    return null;
   }
 
-  if (subsection === 'Despesas') {
-    let m = line.match(S_FMT_A);
-    if (m) return { date: buildDate(+m[2], +m[3], dueMonth, dueYear), description: m[4].trim(), value: parseBRLAmount(m[5]), cardholder, subsection };
-    m = line.match(S_FMT_B);
-    if (m) return { date: buildDate(+m[1], +m[2], dueMonth, dueYear), description: m[3].trim(), value: parseBRLAmount(m[4]), cardholder, subsection };
+  const m = line.match(S_DESPESA);
+  if (m) {
+    return {
+      date: buildDate(+m[1], +m[2], dueMonth, dueYear),
+      description: normalizeDescription(m[3]),
+      value: parseBRLAmount(m[4]),
+      cardholder,
+      subsection,
+    };
   }
 
   return null;
@@ -171,7 +195,7 @@ const C_CARDHOLDER     = /^([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔ�
 const C_COMPRAS_HDR    = /^COMPRAS\s+\(Cartão\s+\d{4}\)\s*$/;
 const C_PARCELADAS_HDR = /^COMPRAS PARCELADAS\s+\(Cartão\s+\d{4}\)\s*$/;
 const C_ANUIDADE_SEC   = /^ANUIDADE\s*$/;
-const C_ANUIDADE_LINE  = /^ANUIDADE\s{2,}([\d,]+)([DC])\s*$/;
+const C_ANUIDADE_LINE  = new RegExp(String.raw`^ANUIDADE\s+(${BRL_AMOUNT})([DC])\s*$`);
 const C_SUBTOTAL       = /^(Total|TOTAL)\b/;
 const C_COL_HEADER     = /^(Data|Quantidade)\s+(Descrição|Parcela|Data)\s+/;
 // Page-break noise lines injected by the PDF renderer — can appear mid-section
@@ -180,62 +204,61 @@ const C_INFO_COMPL     = /^Informações Complementares\s*$/;
 const C_DEMONSTRATIVO  = /^Demonstrativo\s*$/;
 const C_CREDITO_HDR    = /^Crédito\/Débito R\$\s*$/;
 
-// Installment field in COMPRAS PARCELADAS: "05 DE 10"
-const C_INSTALL_FIELD  = /^(\d{2}) DE (\d{2})$/i;
-// Value + D/C marker at end of field
-const C_VALUE_DC       = /^(\d{1,3}(?:\.\d{3})*,\d{2})([DC])$/;
+// A transaction row is anchored by a leading "DD/MM" date and a trailing "1.234,56D" amount.
+// Column separators are NOT reliable here: the PDF renderer may emit a single space between
+// date, description, city and value, so everything between the two anchors is one segment.
+const C_ROW            = new RegExp(String.raw`^(\d{2})\/(\d{2})\s+(.+?)\s+(${BRL_AMOUNT})\s*([DC])\s*$`);
+// Installment token inside the middle segment: "01 DE 03" or "07 de 12".
+// In COMPRAS_PARCELADAS the token is the trailing column, so it is anchored at the end of the
+// segment. In COMPRAS it floats (e.g. "ALLIANZ SEGU 07 de 12") and the segment also carries the
+// city, so a free search is unavoidable there — see isPlausibleInstallment for the guard.
+const C_INSTALL_TAIL   = /\s+(\d{2})\s+DE\s+(\d{2})\s*$/i;
+const C_INSTALL_TOKEN  = /\b(\d{2})\s+DE\s+(\d{2})\b/i;
+
+// A city or merchant name can contain a bare "NN DE NN" run ("POSTO 24 DE 05 CANOAS"), which
+// would otherwise be read as an installment and expanded into that many expense rows on import.
+function isPlausibleInstallment(current: number, total: number): boolean {
+  return total > 1 && current >= 1 && current <= total;
+}
 
 function parseCaixaLine(
-  parts: string[],
+  line: string,
   subsection: 'COMPRAS' | 'COMPRAS_PARCELADAS',
   cardholder: string,
   dueMonth: number,
   dueYear: number,
 ): PreprocessedTransaction | null {
-  if (parts.length < 4) return null;
+  const m = line.match(C_ROW);
+  if (!m) return null;
+  if (m[5] === 'C') return null; // credit line — exclude
 
-  const dateMatch = parts[0].match(/^(\d{2})\/(\d{2})$/);
-  if (!dateMatch) return null;
+  const date = buildDate(parseInt(m[1], 10), parseInt(m[2], 10), dueMonth, dueYear);
+  const value = parseBRLAmount(m[4]);
+  const middle = normalizeDescription(m[3]);
 
-  const lastPart = parts[parts.length - 1];
-  const valueMatch = lastPart.match(C_VALUE_DC);
-  if (!valueMatch) return null;
-  if (valueMatch[2] === 'C') return null; // credit line — exclude
-
-  const dd = parseInt(dateMatch[1], 10);
-  const mm = parseInt(dateMatch[2], 10);
-  const value = parseBRLAmount(valueMatch[1]);
-  const date = buildDate(dd, mm, dueMonth, dueYear);
-
-  if (subsection === 'COMPRAS_PARCELADAS') {
-    // Scan parts[2..n-3] for installment field — handles merchant names split across multiple fields
-    if (parts.length >= 5) {
-      for (let i = 2; i < parts.length - 2; i++) {
-        const installMatch = parts[i].match(C_INSTALL_FIELD);
-        if (installMatch) {
-          return {
-            date,
-            description: parts.slice(1, i).join(' ').trim(),
-            value,
-            installmentCurrent: parseInt(installMatch[1], 10),
-            installmentTotal:   parseInt(installMatch[2], 10),
-            cardholder,
-            subsection,
-          };
-        }
-      }
+  // Installments show up in both subsections — "ALLIANZ SEGU 07 de 12" sits under COMPRAS.
+  // In COMPRAS_PARCELADAS the token is normally the trailing column, so prefer that reading;
+  // fall back to a free search for rows that carry a city after it.
+  const install = (subsection === 'COMPRAS_PARCELADAS' ? middle.match(C_INSTALL_TAIL) : null)
+    ?? middle.match(C_INSTALL_TOKEN);
+  if (install && isPlausibleInstallment(parseInt(install[1], 10), parseInt(install[2], 10))) {
+    const description = normalizeDescription(middle.slice(0, install.index ?? 0));
+    if (description) {
+      return {
+        date,
+        description,
+        value,
+        installmentCurrent: parseInt(install[1], 10),
+        installmentTotal:   parseInt(install[2], 10),
+        cardholder,
+        subsection,
+      };
     }
-    // Fallback: include without installment info
-    return { date, description: parts[1].trim(), value, cardholder, subsection };
   }
 
-  // COMPRAS — [date, description, (optional *suffix...), city, value+D/C]
-  // Merchant name may be split by 2+ spaces when the suffix starts with '*'
-  let description = parts[1].trim();
-  for (let i = 2; i < parts.length - 1 && parts[i].startsWith('*'); i++) {
-    description += ' ' + parts[i];
-  }
-  return { date, description, value, cardholder, subsection };
+  // No installment token: merchant and city are separated only by a space and both may
+  // contain spaces, so the boundary is not recoverable — keep the whole segment.
+  return { date, description: middle, value, cardholder, subsection };
 }
 
 function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
@@ -285,8 +308,7 @@ function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
 
     if (!currentSubsection || (currentSubsection !== 'COMPRAS' && currentSubsection !== 'COMPRAS_PARCELADAS')) continue;
 
-    const parts = line.split(/\s{2,}/).map(s => s.trim()).filter(s => s.length > 0);
-    const tx = parseCaixaLine(parts, currentSubsection, currentCardholder, dueMonth, dueYear);
+    const tx = parseCaixaLine(line, currentSubsection, currentCardholder, dueMonth, dueYear);
     if (tx) results.push(tx);
   }
 
@@ -466,11 +488,11 @@ export function extractClosingDate(rawText: string, cardBrand: CardBrand): strin
 async function crossReferenceBillMappings(items: ParsedBillItem[]): Promise<ParsedBillItem[]> {
   if (items.length === 0) return items;
   await connectToDatabase();
-  const normalizedDescriptions = items.map(i => i.description.toLowerCase().trim());
+  const normalizedDescriptions = items.map(i => billMappingKey(i.description));
   const mappings = await BillMapping.find({ description: { $in: normalizedDescriptions } });
-  const mappingMap = new Map(mappings.map(m => [m.description, { type: m.type, subtype: m.subtype as string | null }]));
+  const mappingMap = new Map(mappings.map(m => [billMappingKey(m.description), { type: m.type, subtype: m.subtype as string | null }]));
   return items.map(item => {
-    const saved = mappingMap.get(item.description.toLowerCase().trim());
+    const saved = mappingMap.get(billMappingKey(item.description));
     if (!saved) return item;
     return { ...item, type: saved.type as string, subtype: saved.subtype, recognized: true };
   });
@@ -481,16 +503,22 @@ async function crossReferenceBillMappings(items: ParsedBillItem[]): Promise<Pars
 export async function parseBillText(rawText: string, cardBrand?: CardBrand): Promise<ParsedBillItem[]> {
   let items: ParsedBillItem[];
 
-  if (cardBrand === CardBrand.MasterSantander) {
-    console.log('[parseBillText] Santander — extracting deterministically');
-    const transactions = preprocessSantanderText(rawText);
-    console.log(`[parseBillText] Santander — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
-    items = await classifyTransactions(transactions);
-  } else if (cardBrand === CardBrand.Visa || cardBrand === CardBrand.EloCaixa) {
-    console.log('[parseBillText] Caixa — extracting deterministically');
-    const transactions = preprocessCaixaText(rawText);
-    console.log(`[parseBillText] Caixa — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
-    items = await classifyTransactions(transactions);
+  if (cardBrand === CardBrand.MasterSantander || cardBrand === CardBrand.Visa || cardBrand === CardBrand.EloCaixa) {
+    const bank = cardBrand === CardBrand.MasterSantander ? 'Santander' : 'Caixa';
+    console.log(`[parseBillText] ${bank} — extracting deterministically`);
+    const transactions = cardBrand === CardBrand.MasterSantander
+      ? preprocessSantanderText(rawText)
+      : preprocessCaixaText(rawText);
+    console.log(`[parseBillText] ${bank} — ${transactions.length} transactions found from ${new Set(transactions.map(t => t.cardholder)).size} cardholders`);
+
+    if (transactions.length === 0) {
+      // A layout/renderer change silently yields an empty import screen — degrade to the
+      // GPT extractor instead, and make the regression visible in the logs.
+      console.warn(`[parseBillText] ${bank} — 0 transactions, falling back to GPT extraction`);
+      items = await parseBillTextLegacy(rawText);
+    } else {
+      items = await classifyTransactions(transactions);
+    }
   } else {
     items = await parseBillTextLegacy(rawText);
   }
