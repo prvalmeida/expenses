@@ -34,6 +34,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# pdfjs-dist evaluates `new DOMMatrix()` at module scope and gets DOMMatrix from
+# the optional @napi-rs/canvas. Next's output tracing cannot see that dependency
+# (node_utils.js loads it through a runtime createRequire inside try/catch), so
+# it must be copied explicitly or importing pdf.mjs throws ReferenceError.
+# The install has two copies (0.1.100 under pdfjs-dist, 0.1.80 hoisted for
+# pdf-parse's nested pdfjs-dist); only the newer is shipped, at the hoisted path
+# where upward resolution reaches it from both — it satisfies both ranges.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pdfjs-dist/node_modules/@napi-rs ./node_modules/@napi-rs
+
 USER nextjs
 EXPOSE 3000
 
