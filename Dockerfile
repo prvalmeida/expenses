@@ -43,6 +43,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # where upward resolution reaches it from both — it satisfies both ranges.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pdfjs-dist/node_modules/@napi-rs ./node_modules/@napi-rs
 
+# Same blind spot for the worker: pdf.mjs spawns a "fake worker" in Node by
+# importing ./pdf.worker.mjs at runtime, a path tracing never sees, so
+# standalone ships pdf.mjs alone and every upload dies with
+# "Setting up fake worker failed: Cannot find module ... pdf.worker.mjs".
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs ./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
+
 USER nextjs
 EXPOSE 3000
 
