@@ -35,7 +35,13 @@ const PAYMENT_OPTIONS = [
 ];
 
 export default function ImportReceipt({ onImported }: { onImported: () => void }) {
-  const { expenseTypes, subtypesFor } = useCategories();
+  const {
+    expenseTypes,
+    subtypesFor,
+    isValidType,
+    isValidPair,
+    loading: categoriesLoading,
+  } = useCategories();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [inputMode, setInputMode] = useState<'pdf' | 'url'>('pdf');
   const [file, setFile] = useState<File | null>(null);
@@ -170,7 +176,20 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     );
   };
 
-  const allResolved = items.every(item => !!item.resolvedType && !!item.resolvedSubtype);
+  // A category renamed or deleted in another tab leaves selections pointing at a
+  // name that no longer exists; /api/receipts/import rejects the whole batch, so
+  // surface it here instead.
+  const effectiveType = (type: string | undefined): string | undefined =>
+    type && (categoriesLoading || isValidType(type)) ? type : undefined;
+
+  const effectiveSubtype = (type: string | undefined, subtype: string | undefined): string | undefined =>
+    type && subtype && (categoriesLoading || isValidPair(type, subtype)) ? subtype : undefined;
+
+  const allResolved = items.every(
+    item =>
+      !!effectiveType(item.resolvedType) &&
+      !!effectiveSubtype(effectiveType(item.resolvedType), item.resolvedSubtype)
+  );
 
   const handleImport = async () => {
     if (!parsed || !allResolved) return;
@@ -209,7 +228,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           ...(paymentType === 'credit' && { cardBrand }),
           items: confirmedItems,
           newMappings,
-          storeDefaultType: storeType,
+          storeDefaultType: effectiveType(storeType),
           installments,
         }),
       });
@@ -303,7 +322,10 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
 
   // ── Step 2: Review ──────────────────────────────────────────────────────────
   if (step === 2 && parsed) {
-    const unknownCount = items.filter(i => !i.resolvedType || !i.resolvedSubtype).length;
+    const unknownCount = items.filter(i => {
+      const type = effectiveType(i.resolvedType);
+      return !type || !effectiveSubtype(type, i.resolvedSubtype);
+    }).length;
     const total = parsed.total ?? items.reduce((s, i) => s + i.resolvedValue, 0);
     const canImport = allResolved && !!paymentType && (paymentType !== 'credit' || !!cardBrand);
 
@@ -381,7 +403,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           <div>
             <label className="block text-sm font-medium mb-1">Categoria do Estabelecimento</label>
             <select
-              value={storeType ?? ''}
+              value={effectiveType(storeType) ?? ''}
               onChange={e => handleStoreTypeChange(e.target.value)}
               className="w-full p-2 border rounded text-sm"
             >
@@ -406,11 +428,17 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
         )}
 
         <div className="space-y-2 mb-6">
-          {items.map((item, index) => (
+          {items.map((item, index) => {
+            const type = effectiveType(item.resolvedType);
+            const subtype = effectiveSubtype(type, item.resolvedSubtype);
+            const typeOrphaned = !type && !!item.resolvedType;
+            const subtypeOrphaned = !subtype && !!type && !!item.resolvedSubtype;
+
+            return (
             <div
               key={index}
               className={`p-3 rounded-lg border ${
-                item.recognized && item.resolvedType === item.type && item.resolvedSubtype === item.subtype
+                item.recognized && type === item.type && subtype === item.subtype
                   ? 'bg-green-50 border-green-200'
                   : 'bg-amber-50 border-amber-200'
               }`}
@@ -450,7 +478,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
               </div>
               <div className="mt-2 flex gap-2">
                 <select
-                  value={item.resolvedType ?? ''}
+                  value={type ?? ''}
                   onChange={e => handleTypeChange(index, e.target.value)}
                   className="flex-1 p-1.5 border rounded text-sm"
                 >
@@ -462,14 +490,14 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                     ))}
                 </select>
                 <select
-                  value={item.resolvedSubtype ?? ''}
+                  value={subtype ?? ''}
                   onChange={e => handleSubtypeChange(index, e.target.value)}
-                  disabled={!item.resolvedType}
+                  disabled={!type}
                   className="flex-1 p-1.5 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Subcategoria...</option>
-                  {item.resolvedType
-                    ? [...subtypesFor(item.resolvedType)]
+                  {type
+                    ? [...subtypesFor(type)]
                         .sort((a, b) => a.localeCompare(b))
                         .map(s => (
                           <option key={s} value={s}>{s}</option>
@@ -477,8 +505,16 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                     : null}
                 </select>
               </div>
+              {(typeOrphaned || subtypeOrphaned) && (
+                <p className="text-[11px] text-amber-700 mt-1">
+                  ⚠ {typeOrphaned ? 'Categoria' : 'Subcategoria'}{' '}
+                  &ldquo;{typeOrphaned ? item.resolvedType : item.resolvedSubtype}&rdquo; não existe
+                  mais — selecione uma válida.
+                </p>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {error && (

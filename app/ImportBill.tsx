@@ -19,7 +19,13 @@ type ItemState = ParsedBillItem & {
 };
 
 export default function ImportBill({ onDone }: { onDone: () => void }) {
-  const { expenseTypes, subtypesFor } = useCategories();
+  const {
+    expenseTypes,
+    subtypesFor,
+    isValidType,
+    isValidPair,
+    loading: categoriesLoading,
+  } = useCategories();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [file, setFile] = useState<File | null>(null);
@@ -31,8 +37,19 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   const [closingDate, setClosingDate] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
   const selectAllNormalRef = useRef<HTMLInputElement>(null);
   const selectAllDuplicatesRef = useRef<HTMLInputElement>(null);
+
+  // A category renamed or deleted in another tab leaves rows pointing at a name
+  // that no longer exists; the import route drops those, so treat them as unclassified.
+  const effectiveType = (type: string | null): string | null =>
+    type !== null && (categoriesLoading || isValidType(type)) ? type : null;
+
+  const effectiveSubtype = (type: string | null, subtype: string | null): string | null =>
+    type !== null && subtype !== null && (categoriesLoading || isValidPair(type, subtype))
+      ? subtype
+      : null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFile(e.target.files?.[0] ?? null);
@@ -117,25 +134,25 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   }, [selectedIndices, items]);
 
   const handleImport = async (subset: ItemState[]) => {
-    const confirmed = subset.map(item => ({
+    const resolved = subset.map(item => {
+      const type = effectiveType(item.resolvedType);
+      return { item, type, subtype: effectiveSubtype(type, item.resolvedSubtype) };
+    });
+    const confirmed = resolved.map(({ item, type, subtype }) => ({
       date: item.date,
       description: item.resolvedDescription,
       value: item.resolvedValue,
       ...(item.installmentCurrent !== undefined && { installmentCurrent: item.installmentCurrent }),
       ...(item.installmentTotal !== undefined && { installmentTotal: item.installmentTotal }),
-      type: item.resolvedType,
-      subtype: item.resolvedSubtype,
+      type,
+      subtype,
     }));
-    const newMappings: NewBillMapping[] = subset
-      .filter(
-        item =>
-          item.resolvedType !== null &&
-          (item.resolvedType !== item.type || item.resolvedSubtype !== item.subtype)
-      )
-      .map(item => ({
+    const newMappings: NewBillMapping[] = resolved
+      .filter(({ item, type, subtype }) => type !== null && (type !== item.type || subtype !== item.subtype))
+      .map(({ item, type, subtype }) => ({
         description: item.resolvedDescription.toLowerCase().trim(),
-        type: item.resolvedType!,
-        subtype: item.resolvedSubtype,
+        type: type!,
+        subtype,
       }));
     setLoading(true);
     setError(null);
@@ -150,6 +167,12 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         setError(data.error ?? 'Erro ao importar fatura');
         return;
       }
+      // Items the API refused (no valid category, or an already-imported
+      // installment) must not disappear silently.
+      if (data.skipped > 0) {
+        setResult({ imported: data.imported ?? 0, skipped: data.skipped });
+        return;
+      }
       onDone();
     } catch {
       setError('Erro de rede ao importar a fatura');
@@ -158,8 +181,31 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
     }
   };
 
-  const unclassifiedCount = items.filter(i => i.resolvedType === null).length;
+  const unclassifiedCount = items.filter(i => effectiveType(i.resolvedType) === null).length;
   const total = items.reduce((s, i) => s + i.resolvedValue, 0);
+
+  // ── Import summary (only when the API skipped something) ─────────────────────
+  if (result) {
+    return (
+      <div className="max-w-md mx-auto p-4 border rounded-lg shadow-md text-center space-y-4">
+        <div className="text-5xl font-bold text-amber-500">!</div>
+        <h2 className="text-xl font-bold">Importação parcial</h2>
+        <p className="text-gray-600">
+          {result.imported} {result.imported === 1 ? 'gasto importado' : 'gastos importados'}.
+        </p>
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          ⚠ {result.skipped} {result.skipped === 1 ? 'lançamento não foi importado' : 'lançamentos não foram importados'} —
+          sem categoria válida ou parcela já existente.
+        </p>
+        <button
+          onClick={onDone}
+          className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 font-bold"
+        >
+          Ir para o Dashboard
+        </button>
+      </div>
+    );
+  }
 
   // ── Step 1: Upload ───────────────────────────────────────────────────────────
   if (step === 1) {
@@ -226,14 +272,16 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   const duplicatePairs = items.flatMap((item, i) => (item.isPossibleDuplicate ? [{ item, index: i }] : []));
 
   const renderRow = ({ item, index }: { item: ItemState; index: number }) => {
-    const subtypes = item.resolvedType
-      ? [...subtypesFor(item.resolvedType)].sort()
-      : [];
+    const type = effectiveType(item.resolvedType);
+    const subtype = effectiveSubtype(type, item.resolvedSubtype);
+    const typeOrphaned = type === null && item.resolvedType !== null;
+    const subtypeOrphaned = subtype === null && type !== null && item.resolvedSubtype !== null;
+    const subtypes = type ? [...subtypesFor(type)].sort() : [];
 
     return (
       <tr
         key={index}
-        className={item.resolvedType !== null ? 'bg-green-50' : 'bg-amber-50'}
+        className={type !== null ? 'bg-green-50' : 'bg-amber-50'}
       >
         <td className="p-1.5 border border-gray-200 text-center">
           <input
@@ -269,7 +317,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         </td>
         <td className="p-1.5 border border-gray-200">
           <select
-            value={item.resolvedType ?? ''}
+            value={type ?? ''}
             onChange={e =>
               updateItem(
                 index,
@@ -284,14 +332,19 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
               <option key={t} value={t}>{t}</option>
             ))}
           </select>
+          {typeOrphaned && (
+            <p className="text-[10px] text-amber-700 mt-0.5">
+              ⚠ &ldquo;{item.resolvedType}&rdquo; não existe mais
+            </p>
+          )}
         </td>
         <td className="p-1.5 border border-gray-200">
           <select
-            value={item.resolvedSubtype ?? ''}
+            value={subtype ?? ''}
             onChange={e =>
               updateItem(index, 'resolvedSubtype', e.target.value === '' ? null : e.target.value)
             }
-            disabled={!item.resolvedType}
+            disabled={!type}
             className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white disabled:opacity-40"
           >
             <option value="">Selecione...</option>
@@ -299,6 +352,11 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+          {subtypeOrphaned && (
+            <p className="text-[10px] text-amber-700 mt-0.5">
+              ⚠ &ldquo;{item.resolvedSubtype}&rdquo; não existe mais
+            </p>
+          )}
         </td>
         <td className="p-1.5 border border-gray-200">
           <input
@@ -437,7 +495,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
 
       {unclassifiedCount > 0 && (
         <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
-          ⚠ {unclassifiedCount} {unclassifiedCount === 1 ? 'item sem categoria' : 'itens sem categoria'} — {unclassifiedCount === 1 ? 'será importado' : 'serão importados'} sem tipo.
+          ⚠ {unclassifiedCount} {unclassifiedCount === 1 ? 'item sem categoria válida' : 'itens sem categoria válida'} — {unclassifiedCount === 1 ? 'não será importado' : 'não serão importados'}.
         </p>
       )}
 
