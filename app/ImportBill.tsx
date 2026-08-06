@@ -37,7 +37,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   const [closingDate, setClosingDate] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
-  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const selectAllNormalRef = useRef<HTMLInputElement>(null);
   const selectAllDuplicatesRef = useRef<HTMLInputElement>(null);
 
@@ -148,7 +148,14 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       subtype,
     }));
     const newMappings: NewBillMapping[] = resolved
-      .filter(({ item, type, subtype }) => type !== null && (type !== item.type || subtype !== item.subtype))
+      // Compare against the *effective* parsed values: an orphaned subtype the
+      // user never touched would otherwise look edited and overwrite the
+      // existing BillMapping with null.
+      .filter(({ item, type, subtype }) => {
+        if (type === null) return false;
+        const parsedType = effectiveType(item.type);
+        return type !== parsedType || subtype !== effectiveSubtype(parsedType, item.subtype);
+      })
       .map(({ item, type, subtype }) => ({
         description: item.resolvedDescription.toLowerCase().trim(),
         type: type!,
@@ -167,10 +174,18 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         setError(data.error ?? 'Erro ao importar fatura');
         return;
       }
-      // Items the API refused (no valid category, or an already-imported
-      // installment) must not disappear silently.
-      if (data.skipped > 0) {
-        setResult({ imported: data.imported ?? 0, skipped: data.skipped });
+      // Rows the API refused for lack of a valid category must not disappear
+      // silently — keep them on screen so they can be classified and retried.
+      // (`skippedExisting` is the normal outcome of overlapping bills.)
+      if (data.skippedInvalid > 0) {
+        const kept = new Set(resolved.filter(r => r.type === null).map(r => r.item));
+        setItems(prev => prev.filter(item => kept.has(item) || !subset.includes(item)));
+        setSelectedIndices(new Set());
+        setNotice(
+          `${data.imported} ${data.imported === 1 ? 'lançamento importado' : 'lançamentos importados'}. ` +
+          `${data.skippedInvalid} ${data.skippedInvalid === 1 ? 'continua sem categoria válida' : 'continuam sem categoria válida'} — ` +
+          'classifique e importe novamente.'
+        );
         return;
       }
       onDone();
@@ -183,29 +198,6 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
 
   const unclassifiedCount = items.filter(i => effectiveType(i.resolvedType) === null).length;
   const total = items.reduce((s, i) => s + i.resolvedValue, 0);
-
-  // ── Import summary (only when the API skipped something) ─────────────────────
-  if (result) {
-    return (
-      <div className="max-w-md mx-auto p-4 border rounded-lg shadow-md text-center space-y-4">
-        <div className="text-5xl font-bold text-amber-500">!</div>
-        <h2 className="text-xl font-bold">Importação parcial</h2>
-        <p className="text-gray-600">
-          {result.imported} {result.imported === 1 ? 'gasto importado' : 'gastos importados'}.
-        </p>
-        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-          ⚠ {result.skipped} {result.skipped === 1 ? 'lançamento não foi importado' : 'lançamentos não foram importados'} —
-          sem categoria válida ou parcela já existente.
-        </p>
-        <button
-          onClick={onDone}
-          className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 font-bold"
-        >
-          Ir para o Dashboard
-        </button>
-      </div>
-    );
-  }
 
   // ── Step 1: Upload ───────────────────────────────────────────────────────────
   if (step === 1) {
@@ -493,6 +485,12 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         </p>
       )}
 
+      {notice && (
+        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2 mb-4">
+          {notice}
+        </p>
+      )}
+
       {unclassifiedCount > 0 && (
         <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
           ⚠ {unclassifiedCount} {unclassifiedCount === 1 ? 'item sem categoria válida' : 'itens sem categoria válida'} — {unclassifiedCount === 1 ? 'não será importado' : 'não serão importados'}.
@@ -518,7 +516,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         {normalPairs.length > 0 && (
           <button
             onClick={() => handleImport(normalPairs.map(p => p.item))}
-            disabled={loading}
+            disabled={loading || categoriesLoading}
             className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Confirmar ${normalPairs.length} ${normalPairs.length === 1 ? 'transação' : 'transações'}`}
@@ -527,7 +525,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         {duplicatePairs.length > 0 && (
           <button
             onClick={() => handleImport(duplicatePairs.map(p => p.item))}
-            disabled={loading}
+            disabled={loading || categoriesLoading}
             className="py-2 px-4 bg-amber-500 text-white rounded text-sm font-bold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Importar ${duplicatePairs.length} ${duplicatePairs.length === 1 ? 'duplicata' : 'duplicatas'}`}

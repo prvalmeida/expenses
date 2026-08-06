@@ -196,25 +196,35 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     setLoading(true);
     setError(null);
     try {
-      const confirmedItems: ConfirmedReceiptItem[] = items.map(item => ({
+      // Resolve once, exactly as the `allResolved` gate does, so the payload can
+      // never carry a stale name the gate already considered invalid.
+      const resolved = items.map(item => {
+        const type = effectiveType(item.resolvedType);
+        return { item, type, subtype: effectiveSubtype(type, item.resolvedSubtype) };
+      });
+
+      const confirmedItems: ConfirmedReceiptItem[] = resolved.map(({ item, type, subtype }) => ({
         description: item.description,
         value: item.resolvedValue,
-        type: item.resolvedType!,
-        subtype: item.resolvedSubtype,
+        type: type!,
+        subtype,
         ...(item.resolvedQty !== undefined && { qty: item.resolvedQty }),
         ...(item.unit && { unit: item.unit }),
       }));
 
-      const newMappings: ConfirmedReceiptItem[] = items
-        .filter(item =>
-          (item.resolvedType ?? null) !== item.type ||
-          (item.resolvedSubtype ?? null) !== item.subtype
-        )
-        .map(item => ({
+      const newMappings: ConfirmedReceiptItem[] = resolved
+        .filter(({ item, type, subtype }) => {
+          const parsedType = effectiveType(item.type ?? undefined);
+          return (
+            (type ?? null) !== (parsedType ?? null) ||
+            (subtype ?? null) !== (effectiveSubtype(parsedType, item.subtype ?? undefined) ?? null)
+          );
+        })
+        .map(({ item, type, subtype }) => ({
           description: item.description,
           value: item.value,
-          type: item.resolvedType!,
-          subtype: item.resolvedSubtype,
+          type: type!,
+          subtype,
         }));
 
       const res = await fetch('/api/receipts/import', {
@@ -327,7 +337,8 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
       return !type || !effectiveSubtype(type, i.resolvedSubtype);
     }).length;
     const total = parsed.total ?? items.reduce((s, i) => s + i.resolvedValue, 0);
-    const canImport = allResolved && !!paymentType && (paymentType !== 'credit' || !!cardBrand);
+    const canImport =
+      allResolved && !categoriesLoading && !!paymentType && (paymentType !== 'credit' || !!cardBrand);
 
     return (
       <div className="max-w-2xl mx-auto p-4">

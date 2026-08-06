@@ -19,11 +19,25 @@ let latestRequestId = 0;
 let lastRequestStartedAt = 0;
 const listeners = new Set<(data: CategoryDoc[]) => void>();
 
+/**
+ * An empty list is treated as "not loaded": `Category` is seeded on first boot
+ * (`instrumentation.ts`), so an empty result means a failed or incomplete load —
+ * and every consumer reads an empty list as "every category was deleted".
+ */
+function cachedCategories(): CategoryDoc[] | null {
+  return cache && cache.length > 0 ? cache : null;
+}
+
 function fetchCategories(): Promise<CategoryDoc[]> {
   const requestId = ++latestRequestId;
   lastRequestStartedAt = Date.now();
   const request: Promise<CategoryDoc[]> = fetch('/api/categories')
-    .then(res => (res.ok ? res.json() : []))
+    .then(res => {
+      // Must throw, not fall back to []: the success branch writes the shared
+      // cache and broadcasts, so a 500 would blank categories for every consumer.
+      if (!res.ok) throw new Error(`GET /api/categories failed: ${res.status}`);
+      return res.json();
+    })
     .then((data: CategoryDoc[]) => {
       // A request superseded by a newer one must never write the cache or
       // broadcast: responses can settle out of order.
@@ -42,7 +56,8 @@ function fetchCategories(): Promise<CategoryDoc[]> {
 
 /** Resolves with the cache, loading it once if this is the first consumer. */
 function ensureCategories(): Promise<CategoryDoc[]> {
-  if (cache) return Promise.resolve(cache);
+  const cached = cachedCategories();
+  if (cached) return Promise.resolve(cached);
   return inflight ?? fetchCategories();
 }
 
@@ -63,15 +78,16 @@ function refreshCategories(): Promise<CategoryDoc[]> {
 function revalidateCategories(): Promise<CategoryDoc[]> {
   if (queuedRefresh) return queuedRefresh;
   if (inflight) return inflight;
-  if (cache && Date.now() - lastRequestStartedAt < REVALIDATE_INTERVAL_MS) {
-    return Promise.resolve(cache);
+  const cached = cachedCategories();
+  if (cached && Date.now() - lastRequestStartedAt < REVALIDATE_INTERVAL_MS) {
+    return Promise.resolve(cached);
   }
   return fetchCategories();
 }
 
 export function useCategories() {
-  const [categories, setCategories] = useState<CategoryDoc[]>(cache ?? []);
-  const [loading, setLoading] = useState(cache === null);
+  const [categories, setCategories] = useState<CategoryDoc[]>(cachedCategories() ?? []);
+  const [loading, setLoading] = useState(cachedCategories() === null);
 
   useEffect(() => {
     const listener = (data: CategoryDoc[]) => setCategories(data);
