@@ -146,10 +146,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json(
-      { imported, skipped: skippedInvalid + skippedExisting, skippedInvalid, skippedExisting },
-      { status: 201 }
-    );
+    return NextResponse.json({ imported, skippedInvalid, skippedExisting }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: `Falha ao importar fatura: ${error}` }, { status: 500 });
   }

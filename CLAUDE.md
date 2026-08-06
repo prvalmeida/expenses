@@ -106,7 +106,7 @@ Every request carries a `requestId` checked against `latestRequestId` before it 
 
 `newMappings` (both screens) compares the resolved values against the *effective* parsed ones. Comparing against the raw parsed subtype makes an orphaned subtype the user never touched look edited, and upserts `{ type, subtype: null }` over a `BillMapping`/`ProductMapping` the category rename cascade had already fixed.
 
-`/api/bills/import` returns `skippedInvalid` and `skippedExisting` separately (plus their sum as `skipped`). Only `skippedInvalid` is actionable: `ImportBill` keeps those rows in the table with a notice so they can be classified and retried, and drops the rows that did import so a retry cannot duplicate them. `skippedExisting` is the expected result of overlapping bills and must never gate `onDone()`.
+`/api/bills/import` returns `{ imported, skippedInvalid, skippedExisting }` — the two skip reasons stay separate, with no combined total. Only `skippedInvalid` is actionable: `ImportBill` keeps those rows in the table with a notice so they can be classified and retried, and drops the rows that did import so a retry cannot duplicate them. `skippedExisting` is the expected result of overlapping bills and must never gate `onDone()`.
 
 **Category validation at import boundaries:** Besides the expense/income POST/PUT routes, the bulk import routes validate against `Category` too: `/api/receipts/import` rejects the whole batch (400) if any item/mapping has an invalid `(type, subtype)` pair; `/api/bills/import` skips items whose type no longer exists and drops subtypes not valid for the type (the schema no longer enum-validates, so this is the only guard).
 
