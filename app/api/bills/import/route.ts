@@ -56,19 +56,22 @@ export async function POST(request: NextRequest) {
     const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
 
     let imported = 0;
-    let skipped = 0;
+    // Kept apart: an unclassified row is a problem the user must fix, while an
+    // already-imported installment is the expected outcome of overlapping bills.
+    let skippedInvalid = 0;
+    let skippedExisting = 0;
 
     for (const item of items) {
       // Skip items without a category — Expense schema requires type
       if (item.type === null) {
-        skipped++;
+        skippedInvalid++;
         continue;
       }
 
       // Skip items whose category no longer exists; drop subtypes not valid for the type
       const validSubtypes = subtypesByType.get(item.type);
       if (!validSubtypes) {
-        skipped++;
+        skippedInvalid++;
         continue;
       }
       const subtype = item.subtype && validSubtypes.has(item.subtype) ? item.subtype : undefined;
@@ -122,7 +125,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (exists) {
-          skipped++;
+          skippedExisting++;
           continue;
         }
 
@@ -143,7 +146,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ imported, skipped }, { status: 201 });
+    return NextResponse.json({ imported, skippedInvalid, skippedExisting }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: `Falha ao importar fatura: ${error}` }, { status: 500 });
   }
