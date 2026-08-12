@@ -53,6 +53,7 @@ Requires a `.env.local` file with:
 MONGODB_URI=<your MongoDB connection string>
 OPENAI_API_KEY=<OpenAI API key — required for receipt parsing>
 PDF_KEY=<CPF do titular, somente números>
+API_KEY=<static credential for the public API; unset means every /api/v1 route returns 401>
 ```
 
 ## Architecture
@@ -110,6 +111,15 @@ Every request carries a `requestId` checked against `latestRequestId` before it 
 
 **Category validation at import boundaries:** Besides the expense/income POST/PUT routes, the bulk import routes validate against `Category` too: `/api/receipts/import` rejects the whole batch (400) if any item/mapping has an invalid `(type, subtype)` pair; `/api/bills/import` skips items whose type no longer exists and drops subtypes not valid for the type (the schema no longer enum-validates, so this is the only guard).
 
+**Service layer (`lib/services/`):** The pipelines shared between the existing `/api/*` routes and the forthcoming `/api/v1/*` namespace live here, not in route bodies — `expenseService` (update/delete, including the credit→non-credit `$unset`), `incomeService`, `billService` (PDF→text→`ParsedBillItem[]`), `receiptService` (PDF/URL→`ParseResponse`, plus the import loop). Routes are reduced to request decoding, category validation and error mapping. A service never inspects payload shape (that is the boundary's job) and never imports `next/server`: it signals failure by throwing `ApiError` from `lib/api/respond.ts`, which the route maps to a status.
+
+**API boundary helpers (`lib/api/`):** `respond.ts` (success/error envelope, `ApiErrorCode`, `ApiError`), `auth.ts` (`requireApiKey`), `validate.ts` (Zod adapter), `schemas/` (per-payload Zod schemas). Two rules:
+
+- **Read `API_KEY` inside the guard, never at module scope** — the CI `lint`/`build` jobs deliberately run with no secrets, and a module-scope read makes the build depend on one. An unset key **fails closed**; unset-means-open would turn a misconfigured deploy into an open database.
+- **Dynamic-category validation never moves into Zod.** The boundary order is auth → Zod → `validateExpensePair`/`validateIncomeType` → service. Category validity is a database question against a collection users edit at runtime; freezing the list into a `z.enum` at module load breaks the moment a user adds a category — the same staleness class as the `useCategories` cache problem above. `VALIDATION_FAILED` (malformed payload) and `INVALID_CATEGORY` (well-formed, unknown category) stay distinct for the same reason.
+
+Query schemas use `z.coerce` because every query value arrives as a string; JSON body schemas must **not** coerce, or `{"value": "abc"}` becomes an expense with a `NaN` amount.
+
 ### Directory structure
 
 - `app/` — Next.js App Router pages and API routes; all UI pages are co-located here as `.tsx` files
@@ -124,6 +134,8 @@ Every request carries a `requestId` checked against `latestRequestId` before it 
 - `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
 - `app/api/categories/seed/` — POST: forced reseed; thin wrapper over `seedCategories()` in `categoryUtils.ts`
 - `instrumentation.ts` — Next.js boot hook (`register()`); in the Node runtime it auto-runs `seedCategories()` **only when the `Category` collection is empty** (first-run seeding). Guarded by an empty-count check so cloud instances don't re-seed on every cold start; wrapped in try/catch so a DB hiccup never crashes boot. Forced reseed still goes through the POST route.
+- `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt}.ts`
+- `lib/services/` — `expenseService`, `incomeService`, `billService`, `receiptService` (single source of truth — do not re-inline into routes)
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
 - `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
