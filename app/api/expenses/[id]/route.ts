@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../../lib/mongodb';
 import Expense from '../../../../lib/models/Expense';
-import { computeEffectiveDate } from '../../../../lib/utils/cycleUtils';
 import { validateExpensePair } from '../../../../lib/utils/categoryUtils';
+import { updateExpense, deleteExpense } from '../../../../lib/services/expenseService';
 
 export async function GET(
   request: NextRequest,
@@ -27,29 +27,15 @@ export async function PUT(
 ) {
   const { id } = await params;
   try {
-    await connectToDatabase();
-    const { name, value, type, subtype, paymentType, cardBrand, date, effectiveDate: clientEffectiveDate } = await request.json();
+    const { name, value, type, subtype, paymentType, cardBrand, date, effectiveDate } = await request.json();
 
     if (!(await validateExpensePair(type, subtype))) {
       return NextResponse.json({ error: 'Categoria ou subcategoria inválida.' }, { status: 400 });
     }
 
-    const effectiveDate = paymentType === 'credit' && cardBrand && date
-      ? await computeEffectiveDate(date, cardBrand, paymentType)
-      : clientEffectiveDate;
-
-    const $set: Record<string, unknown> = { name, value, type, subtype, paymentType, date, effectiveDate };
-    if (paymentType === 'credit') $set.cardBrand = cardBrand;
-
-    const update = paymentType !== 'credit'
-      ? { $set, $unset: { cardBrand: '', installment: '', totalInstallments: '' } }
-      : { $set };
-
-    const updatedExpense = await Expense.findByIdAndUpdate(
-      id,
-      update,
-      { new: true }
-    );
+    const updatedExpense = await updateExpense(id, {
+      name, value, type, subtype, paymentType, cardBrand, date, effectiveDate,
+    });
 
     if (!updatedExpense) return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
 
@@ -62,24 +48,17 @@ export async function PUT(
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    await connectToDatabase();
     const { searchParams } = new URL(request.url);
-    const deleteAllParts = searchParams.get('all') === 'true';
+    const allInstallments = searchParams.get('all') === 'true';
 
     if (!id) return NextResponse.json({ error: 'ID is required' }, { status: 400 });
 
-    const expenseToDelete = await Expense.findById(id);
-    if (!expenseToDelete) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const result = await deleteExpense(id, { allInstallments });
+    if (!result) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    if (deleteAllParts && expenseToDelete.transactionId) {
-      // Deleta TODAS as despesas com o mesmo transactionId
-      await Expense.deleteMany({ transactionId: expenseToDelete.transactionId });
-      return NextResponse.json({ message: 'All installments deleted.' });
-    } else {
-      // Deleta apenas a parcela específica
-      await Expense.findByIdAndDelete(id);
-      return NextResponse.json({ message: 'Single expense deleted.' });
-    }
+    return NextResponse.json({
+      message: result.scope === 'group' ? 'All installments deleted.' : 'Single expense deleted.',
+    });
   } catch (error) {
     return NextResponse.json({ error: `Error: ${error}` }, { status: 500 });
   }
