@@ -13,6 +13,7 @@ is baked into the image. Required:
 | `MONGODB_URI` | MongoDB connection string |
 | `OPENAI_API_KEY` | OpenAI key — required for receipt parsing |
 | `PDF_KEY` | CPF do titular (somente números) |
+| `API_KEY` | Static credential for the public API (`/api/v1/*`); unset means every v1 route returns 401 |
 
 Copy `.env.example` to `.env.local` for local runs.
 

@@ -38,8 +38,8 @@ services:
       target: runner
     ports:
       - "3000:3000"
-    # MONGODB_URI / OPENAI_API_KEY / PDF_KEY come from `.env.local` at runtime,
-    # never baked into the image. MONGODB_URI is deliberately NOT set below:
+    # MONGODB_URI / OPENAI_API_KEY / PDF_KEY / API_KEY come from `.env.local` at
+    # runtime, never baked into the image. MONGODB_URI is deliberately NOT set below:
     # `environment` outranks `env_file`, so hardcoding it here would silently
     # redirect a managed-database URI to the bundled `mongodb` service.
     env_file:
