@@ -21,21 +21,49 @@ script:post-response {
   // prefix is what makes that debris identifiable instead of hand-picked out of
   // the table.
   //
-  // Needs `--sandbox developer` for axios. Without it the request still reports
-  // the leftovers, it just cannot delete them.
+  // Needs `--sandbox developer` for axios.
   const axios = require("axios");
   const baseUrl = bru.getEnvVar("baseUrl");
-  const headers = { "x-api-key": process.env.API_KEY };
 
-  const marked = res.body.data.items.filter(e => e.name.startsWith("BRUNO_TEST_"));
-  const [expenses, incomes] = [marked, (await axios.get(`${baseUrl}/incomes?limit=500`, { headers })).data.data.items.filter(i => i.name.startsWith("BRUNO_TEST_"))];
+  // bru.getProcessEnv, not process.env: the sandbox does not expose the loaded
+  // .env as a real process.env, so reading it directly sends an undefined key
+  // and every sweep call comes back 401.
+  const headers = { "x-api-key": bru.getProcessEnv("API_KEY") };
 
-  for (const expense of expenses) {
-    await axios.delete(`${baseUrl}/expenses/${expense._id}`, { headers });
+  const MAX_PAGES = 500;
+
+  // Every page, not just the first. The list is sorted by date descending, so
+  // with a few hundred real expenses the test debris — dated in the past —
+  // lands on a later page and a first-page-only sweep silently leaves it behind.
+  async function collectMarked(resource, firstPage) {
+    const marked = [];
+    let page = firstPage;
+
+    for (let i = 0; i < MAX_PAGES; i++) {
+      marked.push(...page.items.filter(record => record.name.startsWith("BRUNO_TEST_")));
+      if (!page.nextCursor) return marked;
+
+      const url = `${baseUrl}/${resource}?limit=500&cursor=${page.nextCursor}`;
+      page = (await axios.get(url, { headers })).data.data;
+    }
+
+    throw new Error(`Sweep of ${resource} exceeded ${MAX_PAGES} pages — refusing to loop.`);
   }
-  for (const income of incomes) {
-    await axios.delete(`${baseUrl}/incomes/${income._id}`, { headers });
+
+  async function deleteAll(resource, records) {
+    for (const record of records) {
+      await axios.delete(`${baseUrl}/${resource}/${record._id}`, { headers });
+    }
   }
+
+  const expenses = await collectMarked("expenses", res.body.data);
+  const incomes = await collectMarked(
+    "incomes",
+    (await axios.get(`${baseUrl}/incomes?limit=500`, { headers })).data.data
+  );
+
+  await deleteAll("expenses", expenses);
+  await deleteAll("incomes", incomes);
 
   bru.setVar("sweptExpenses", expenses.length);
   bru.setVar("sweptIncomes", incomes.length);
