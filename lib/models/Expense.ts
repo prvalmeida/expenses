@@ -21,6 +21,14 @@ const ExpenseSchema = new mongoose.Schema({
   }
 );
 
+// Every v1 list filter is a collection scan without these. The date indexes
+// carry _id as a tie-break because listExpenses sorts on (dateField, _id) —
+// a single-field index would leave the sort in memory.
+ExpenseSchema.index({ date: -1, _id: -1 });
+ExpenseSchema.index({ effectiveDate: -1, _id: -1 });
+ExpenseSchema.index({ transactionId: 1 });
+ExpenseSchema.index({ type: 1, subtype: 1 });
+
 if (mongoose.models.Expense) {
   delete mongoose.models.Expense;
 }
