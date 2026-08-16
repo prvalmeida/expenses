@@ -1,0 +1,47 @@
+meta {
+  name: Import the parsed statement back
+  type: http
+  seq: 2
+  tags: [
+    external
+  ]
+}
+
+post {
+  url: {{baseUrl}}/bills/import
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "items": {{billItems}},
+    "cardBrand": "Master Santander",
+    "closingDate": {{billClosingDate}},
+    "dueDate": {{billDueDate}}
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  test("the three counters stay separate", function () {
+    // They are never summed: only skippedInvalid is actionable, and
+    // skippedExisting is the expected result of overlapping bills.
+    expect(res.body.data).to.have.property("imported");
+    expect(res.body.data).to.have.property("skippedInvalid");
+    expect(res.body.data).to.have.property("skippedExisting");
+  });
+
+  test("the parse response was re-postable unchanged", function () {
+    expect(res.body.error).to.equal(undefined);
+  });
+}
+
+docs {
+  This writes real expenses. Point baseUrl at a scratch database, or delete the
+  imported rows afterwards — they carry the statement's own descriptions, not
+  the BRUNO_TEST_ marker, so the Cleanup folder cannot find them.
+}

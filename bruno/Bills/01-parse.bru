@@ -1,0 +1,55 @@
+meta {
+  name: Parse a statement PDF
+  type: http
+  seq: 1
+  tags: [
+    external
+  ]
+}
+
+post {
+  url: {{baseUrl}}/bills/parse
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(fixtures/sample-bill.pdf)
+  cardBrand: Master Santander
+}
+
+vars:post-response {
+  billItems: res.body.data.items
+  billClosingDate: res.body.data.closingDate
+  billDueDate: res.body.data.dueDate
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("the deterministic parser extracted rows", function () {
+    expect(res.body.data.items.length).to.be.above(0);
+  });
+
+  test("every row carries the round-trip fields import expects", function () {
+    const item = res.body.data.items[0];
+    expect(item).to.have.property("date");
+    expect(item).to.have.property("value");
+    expect(item).to.have.property("recognized");
+  });
+}
+
+docs {
+  Excluded from the default run (tag: external) for three separate reasons:
+
+  - A real statement is personal financial data; committing one is a disclosure.
+  - Falling back to GPT extraction calls OpenAI on every invocation, so an
+    automated run is a recurring bill.
+  - The PDF is password-protected with the operator's CPF (PDF_KEY), so a
+    committed fixture would need a committed CPF.
+
+  Supply fixtures/sample-bill.pdf yourself — a synthetic, redacted statement.
+  Run with: npm run test:api:external
+}

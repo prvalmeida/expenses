@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "gen:openapi": "tsx scripts/gen-openapi.ts",
-    "test:api": "cd bruno && bru run . -r --env local --sandbox developer --exclude-tags external"
+    "test:api": "cd bruno && bru run . -r --env local --sandbox developer --exclude-tags external",
+    "test:api:external": "cd bruno && bru run . -r --env local --sandbox developer --tags external"
   },
   "dependencies": {
     "@types/pdf-parse": "^1.1.5",
