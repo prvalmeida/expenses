@@ -168,6 +168,16 @@ export async function listExpenses(filter: ListExpensesFilter = {}): Promise<Lis
   };
 }
 
+export async function getExpense(id: string) {
+  await connectToDatabase();
+  return Expense.findById(id);
+}
+
+export async function listExpenseGroup(transactionId: string) {
+  await connectToDatabase();
+  return Expense.find({ transactionId }).sort({ installment: 1 });
+}
+
 export type DeleteScope = 'single' | 'group';
 
 export interface DeleteExpenseResult {
@@ -208,6 +218,40 @@ export async function updateExpense(id: string, input: UpdateExpenseInput) {
     : { $set, $unset: { cardBrand: '', installment: '', totalInstallments: '' } };
 
   return Expense.findByIdAndUpdate(id, update, { new: true });
+}
+
+// A PATCH is resolved against the stored record before anything is validated or
+// written, so the category check at the boundary sees the same merged values the
+// write will use — validating the patch alone would let `{ subtype }` land on a
+// type it does not belong to.
+export async function resolveExpensePatch(
+  id: string,
+  patch: Partial<UpdateExpenseInput>
+): Promise<UpdateExpenseInput | null> {
+  const existing = await getExpense(id);
+  if (!existing) return null;
+
+  const current: UpdateExpenseInput = {
+    name: existing.name,
+    value: existing.value,
+    type: existing.type,
+    subtype: existing.subtype,
+    paymentType: existing.paymentType,
+    cardBrand: existing.cardBrand,
+    date: existing.date,
+    effectiveDate: existing.effectiveDate,
+  };
+
+  return { ...current, ...patch };
+}
+
+export async function deleteExpenseGroup(transactionId: string): Promise<DeleteExpenseResult | null> {
+  await connectToDatabase();
+
+  const { deletedCount } = await Expense.deleteMany({ transactionId });
+  if (deletedCount === 0) return null;
+
+  return { scope: 'group', deletedCount };
 }
 
 export async function deleteExpense(
