@@ -4,8 +4,9 @@ import { listIncomes, createIncome } from '../../../lib/services/incomeService';
 
 export async function GET() {
   try {
-    const incomes = await listIncomes();
-    return NextResponse.json(incomes);
+    // Unpaginated on purpose: the Dashboard totals the whole list client-side.
+    const { items } = await listIncomes();
+    return NextResponse.json(items);
   } catch (error) {
     return NextResponse.json({ error: `Failed to fetch incomes. ${error}` }, { status: 500 });
   }
