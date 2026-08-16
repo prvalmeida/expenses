@@ -1,0 +1,29 @@
+meta {
+  name: Discover a valid category
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/categories?kind=expense
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  // Categories are user-editable at runtime, so the chain discovers one instead
+  // of hardcoding a name that may have been renamed or deleted.
+  const categories = res.body.data;
+  bru.setVar("expenseType", categories[0].name);
+  bru.setVar("expenseSubtype", categories[0].subtypes[0] ?? null);
+}
+
+tests {
+  test("there is at least one expense category", function () {
+    expect(res.body.data.length).to.be.above(0);
+  });
+}

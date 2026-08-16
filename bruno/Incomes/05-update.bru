@@ -1,0 +1,26 @@
+meta {
+  name: Update the income
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/incomes/{{incomeId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_salario_ajustado",
+    "value": 4500,
+    "type": "{{incomeType}}",
+    "date": "2026-03-06"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.name: eq BRUNO_TEST_salario_ajustado
+  res.body.data.value: eq 4500
+}

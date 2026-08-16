@@ -1,0 +1,43 @@
+meta {
+  name: Sweep BRUNO_TEST_ leftovers
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/expenses?limit=500
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  // The collection writes to whatever baseUrl points at, and during development
+  // that is the real database holding real personal finances. A run that aborts
+  // mid-chain leaves orphan expenses in the Dashboard totals; the BRUNO_TEST_
+  // prefix is what makes that debris identifiable instead of hand-picked out of
+  // the table.
+  //
+  // Needs `--sandbox developer` for axios. Without it the request still reports
+  // the leftovers, it just cannot delete them.
+  const axios = require("axios");
+  const baseUrl = bru.getEnvVar("baseUrl");
+  const headers = { "x-api-key": process.env.API_KEY };
+
+  const marked = res.body.data.items.filter(e => e.name.startsWith("BRUNO_TEST_"));
+  const [expenses, incomes] = [marked, (await axios.get(`${baseUrl}/incomes?limit=500`, { headers })).data.data.items.filter(i => i.name.startsWith("BRUNO_TEST_"))];
+
+  for (const expense of expenses) {
+    await axios.delete(`${baseUrl}/expenses/${expense._id}`, { headers });
+  }
+  for (const income of incomes) {
+    await axios.delete(`${baseUrl}/incomes/${income._id}`, { headers });
+  }
+
+  bru.setVar("sweptExpenses", expenses.length);
+  bru.setVar("sweptIncomes", incomes.length);
+  console.log(`Cleanup: removidos ${expenses.length} gastos e ${incomes.length} receitas marcados.`);
+}

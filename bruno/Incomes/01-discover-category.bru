@@ -1,0 +1,25 @@
+meta {
+  name: Discover a valid income type
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/categories?kind=income
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  bru.setVar("incomeType", res.body.data[0].name);
+}
+
+tests {
+  test("there is at least one income category", function () {
+    expect(res.body.data.length).to.be.above(0);
+  });
+}

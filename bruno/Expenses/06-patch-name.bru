@@ -1,0 +1,31 @@
+meta {
+  name: Patch a single field
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_notebook_renamed"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.name: eq BRUNO_TEST_notebook_renamed
+}
+
+tests {
+  test("untouched fields survive the patch", function () {
+    // The patch is resolved against the stored record before it is written, so
+    // omitted fields must not be blanked.
+    expect(res.body.data.value).to.equal(1000);
+    expect(res.body.data.paymentType).to.equal("pix");
+  });
+}

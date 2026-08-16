@@ -1,0 +1,22 @@
+meta {
+  name: Verify no leftovers remain
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/expenses?limit=500
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("no BRUNO_TEST_ expense survives the run", function () {
+    const leftovers = res.body.data.items.filter(e => e.name.startsWith("BRUNO_TEST_"));
+    expect(leftovers.map(e => e._id)).to.eql([]);
+  });
+}

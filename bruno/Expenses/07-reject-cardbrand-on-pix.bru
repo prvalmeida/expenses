@@ -1,0 +1,35 @@
+meta {
+  name: Reject a pix expense carrying a cardBrand
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_invalid_combo",
+    "value": 10,
+    "type": "{{expenseType}}",
+    "paymentType": "pix",
+    "cardBrand": "Master Santander",
+    "date": "2026-03-10"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+tests {
+  // The old POST did `new Expense(body)`; Mongoose strict mode drops unknown
+  // keys but not known-yet-invalid combinations, so this used to be accepted.
+  test("nothing was created", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

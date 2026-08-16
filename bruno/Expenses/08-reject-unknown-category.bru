@@ -1,0 +1,33 @@
+meta {
+  name: Reject an unknown category with INVALID_CATEGORY
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_unknown_category",
+    "value": 10,
+    "type": "categoria-que-nao-existe",
+    "paymentType": "pix",
+    "date": "2026-03-10"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+tests {
+  // Distinct from VALIDATION_FAILED on purpose: this payload is well-formed and
+  // the caller recovers by re-reading /v1/categories, not by fixing its code.
+  test("the code is INVALID_CATEGORY, not VALIDATION_FAILED", function () {
+    expect(res.body.error.code).to.equal("INVALID_CATEGORY");
+  });
+}
