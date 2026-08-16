@@ -158,6 +158,17 @@ Todo write valida `type` contra as categorias de receita.
 Ambas são somente leitura: gravar um ciclo recalcula o `effectiveDate` de gastos já existentes,
 o que é uma ação de operador e não de um chamador externo.
 
+## Migrações de dados (operador)
+
+`GET /api/admin/migrations` lista o registro de migrações; `POST /api/admin/migrations` aplica as
+pendentes e `POST /api/admin/migrations?dryRun=true` apenas informa o que cada uma faria, sem
+escrever nada. As duas rotas exigem a mesma `API_KEY` do restante da API e respondem no mesmo
+envelope.
+
+Aplicar é seguro de repetir: o índice único do registro faz da segunda chamada um no-op. Uma
+migração que falha fica marcada como `failed`, interrompe as seguintes e volta com
+`INTERNAL_ERROR` — nesse caso o `details` traz o erro, o que já foi aplicado e o que foi pulado.
+
 ## Limitações conhecidas
 
 A chave estática autentica, mas não identifica quem chamou: não há atribuição por chamador,

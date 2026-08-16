@@ -1,0 +1,27 @@
+meta {
+  name: Reject an unauthenticated migration run
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{adminUrl}}/migrations
+  body: none
+  auth: none
+}
+
+headers {
+  x-api-key:
+}
+
+assert {
+  res.status: eq 401
+  res.body.error.code: eq UNAUTHORIZED
+}
+
+docs {
+  The rest of /api/admin is unauthenticated because only the UI reaches it. This
+  route rewrites stored data on demand, so it is guarded like the v1 surface —
+  and the guard is worth a test precisely because nothing else in the folder
+  would notice if it were dropped.
+}
