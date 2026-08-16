@@ -9,7 +9,12 @@ npm run dev      # Start development server (http://localhost:3000)
 npm run build    # Build for production
 npm run start    # Start production server
 npm run lint     # Run ESLint
+npm run gen:openapi        # Regenerate public/openapi.yaml from the Zod schemas
+npm run test:api           # Run the Bruno API collection against localhost:3000
+npm run test:api:external  # Only the bill/receipt folders (real fixtures + OpenAI)
 ```
+
+`test:api` writes to whatever database the server it targets is using — see the `bruno/` notes below before pointing it at anything real.
 
 ### Docker
 
@@ -36,11 +41,14 @@ The production `runner` image uses Next.js **standalone output** (`output: 'stan
 
 ```
 lint ∥ build ∥ verify-tag → docker → release
+api-test (workflow_dispatch / tags only, no needs)
 ```
 
 `lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
 
 The last three jobs are tag-only (`refs/tags/v*`). **Releases must be tagged on `main`**: Actions has no native "tag on branch X" filter, so `verify-tag` checks out with `fetch-depth: 0` (a shallow checkout makes the check silently unreliable) and fails if the tagged commit is not an ancestor of `origin/main`.
+
+`api-test` stands apart from that graph on purpose. It starts the compose `prod` profile, seeds categories and runs the Bruno collection, so it needs `MONGODB_URI` and `API_KEY` — which is exactly why it cannot inherit `lint`/`build`'s triggers, and why it generates a throwaway key against the bundled `mongodb` container instead of taking real secrets. Gating `release` on it would make every release depend on a live database being reachable from the runner.
 
 Images publish to **`ghcr.io/prvalmeida/expenses`** authenticated with the built-in `GITHUB_TOKEN` — no registry secrets. A `vX.Y.Z` tag yields `X.Y.Z`, `X.Y`, `X`, and `sha-<short>`; `latest` moves only when the tag has no hyphen, so prereleases (`v2.0.0-rc.1`) never claim it. The build sets **no** `target` — the Dockerfile's final stage is `runner`, and naming a target would ship the hot-reload `dev` stage. `release` gates on `docker` so no release ever points at a version with no image.
 
@@ -111,7 +119,14 @@ Every request carries a `requestId` checked against `latestRequestId` before it 
 
 **Category validation at import boundaries:** Besides the expense/income POST/PUT routes, the bulk import routes validate against `Category` too: `/api/receipts/import` rejects the whole batch (400) if any item/mapping has an invalid `(type, subtype)` pair; `/api/bills/import` skips items whose type no longer exists and drops subtypes not valid for the type (the schema no longer enum-validates, so this is the only guard).
 
-**Service layer (`lib/services/`):** The pipelines shared between the existing `/api/*` routes and the forthcoming `/api/v1/*` namespace live here, not in route bodies — `expenseService` (update/delete, including the credit→non-credit `$unset`), `incomeService`, `billService` (PDF→text→`ParsedBillItem[]`), `receiptService` (PDF/URL→`ParseResponse`, plus the import loop). Routes are reduced to request decoding, category validation and error mapping. A service never inspects payload shape (that is the boundary's job) and never imports `next/server`: it signals failure by throwing `ApiError` from `lib/api/respond.ts`, which the route maps to a status.
+**Public API (`/api/v1/*`):** The authenticated, versioned surface for external callers. It is additive — the internal `/api/*` routes keep their current contract and stay unauthenticated, because they are what the UI calls and a browser has no safe way to hold `API_KEY`. Every v1 handler is `auth → Zod → category validation → service → envelope`, and returns `{ data }` / `{ error: { code, message, details } }` (see `docs/API.md` for the caller-facing contract).
+
+Two rules follow from where the two surfaces differ:
+
+- **Never point client code at `/api/v1/*`.** Doing so requires shipping the key to the browser. When the UI needs behaviour the v1 route has, the *service* is what gets shared — that is what `POST /api/expenses` does with `createExpenses`.
+- **`expenseService.buildExpenseDocuments` is the single source of truth for installment expansion** — shared `transactionId`, per-installment `date` via `addMonthsClamped`, per-installment `effectiveDate` via `computeEffectiveDate`. `AddExpense.tsx` used to re-implement it in the browser, fetching `/api/card-cycles` twice per installment; do not reintroduce a client-side or per-route copy. `valueIsTotal` is an explicit schema field because the two callers disagree about what `value` means: a form submits the purchase total, a bill row is already one installment's amount.
+
+**Service layer (`lib/services/`):** The pipelines shared between the internal `/api/*` routes and the `/api/v1/*` namespace live here, not in route bodies — `expenseService` (update/delete, including the credit→non-credit `$unset`), `incomeService`, `billService` (PDF→text→`ParsedBillItem[]`), `receiptService` (PDF/URL→`ParseResponse`, plus the import loop). Routes are reduced to request decoding, category validation and error mapping. A service never inspects payload shape (that is the boundary's job) and never imports `next/server`: it signals failure by throwing `ApiError` from `lib/api/respond.ts`, which the route maps to a status.
 
 **API boundary helpers (`lib/api/`):** `respond.ts` (success/error envelope, `ApiErrorCode`, `ApiError`), `auth.ts` (`requireApiKey`), `validate.ts` (Zod adapter), `schemas/` (per-payload Zod schemas). Two rules:
 
@@ -120,22 +135,35 @@ Every request carries a `requestId` checked against `latestRequestId` before it 
 
 Query schemas use `z.coerce` because every query value arrives as a string; JSON body schemas must **not** coerce, or `{"value": "abc"}` becomes an expense with a `NaN` amount.
 
+Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: wire-only request types (`ConfirmedBillItem`, `NewBillMapping`, `ConfirmedReceiptItem`) are `z.infer`red from their schema, while types describing DB documents (`Expense`, `Income`) stay hand-written and the schema carries a `satisfies z.ZodType<…>` assertion. `ParsedBillItem`/`ParsedReceiptItem` are *response* shapes with no schema and stay hand-written.
+
+**API contract (`docs/API.md`, `public/openapi.yaml`):** the YAML is **generated** from the Zod schemas by `npm run gen:openapi` (`scripts/gen-openapi.ts`, Zod 4's native JSON-Schema export — no `zod-to-openapi` dependency). Never hand-edit it; `npm run gen:openapi -- --check` fails when it is stale.
+
+**API tests (`bruno/`, `npm run test:api`):** a Bruno collection of `.bru` files versioned alongside the routes. It covers what unit tests cannot see because the behaviour spans requests: installment expansion, the credit→non-credit `$unset`, `VALIDATION_FAILED` vs `INVALID_CATEGORY`. Three rules:
+
+- The auth header is declared **once** in `collection.bru`; `API_KEY` comes from a gitignored `bruno/.env`, never a committed environment file.
+- Every written record is named `BRUNO_TEST_*` and the `Cleanup` folder sweeps the prefix. The collection writes to whatever `baseUrl` points at, which during development is the real personal-finance database — the marker is what makes debris from an aborted run removable.
+- The `Bills`/`Receipts` folders are tagged `external` and excluded from the default run: they need a real financial document as a fixture and call OpenAI on every invocation. `npm run test:api:external` runs them; CI (`api-test`, `workflow_dispatch`/tags only) does not.
+
 ### Directory structure
 
 - `app/` — Next.js App Router pages and API routes; all UI pages are co-located here as `.tsx` files
-- `app/api/expenses/` — GET all, POST, DELETE by query param `?id=`
+- `app/api/v1/` — the public API. `expenses/` (GET filtered+paginated, POST one purchase → N installments), `expenses/[id]/` (GET/PUT/PATCH/DELETE), `expenses/transactions/[transactionId]/` (GET/DELETE the whole installment group), `incomes/` + `incomes/[id]/`, `bills/{parse,import}/`, `receipts/{parse,import}/` (one parse endpoint takes multipart **or** `{ url }`), and read-only `categories/` + `card-cycles/`
+- `app/api/expenses/` — GET all, POST (one purchase, installments expanded server-side via `createExpenses`), DELETE by query param `?id=`
 - `app/api/expenses/[id]/` — GET by id, PUT (whitelisted fields only: `name`, `value`, `type`, `subtype`, `paymentType`, `cardBrand`, `date`, `effectiveDate`), DELETE (with optional `?all=true` for installments)
 - `app/api/income/` — GET all, POST; `app/api/income/[id]/` — DELETE
 - `app/api/card-cycles/` — GET/POST card billing cycle config; POST also recalculates affected expenses
 - `app/api/receipts/parse/` — POST: accepts a PDF file, extracts text via `pdf-parse`, parses with GPT
 - `app/api/receipts/parse-url/` — POST: accepts a SEFAZ NFC-e URL (*.gov.br only), fetches HTML, parses with GPT
 - `app/api/receipts/import/` — POST: saves confirmed receipt items as expenses; upserts new `ProductMapping` entries
-- `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, and `Category` models
+- `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, `Category`, `Expense` and `Income`. The `Expense`/`Income` indexes back the v1 list filters; existing deploys must run this once after they ship
 - `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
 - `app/api/categories/seed/` — POST: forced reseed; thin wrapper over `seedCategories()` in `categoryUtils.ts`
 - `instrumentation.ts` — Next.js boot hook (`register()`); in the Node runtime it auto-runs `seedCategories()` **only when the `Category` collection is empty** (first-run seeding). Guarded by an empty-count check so cloud instances don't re-seed on every cold start; wrapped in try/catch so a DB hiccup never crashes boot. Forced reseed still goes through the POST route.
-- `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt}.ts`
-- `lib/services/` — `expenseService`, `incomeService`, `billService`, `receiptService` (single source of truth — do not re-inline into routes)
+- `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt,support}.ts`
+- `lib/services/` — `expenseService` (build/create/list/update/delete), `incomeService`, `billService` (parse + import), `receiptService` (single source of truth — do not re-inline into routes)
+- `scripts/gen-openapi.ts` — generates `public/openapi.yaml` from the Zod schemas
+- `bruno/` — the API test collection (`npm run test:api`); `bruno/.env` and `bruno/fixtures/` are gitignored
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
 - `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
