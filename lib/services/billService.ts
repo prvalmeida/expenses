@@ -1,8 +1,12 @@
 import path from 'path';
-import { CardBrand, ParsedBillItem } from '@/types';
+import { CardBrand, ConfirmedBillItem, NewBillMapping, ParsedBillItem } from '@/types';
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
-import { parseBillText, extractClosingDate, extractFullDueDate } from '../utils/billUtils';
+import { BillMapping } from '../models/BillMapping';
+import { CardCycle } from '../models/CardCycle';
+import { parseBillText, extractClosingDate, extractFullDueDate, billMappingKey } from '../utils/billUtils';
+import { getExpenseCategories } from '../utils/categoryUtils';
+import { buildExpenseDocuments } from './expenseService';
 import { ApiError } from '../api/respond';
 
 export interface ParseBillInput {
@@ -11,6 +15,23 @@ export interface ParseBillInput {
   // An external caller's statement is not necessarily locked with the
   // operator's CPF, so the password is a parameter; PDF_KEY is only the default.
   password?: string;
+}
+
+export interface ImportBillInput {
+  items: ConfirmedBillItem[];
+  cardBrand: CardBrand;
+  closingDate?: string | null;
+  dueDate?: string | null;
+  newMappings?: NewBillMapping[];
+}
+
+// The two skip reasons never collapse into one total: an unclassified row is a
+// problem the caller must fix and retry, while an already-imported installment
+// is the expected outcome of overlapping bills.
+export interface ImportBillResult {
+  imported: number;
+  skippedInvalid: number;
+  skippedExisting: number;
 }
 
 export interface ParseBillResult {
@@ -130,4 +151,101 @@ export async function parseBill({
   const items = await markDuplicates(parsed);
 
   return { items, cardBrand, closingDate, dueDate };
+}
+
+export async function importBillItems({
+  items,
+  cardBrand,
+  closingDate,
+  dueDate,
+  newMappings,
+}: ImportBillInput): Promise<ImportBillResult> {
+  await connectToDatabase();
+
+  if (!cardBrand || !items?.length) {
+    throw new ApiError('VALIDATION_FAILED', 'cardBrand e items são obrigatórios');
+  }
+
+  // Persist user-confirmed classifications so the next bill auto-classifies.
+  if (newMappings?.length) {
+    await Promise.all(
+      newMappings.map(m =>
+        BillMapping.updateOne(
+          { description: billMappingKey(m.description) },
+          { $set: { type: m.type, subtype: m.subtype } },
+          { upsert: true }
+        )
+      )
+    );
+  }
+
+  // Upsert the cycle first so buildExpenseDocuments derives effectiveDate from
+  // the bill's actual closing date rather than the card's default.
+  if (closingDate && dueDate) {
+    const [year, month] = closingDate.split('-').map(Number);
+    await CardCycle.findOneAndUpdate(
+      { cardBrand, month, year },
+      { closingDate: new Date(closingDate), dueDate: new Date(dueDate) },
+      { upsert: true, new: true }
+    );
+  }
+
+  const categories = await getExpenseCategories();
+  const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
+
+  const result: ImportBillResult = { imported: 0, skippedInvalid: 0, skippedExisting: 0 };
+
+  for (const item of items) {
+    // The schema no longer enum-validates type, so this is the only guard: an
+    // unclassified row, or one whose category was deleted, is skipped whole;
+    // a subtype invalid for its type is dropped and the row still imports.
+    const { type } = item;
+    const validSubtypes = type === null ? undefined : subtypesByType.get(type);
+    if (!validSubtypes || type === null) {
+      result.skippedInvalid++;
+      continue;
+    }
+    const subtype = item.subtype && validSubtypes.has(item.subtype) ? item.subtype : undefined;
+
+    const isInstallment =
+      item.installmentCurrent !== undefined &&
+      item.installmentTotal !== undefined &&
+      item.installmentTotal > 1;
+
+    // Bill rows carry the per-installment amount, never the purchase total.
+    const documents = await buildExpenseDocuments({
+      name: item.description,
+      value: item.value,
+      type,
+      subtype,
+      paymentType: 'credit',
+      cardBrand,
+      date: item.date,
+      installments: isInstallment ? item.installmentTotal : 1,
+      valueIsTotal: false,
+    });
+
+    for (const document of documents) {
+      // Only the expanded installments are deduped: overlapping bills re-report
+      // the same parcela, while a single charge appearing twice is two charges.
+      if (isInstallment) {
+        const exists = await Expense.findOne({
+          name: document.name,
+          value: document.value,
+          date: document.date,
+          cardBrand,
+          installment: document.installment,
+          totalInstallments: document.totalInstallments,
+        });
+        if (exists) {
+          result.skippedExisting++;
+          continue;
+        }
+      }
+      await Expense.create(document);
+      result.imported++;
+    }
+  }
+
+  return result;
 }
