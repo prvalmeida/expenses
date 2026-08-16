@@ -1,7 +1,49 @@
 # Plan — Public API v1 (external integrations)
 
-Status: proposed, not started
+Status: **implemented** on `feat/public-api-v1` — all 30 steps landed, one commit per step.
 Created: 2026-08-11
+Completed: 2026-08-16
+
+## Implementation notes
+
+Three places where the shipped code deviates from the plan as written:
+
+- **Step 22 does not point `AddExpense.tsx` at `/api/v1/expenses`.** That guard requires an
+  `API_KEY`, and a browser has no safe way to hold one. The internal `POST /api/expenses` (which
+  step 44 of *Affected files* already flagged as a raw `new Expense(body)` passthrough) now
+  delegates to `createExpenses` instead, and the form submits once. The duplication the step
+  targeted is gone; the client never sees the key. This is now a rule in CLAUDE.md: when the UI
+  needs v1 behaviour, the **service** is what gets shared, never the route.
+- **Step 23 generates the spec with Zod 4's native JSON-Schema export**, not `zod-to-openapi`.
+  `tsx` and `yaml` are the only new devDependencies (plus `@usebruno/cli` from step 24).
+  `npm run gen:openapi -- --check` fails on a stale file.
+- **Step 28 commits no fixture PDF.** A synthetic statement convincing enough to exercise the
+  Santander/Caixa parsers is not something to fabricate blind, and a real one is exactly the
+  disclosure the step warns about. `bruno/fixtures/` is gitignored with a README stating what to
+  drop in; the `Bills`/`Receipts` requests are written and tagged `external`, so they run as soon
+  as a fixture exists.
+
+Two things the schema work surfaced that were not in the plan:
+
+- Both payment-type selects (`AddExpense.tsx`, `EditExpenseModal.tsx`) offered `value="other"` —
+  absent from both `PAYMENT_TYPES` and the `Expense` union — and labelled `cash` as "PIX". Zod
+  rejects `other`, so both now match `ImportReceipt`'s mapping (`pix` → PIX, `cash` → Dinheiro).
+  **Records already stored as `cash` now read as "Dinheiro"**; if any of those were really PIX,
+  that is a data question, not a code one.
+- `listIncomes` had to return `{ items, nextCursor }` for the v1 route. The internal
+  `/api/income` route passes no `limit` and still gets the whole list, which the Dashboard needs
+  to total client-side.
+
+### Outstanding
+
+- **Migration:** existing deploys must `POST /api/admin/sync-indexes` once. The new `Expense` /
+  `Income` indexes back every v1 list filter (step 10).
+- **The Bruno collection has never been executed against a running server.** It parses and orders
+  correctly, but running it writes `BRUNO_TEST_` records to whatever `baseUrl` points at — which
+  during development is the real personal-finance database. Run `npm run test:api` deliberately;
+  the `Cleanup` folder sweeps the marker afterwards.
+- The out-of-scope gaps below (no per-caller attribution, no rate limiting, no audit trail) are
+  unchanged and now materially larger, since the write endpoints exist.
 
 ## Goal
 
