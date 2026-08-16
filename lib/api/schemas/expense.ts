@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EditableExpenseFields } from '@/types';
 import { brlAmount, cardBrand, isoDate, objectId, paginationQuery, paymentType } from './common';
 
 const base = {
@@ -37,7 +38,9 @@ export const createExpenseSchema = z.discriminatedUnion('paymentType', [
 ]);
 
 // The eight editable fields. transactionId/installment/totalInstallments are
-// deliberately absent — an edit never reshapes an installment group.
+// deliberately absent — an edit never reshapes an installment group. Asserted
+// against EditableExpenseFields (derived from the hand-written Expense document
+// type) so a renamed document field breaks the build here.
 export const updateExpenseSchema = z.object({
   name: base.name,
   value: base.value,
@@ -47,7 +50,7 @@ export const updateExpenseSchema = z.object({
   cardBrand: cardBrand.optional(),
   date: isoDate,
   effectiveDate: isoDate.optional(),
-});
+}) satisfies z.ZodType<EditableExpenseFields>;
 
 export const patchExpenseSchema = updateExpenseSchema.partial();
 
