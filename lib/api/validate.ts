@@ -40,6 +40,12 @@ export async function validateBody<T>(
   return toResult(schema, body);
 }
 
+// Multipart fields: the file is checked by the route (a schema cannot describe
+// a File), the remaining text fields go through Zod like any other input.
+export function validateFields<T>(input: unknown, schema: ZodType<T>): ValidationResult<T> {
+  return toResult(schema, input);
+}
+
 // Query values always arrive as strings, so query schemas are the one place
 // z.coerce belongs — the caller's schema opts in per field.
 export function validateQuery<T>(
