@@ -1,6 +1,87 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
 import { computeEffectiveDate } from '../utils/cycleUtils';
+import { addMonthsClamped } from '../utils/dateUtils';
+
+// One logical purchase. `installments` and `valueIsTotal` only mean anything for
+// a credit purchase; the schema's discriminated union is what keeps a non-credit
+// caller from sending them.
+export interface CreateExpenseInput {
+  name: string;
+  value: number;
+  type: string;
+  subtype?: string;
+  paymentType: string;
+  cardBrand?: string;
+  date: string;
+  installments?: number;
+  // `value` is the total of the purchase by default. A caller echoing a bill
+  // row back, where each row already carries one installment's amount, sets
+  // false — the flag changes what the number means, so it is explicit.
+  valueIsTotal?: boolean;
+}
+
+export interface ExpenseDocument {
+  name: string;
+  value: number;
+  type: string;
+  subtype?: string;
+  paymentType: string;
+  date: string;
+  effectiveDate: string;
+  cardBrand?: string;
+  installment?: number;
+  totalInstallments?: number;
+  transactionId?: string;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// The single source of truth for installment expansion: one purchase in, the N
+// documents it becomes out. effectiveDate is derived per installment through
+// computeEffectiveDate rather than by offsetting the first one, so a CardCycle
+// override on a later month is honoured instead of silently ignored.
+//
+// Returns documents rather than persisting them: the bill import has to check
+// each row against what is already stored before inserting it.
+export async function buildExpenseDocuments(
+  input: CreateExpenseInput
+): Promise<ExpenseDocument[]> {
+  await connectToDatabase();
+
+  const isCredit = input.paymentType === 'credit';
+  const count = isCredit ? Math.max(1, Math.round(input.installments ?? 1)) : 1;
+  const perValue =
+    input.valueIsTotal === false ? input.value : round2(input.value / count);
+  const transactionId = isCredit ? crypto.randomUUID() : undefined;
+
+  const documents: ExpenseDocument[] = [];
+  for (let i = 1; i <= count; i++) {
+    const date = addMonthsClamped(input.date, i - 1).toISOString().split('T')[0];
+    documents.push({
+      name: input.name,
+      value: perValue,
+      type: input.type,
+      ...(input.subtype && { subtype: input.subtype }),
+      paymentType: input.paymentType,
+      date,
+      effectiveDate: await computeEffectiveDate(date, input.cardBrand ?? '', input.paymentType),
+      ...(isCredit && {
+        cardBrand: input.cardBrand,
+        installment: i,
+        totalInstallments: count,
+        transactionId,
+      }),
+    });
+  }
+
+  return documents;
+}
+
+export async function createExpenses(input: CreateExpenseInput) {
+  const documents = await buildExpenseDocuments(input);
+  return Expense.insertMany(documents);
+}
 
 // The eight editable fields. `transactionId`, `installment` and
 // `totalInstallments` are never accepted from an edit — an installment group is
