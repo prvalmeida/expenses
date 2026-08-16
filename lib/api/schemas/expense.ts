@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { EditableExpenseFields } from '@/types';
-import { brlAmount, cardBrand, isoDate, objectId, paginationQuery, paymentType } from './common';
+import {
+  brlAmount,
+  cardBrand,
+  installmentCount,
+  isoDate,
+  objectId,
+  paginationQuery,
+  paymentType,
+} from './common';
 
 const base = {
   name: z.string().trim().min(1, 'Nome é obrigatório'),
@@ -25,7 +33,7 @@ export const createExpenseSchema = z.discriminatedUnion('paymentType', [
     ...base,
     paymentType: z.literal('credit'),
     cardBrand,
-    installments: z.number().int().positive().max(72).default(1),
+    installments: installmentCount.default(1),
     valueIsTotal,
   }),
   z.object({
@@ -53,6 +61,19 @@ export const updateExpenseSchema = z.object({
 }) satisfies z.ZodType<EditableExpenseFields>;
 
 export const patchExpenseSchema = updateExpenseSchema.partial();
+
+// createExpenseSchema enforces the credit ↔ cardBrand pairing with a
+// discriminated union; an edit cannot, because PATCH needs `.partial()` and a
+// union has none. Without this a `{ paymentType: 'credit' }` patch produces a
+// credit expense with no cardBrand — a shape CreditExpense says cannot exist,
+// and one updateExpense would silently skip the effectiveDate derivation for.
+//
+// Only the missing-cardBrand direction is checked: a cardBrand left on a
+// non-credit edit is not stored, updateExpense $unsets it.
+export const updateExpensePayloadSchema = updateExpenseSchema.refine(
+  input => input.paymentType !== 'credit' || Boolean(input.cardBrand),
+  { path: ['cardBrand'], message: 'cardBrand é obrigatório para pagamento no crédito' }
+);
 
 export const listExpensesQuerySchema = paginationQuery.extend({
   // Mirrors the Dashboard's "DATA DA COMPRA" / "FLUXO DE CAIXA" toggle.

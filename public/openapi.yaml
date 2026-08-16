@@ -687,12 +687,12 @@ paths:
                         type: integer
                         minimum: 0
                         exclusiveMinimum: true
-                        maximum: 9007199254740991
+                        maximum: 72
                       installmentTotal:
                         type: integer
                         minimum: 0
                         exclusiveMinimum: true
-                        maximum: 9007199254740991
+                        maximum: 72
                       type:
                         nullable: true
                         type: string

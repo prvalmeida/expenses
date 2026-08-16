@@ -101,8 +101,15 @@ repasse `nextCursor` como `cursor` até vir `null`.
 - `PUT /api/v1/expenses/{id}` substitui os oito campos editáveis; `PATCH` altera um subconjunto.
   `transactionId`, `installment` e `totalInstallments` nunca são aceitos — um grupo de parcelas se
   refaz reimportando, não editando uma parcela.
+- Substituir é substituir: um `subtype` omitido no `PUT` é **removido** do registro, não mantido.
+  Para preservá-lo, reenvie-o — ou use `PATCH`, que resolve o payload contra o registro salvo.
+- `paymentType: "credit"` exige `cardBrand` também na edição, e no `PATCH` a exigência é avaliada
+  sobre o resultado da mesclagem: `PATCH {"paymentType":"credit"}` em um registro sem `cardBrand`
+  retorna `VALIDATION_FAILED`.
 - Mudar `paymentType` de `credit` para outro valor remove `cardBrand`, `installment` e
   `totalInstallments` do registro.
+- Alterar `date` sem informar `effectiveDate` recalcula a data de fluxo de caixa: pelo ciclo do
+  cartão no crédito, e igual à data da compra nos demais meios de pagamento.
 - `DELETE /api/v1/expenses/{id}` apaga um registro; `DELETE /api/v1/expenses/transactions/{transactionId}`
   apaga a compra inteira.
 
@@ -135,7 +142,9 @@ Todo write valida `type` contra as categorias de receita.
    - JSON `{ "url": "https://...sefaz...gov.br/..." }`. Só links `https` em domínio `*.gov.br`
      contendo `sefaz`, `nfce`, `nfe` ou `dfe` são aceitos (proteção contra SSRF).
 2. `POST /api/v1/receipts/import` com os itens confirmados, `newMappings`, `storeDefaultType` e
-   `installments`.
+   `installments` (máximo de 72, como em qualquer contagem de parcelas da API).
+   `paymentType: "credit"` exige `cardBrand`: sem ele o lote entraria como compra no cartão com
+   todas as datas de fluxo de caixa iguais à data da compra.
 3. Diferente da fatura, **um par (type, subtype) inválido rejeita o lote inteiro** com
    `INVALID_CATEGORY`: uma nota é uma compra só, e uma importação parcial deixaria o chamador
    reconciliando à mão.

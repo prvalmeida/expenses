@@ -33,6 +33,14 @@ export const paymentType = z.enum(PAYMENT_TYPES);
 
 export const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Identificador inválido');
 
+// Every installment count on the wire shares this ceiling. It is not cosmetic:
+// buildExpenseDocuments awaits a CardCycle lookup and an insert per installment,
+// so an unbounded count is an event-loop stall and a flooded collection from a
+// single request — including one produced by a mis-guessed Caixa `NN DE NN`.
+export const MAX_INSTALLMENTS = 72;
+
+export const installmentCount = z.number().int().positive().max(MAX_INSTALLMENTS);
+
 export const DEFAULT_PAGE_LIMIT = 100;
 export const MAX_PAGE_LIMIT = 500;
 

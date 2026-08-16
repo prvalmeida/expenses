@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { brlAmount, cardBrand, isoDate, paymentType } from './common';
+import { brlAmount, cardBrand, installmentCount, isoDate, paymentType } from './common';
 
 // The JSON variant of /v1/receipts/parse. The multipart variant carries the PDF
 // itself and is validated by the route's file check, not here.
@@ -25,8 +25,15 @@ export const importReceiptSchema = z.object({
   items: z.array(confirmedReceiptItemSchema).min(1, 'items é obrigatório'),
   newMappings: z.array(confirmedReceiptItemSchema).optional(),
   storeDefaultType: z.string().trim().min(1).optional(),
-  installments: z.number().int().positive().max(72).default(1),
-});
+  installments: installmentCount.default(1),
+}).refine(
+  // Same pairing createExpenseSchema enforces. Without it importReceiptItems
+  // writes installment/totalInstallments/transactionId while
+  // computeEffectiveDate short-circuits on the empty brand, so the batch imports
+  // as a card purchase whose cash-flow dates are all the purchase date.
+  input => input.paymentType !== 'credit' || Boolean(input.cardBrand),
+  { path: ['cardBrand'], message: 'cardBrand é obrigatório para pagamento no crédito' }
+);
 
 export type ParseReceiptUrlBody = z.infer<typeof parseReceiptUrlSchema>;
 export type ConfirmedReceiptItemBody = z.infer<typeof confirmedReceiptItemSchema>;

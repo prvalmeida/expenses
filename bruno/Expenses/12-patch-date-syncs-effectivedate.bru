@@ -1,0 +1,32 @@
+meta {
+  name: Patching the date moves the cash-flow date with it
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "date": "2026-09-01"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.date: eq 2026-09-01
+}
+
+tests {
+  // For a non-credit expense the two dates must agree. The patch used to merge
+  // the stored effectiveDate back in, leaving the record in September under
+  // "DATA DA COMPRA" and March under "FLUXO DE CAIXA" — visible only across
+  // requests, since the response of the write itself looked fine either way.
+  test("effectiveDate followed the purchase date", function () {
+    expect(res.body.data.effectiveDate).to.equal("2026-09-01");
+  });
+}

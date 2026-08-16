@@ -44,6 +44,11 @@ jobs:
       # makes a warning-only regression fail CI too.
       - run: npx eslint --max-warnings=0
 
+      # public/openapi.yaml is generated from the Zod schemas. Without this the
+      # generator's whole premise — that stale docs are a diff, not a
+      # code-review catch — is unenforced, and the next schema change drifts it.
+      - run: npm run gen:openapi -- --check
+
   build:
     name: Build
     runs-on: ubuntu-latest

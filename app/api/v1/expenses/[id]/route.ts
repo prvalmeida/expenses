@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import { requireApiKey } from '@/lib/api/auth';
 import { fail, failFrom, ok } from '@/lib/api/respond';
-import { validateBody, validationFailed } from '@/lib/api/validate';
-import { patchExpenseSchema, updateExpenseSchema } from '@/lib/api/schemas/expense';
+import { validateBody, validateFields, validationFailed } from '@/lib/api/validate';
+import { patchExpenseSchema, updateExpensePayloadSchema } from '@/lib/api/schemas/expense';
 import {
   deleteExpense,
   getExpense,
@@ -52,7 +52,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 
   try {
     const { id } = await params;
-    const body = await validateBody(request, updateExpenseSchema);
+    const body = await validateBody(request, updateExpensePayloadSchema);
     if (!body.success) return validationFailed(body.details);
 
     return await write(id, body.data);
@@ -73,7 +73,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const merged = await resolveExpensePatch(id, body.data);
     if (!merged) return fail('NOT_FOUND', 'Gasto não encontrado.');
 
-    return await write(id, merged);
+    // The patch alone cannot be checked against the credit ↔ cardBrand pairing:
+    // `{ paymentType: 'credit' }` is only invalid once resolved against a record
+    // that has no cardBrand. Re-validating the merged payload is what makes PUT
+    // and PATCH reject the same shapes.
+    const resolved = validateFields(merged, updateExpensePayloadSchema);
+    if (!resolved.success) return validationFailed(resolved.details);
+
+    return await write(id, resolved.data);
   } catch (error) {
     return failFrom(error);
   }

@@ -18,8 +18,11 @@ script:post-response {
   // Categories are user-editable at runtime, so the chain discovers one instead
   // of hardcoding a name that may have been renamed or deleted.
   const categories = res.body.data;
-  bru.setVar("expenseType", categories[0].name);
-  bru.setVar("expenseSubtype", categories[0].subtypes[0] ?? null);
+  // Prefers a category that has subtypes: the PUT-clears-subtype step needs one,
+  // and any expense category serves the rest of the chain equally.
+  const chosen = categories.find(c => c.subtypes.length > 0) ?? categories[0];
+  bru.setVar("expenseType", chosen.name);
+  bru.setVar("expenseSubtype", chosen.subtypes[0] ?? null);
 }
 
 tests {

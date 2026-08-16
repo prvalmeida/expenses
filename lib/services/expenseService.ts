@@ -194,28 +194,39 @@ export async function updateExpense(id: string, input: UpdateExpenseInput) {
 
   const isCredit = input.paymentType === 'credit';
 
+  // For a non-credit expense the two dates must agree — falling back to the
+  // stored effectiveDate would leave a record whose purchase date moved sitting
+  // in one month under "DATA DA COMPRA" and another under "FLUXO DE CAIXA".
   const effectiveDate =
     isCredit && input.cardBrand && input.date
       ? await computeEffectiveDate(input.date, input.cardBrand, input.paymentType)
-      : input.effectiveDate;
+      : (input.effectiveDate ?? input.date);
 
   const $set: Record<string, unknown> = {
     name: input.name,
     value: input.value,
     type: input.type,
-    subtype: input.subtype,
     paymentType: input.paymentType,
     date: input.date,
     effectiveDate,
   };
-  if (isCredit) $set.cardBrand = input.cardBrand;
+
+  // Mongoose drops undefined keys from an update, so assigning them is not a
+  // clear — an omitted subtype would silently keep the stored one and orphan it
+  // against the new type. The fields an edit may drop are $unset explicitly.
+  const $unset: Record<string, ''> = {};
+  if (input.subtype == null) $unset.subtype = '';
+  else $set.subtype = input.subtype;
 
   // Leaving cardBrand/installment/totalInstallments behind on a credit →
   // non-credit switch produces an OtherExpense that still looks like a card
   // purchase everywhere it is read.
-  const update = isCredit
-    ? { $set }
-    : { $set, $unset: { cardBrand: '', installment: '', totalInstallments: '' } };
+  if (isCredit) $set.cardBrand = input.cardBrand;
+  else Object.assign($unset, { cardBrand: '', installment: '', totalInstallments: '' });
+
+  // Mongo rejects an empty $unset, which is what a credit edit that keeps its
+  // subtype produces.
+  const update = Object.keys($unset).length ? { $set, $unset } : { $set };
 
   return Expense.findByIdAndUpdate(id, update, { new: true });
 }
@@ -242,7 +253,15 @@ export async function resolveExpensePatch(
     effectiveDate: existing.effectiveDate,
   };
 
-  return { ...current, ...patch };
+  const merged = { ...current, ...patch };
+
+  // A patched `date` invalidates the stored effectiveDate. updateExpense
+  // re-derives it for a credit expense, but for any other payment type it would
+  // keep the merged-in stale value; dropping it here lets the same fallback
+  // apply to both paths.
+  if (patch.date && patch.effectiveDate === undefined) merged.effectiveDate = undefined;
+
+  return merged;
 }
 
 export async function deleteExpenseGroup(transactionId: string): Promise<DeleteExpenseResult | null> {

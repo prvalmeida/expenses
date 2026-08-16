@@ -11,7 +11,8 @@ npm run start    # Start production server
 npm run lint     # Run ESLint
 npm run gen:openapi        # Regenerate public/openapi.yaml from the Zod schemas
 npm run test:api           # Run the Bruno API collection against localhost:3000
-npm run test:api:external  # Only the bill/receipt folders (real fixtures + OpenAI)
+npm run test:api:external  # Only the requests tagged `external` (real fixtures + OpenAI)
+npm run migrate:payment-types -- --dry-run  # One-off paymentType data migration (see scripts/)
 ```
 
 `test:api` writes to whatever database the server it targets is using — see the `bruno/` notes below before pointing it at anything real.
@@ -44,7 +45,7 @@ lint ∥ build ∥ verify-tag → docker → release
 api-test (workflow_dispatch / tags only, no needs)
 ```
 
-`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
+`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. `lint` also runs `npm run gen:openapi -- --check`: the generator's premise is that a stale spec is a diff rather than a code-review catch, which only holds if something enforces it. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
 
 The last three jobs are tag-only (`refs/tags/v*`). **Releases must be tagged on `main`**: Actions has no native "tag on branch X" filter, so `verify-tag` checks out with `fetch-depth: 0` (a shallow checkout makes the check silently unreliable) and fails if the tagged commit is not an ancestor of `origin/main`.
 
@@ -135,6 +136,14 @@ Two rules follow from where the two surfaces differ:
 
 Query schemas use `z.coerce` because every query value arrives as a string; JSON body schemas must **not** coerce, or `{"value": "abc"}` becomes an expense with a `NaN` amount.
 
+**Every installment count on the wire goes through `installmentCount` (`schemas/common.ts`, max `MAX_INSTALLMENTS` = 72)** — `createExpenseSchema.installments`, `importReceiptSchema.installments`, and the bill row's `installmentCurrent`/`installmentTotal`. The bound is not cosmetic: `buildExpenseDocuments` awaits a `CardCycle` lookup and an insert per installment, so an unbounded count is an event-loop stall and a flooded collection from one request — and `installmentTotal` is a *guessed* token on Caixa rows. For the same reason the internal `POST /api/bills/import` Zod-validates with `importBillSchema` rather than casting the body: a service never inspects payload shape, so a route that skips the schema has no guard at all.
+
+**The credit ↔ `cardBrand` pairing is enforced on every write path.** `createExpenseSchema` and the receipt import use a discriminated union / refinement; the edit path cannot use a union because `patchExpenseSchema` needs `.partial()`, so `updateExpensePayloadSchema` carries the refinement instead. PATCH validates it against the **merged** payload (`resolveExpensePatch`, then re-validate), never against the patch alone — `{ paymentType: 'credit' }` is only invalid once resolved against a record with no `cardBrand`. Without this the API mints a `paymentType: 'credit'` document with no `cardBrand`, which `CreditExpense` says cannot exist and `updateExpense` would silently skip the `effectiveDate` derivation for.
+
+**Mongoose drops `undefined` keys from an update, so assigning one is not a clear.** `updateExpense` `$unset`s the fields an edit may drop (`subtype`, plus `cardBrand`/`installment`/`totalInstallments` on the credit → non-credit switch) instead of `$set`ting them to `undefined` — otherwise a PUT that moves a record to another type keeps the old `subtype` and orphans it. `$unset` must be omitted entirely when empty; Mongo rejects `{$unset: {}}`. PUT means replace (an omitted `subtype` is a clear); PATCH merges, so it preserves what it does not mention.
+
+**`effectiveDate` is re-derived on every edit, never carried over.** For credit it comes from `computeEffectiveDate`; for any other payment type it falls back to `date`, and `resolveExpensePatch` drops the stored value when the patch moves `date` — the two dates must agree off the card, or the record sits in one month under "DATA DA COMPRA" and another under "FLUXO DE CAIXA".
+
 Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: wire-only request types (`ConfirmedBillItem`, `NewBillMapping`, `ConfirmedReceiptItem`) are `z.infer`red from their schema, while types describing DB documents (`Expense`, `Income`) stay hand-written and the schema carries a `satisfies z.ZodType<…>` assertion. `ParsedBillItem`/`ParsedReceiptItem` are *response* shapes with no schema and stay hand-written.
 
 **API contract (`docs/API.md`, `public/openapi.yaml`):** the YAML is **generated** from the Zod schemas by `npm run gen:openapi` (`scripts/gen-openapi.ts`, Zod 4's native JSON-Schema export — no `zod-to-openapi` dependency). Never hand-edit it; `npm run gen:openapi -- --check` fails when it is stale.
@@ -143,7 +152,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 - The auth header is declared **once** in `collection.bru`; `API_KEY` comes from a gitignored `bruno/.env`, never a committed environment file.
 - Every written record is named `BRUNO_TEST_*` and the `Cleanup` folder sweeps the prefix. The collection writes to whatever `baseUrl` points at, which during development is the real personal-finance database — the marker is what makes debris from an aborted run removable.
-- The `Bills`/`Receipts` folders are tagged `external` and excluded from the default run: they need a real financial document as a fixture and call OpenAI on every invocation. `npm run test:api:external` runs them; CI (`api-test`, `workflow_dispatch`/tags only) does not.
+- The `external` tag is **per request, not per folder**: it marks the requests that need a real financial document as a fixture and call OpenAI, which `npm run test:api` excludes and `npm run test:api:external` runs (CI's `api-test`, `workflow_dispatch`/tags only, runs the default set). Most of `Bills`/`Receipts` is tagged; the requests in those folders that are rejected at the boundary — the SSRF allowlist, the `installmentTotal` bound — reach neither the network nor a fixture, so they stay untagged and keep running in CI. Tagging one of those would silently remove it from every run that matters.
 
 ### Directory structure
 
@@ -168,7 +177,8 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
 - `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
 - `lib/utils/cycleUtils.ts` — `getCycle`, `computeEffectiveDate`, `DEFAULT_SETTINGS` (single source of truth — do not duplicate)
-- `lib/utils/categoryUtils.ts` — category fetch/cache, `validateExpensePair`, `validateIncomeType`, `count*` and `cascadeRename*` helpers (single source of truth — do not duplicate)
+- `lib/utils/categoryUtils.ts` — category fetch/cache, `validateExpensePair`, `validateIncomeType`, `count*` and `cascadeRename*` helpers (single source of truth — do not duplicate). `getCategories()` calls `connectToDatabase()` itself: it is the first DB read on every route that validates a category before reaching a service, and `instrumentation.ts` swallows a failed boot connect, so without it the first request buffers for `bufferTimeoutMS` and 500s instead of failing immediately
+- `scripts/migrate-payment-types.ts` (`npm run migrate:payment-types`, `-- --dry-run` to count only) — one-off data migration for the payment-type option-value fix (`cash`→`pix`, then `other`→`cash`, in that order). Not idempotent: a second run would re-map genuine Dinheiro records to PIX
 - `lib/utils/receiptUtils.ts` — `interpretAndCrossReference`: calls GPT, upserts `Store`, cross-references `ProductMapping`; supermercado subtypes come from `Category` via `categoryUtils`
 - `hooks/useCategories.ts` — client hook exposing `expenseTypes`, `incomeTypes`, `subtypesFor`, `isValidType`, `isValidPair`, `refetch`; revalidates the shared cache on window `focus`/`visibilitychange` (see below)
 - `components/` — Shared React components (`ExpenseCharts`, `ExpenseTypeSelect`, `EditExpenseModal`)

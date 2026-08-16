@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { brlAmount, cardBrand, isoDate } from './common';
+import { brlAmount, cardBrand, installmentCount, isoDate } from './common';
 
 // `type: null` is a legitimate value, not a missing field: it is how the review
 // table reports a row the user left unclassified, and /api/bills/import counts
@@ -8,8 +8,11 @@ export const confirmedBillItemSchema = z.object({
   date: isoDate,
   description: z.string().trim().min(1),
   value: brlAmount,
-  installmentCurrent: z.number().int().positive().optional(),
-  installmentTotal: z.number().int().positive().optional(),
+  // Bounded like every other installment count: /bills/import expands
+  // installmentTotal into that many expense rows, one CardCycle lookup and one
+  // insert each.
+  installmentCurrent: installmentCount.optional(),
+  installmentTotal: installmentCount.optional(),
   type: z.string().trim().min(1).nullable(),
   subtype: z.string().trim().min(1).nullable(),
 });
