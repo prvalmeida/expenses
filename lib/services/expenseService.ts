@@ -97,6 +97,77 @@ export interface UpdateExpenseInput {
   effectiveDate?: string;
 }
 
+export interface ListExpensesFilter {
+  // Mirrors the Dashboard's "DATA DA COMPRA" / "FLUXO DE CAIXA" toggle: the same
+  // record belongs to a different month depending on which date you ask about.
+  dateField?: 'date' | 'effectiveDate';
+  from?: string;
+  to?: string;
+  type?: string;
+  subtype?: string;
+  paymentType?: string;
+  cardBrand?: string;
+  transactionId?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export type StoredExpense = ExpenseDocument & { _id: string };
+
+export interface ListExpensesResult {
+  items: StoredExpense[];
+  nextCursor: string | null;
+}
+
+// Keyset pagination, not skip/limit: an offset walk re-reads everything it
+// skipped and shifts under concurrent writes. The cursor is the last returned
+// _id; its sort value is read back so the tie-break stays correct when several
+// records share a date.
+export async function listExpenses(filter: ListExpensesFilter = {}): Promise<ListExpensesResult> {
+  await connectToDatabase();
+
+  const dateField = filter.dateField ?? 'date';
+  const limit = filter.limit ?? 100;
+
+  const query: Record<string, unknown> = {};
+  if (filter.type) query.type = filter.type;
+  if (filter.subtype) query.subtype = filter.subtype;
+  if (filter.paymentType) query.paymentType = filter.paymentType;
+  if (filter.cardBrand) query.cardBrand = filter.cardBrand;
+  if (filter.transactionId) query.transactionId = filter.transactionId;
+  if (filter.from || filter.to) {
+    query[dateField] = {
+      ...(filter.from && { $gte: filter.from }),
+      ...(filter.to && { $lte: filter.to }),
+    };
+  }
+
+  if (filter.cursor) {
+    const anchor = await Expense.findById(filter.cursor).select(dateField).lean<{ [k: string]: string }>();
+    // A cursor pointing at a deleted record yields no page rather than
+    // silently restarting from the top.
+    if (!anchor) return { items: [], nextCursor: null };
+    query.$or = [
+      { [dateField]: { $lt: anchor[dateField] } },
+      { [dateField]: anchor[dateField], _id: { $lt: filter.cursor } },
+    ];
+  }
+
+  // One extra row is fetched to tell "page is full" from "there is more".
+  const docs = await Expense.find(query)
+    .sort({ [dateField]: -1, _id: -1 })
+    .limit(limit + 1)
+    .lean();
+
+  const hasMore = docs.length > limit;
+  const items = hasMore ? docs.slice(0, limit) : docs;
+
+  return {
+    items: items as unknown as StoredExpense[],
+    nextCursor: hasMore ? String(items[items.length - 1]._id) : null,
+  };
+}
+
 export type DeleteScope = 'single' | 'group';
 
 export interface DeleteExpenseResult {
