@@ -190,8 +190,8 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
                 <option value="">Selecione o tipo de pagamento</option>
                 <option value="credit">Crédito</option>
                 <option value="debit">Débito</option>
-                <option value="cash">PIX</option>
-                <option value="other">Dinheiro</option>
+                <option value="pix">PIX</option>
+                <option value="cash">Dinheiro</option>
                 <option value="food-voucher">Vale Alimentação</option>
                 <option value="meal-voucher">Vale Refeição</option>
                 <option value="fuel-voucher">Vale Combustível</option>

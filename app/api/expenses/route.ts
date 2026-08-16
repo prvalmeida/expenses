@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../lib/mongodb';
 import Expense from '../../../lib/models/Expense';
+import { createExpenseSchema } from '../../../lib/api/schemas/expense';
+import { createExpenses } from '../../../lib/services/expenseService';
 import { validateExpensePair } from '../../../lib/utils/categoryUtils';
 
 export async function GET() {
@@ -13,18 +15,26 @@ export async function GET() {
   }
 }
 
+// Accepts one logical purchase and expands the installments server-side. It used
+// to be a raw `new Expense(body)` passthrough with no field whitelist, which is
+// why the form screen had to build every installment itself — and re-derive the
+// card cycle to do it.
 export async function POST(request: NextRequest) {
   try {
-    await connectToDatabase();
-    const body = await request.json();
-    console.log(`request body: ${JSON.stringify(body)}`)
-    if (!(await validateExpensePair(body.type, body.subtype))) {
+    const parsed = createExpenseSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map(i => i.message).join('; ') },
+        { status: 400 }
+      );
+    }
+
+    if (!(await validateExpensePair(parsed.data.type, parsed.data.subtype))) {
       return NextResponse.json({ error: 'Categoria ou subcategoria inválida.' }, { status: 400 });
     }
-    const expense = new Expense(body);
-    console.log(`expense: ${JSON.stringify(expense)}`)
-    await expense.save();
-    return NextResponse.json(expense, { status: 201 });
+
+    const expenses = await createExpenses(parsed.data);
+    return NextResponse.json(expenses, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: `Failed to create expense. ${error}` }, { status: 500 });
   }
@@ -33,7 +43,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     await connectToDatabase();
-    
+
     // Extrai o ID da URL (ex: /api/expenses?id=123)
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
