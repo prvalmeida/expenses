@@ -2,15 +2,7 @@
 
 import { useState } from 'react';
 import ExpenseTypeSelect from '../components/ExpenseTypeSelect';
-import { addMonthsClamped } from '../lib/utils/dateUtils';
-import { CardBrand, Expense, ExpenseForm } from '../types';
-
-function randomUUID(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c =>
-    (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))).toString(16)
-  );
-}
+import { CardBrand, ExpenseForm } from '../types';
 
 export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => void }) {
   const [expense, setExpense] = useState<ExpenseForm>({
@@ -23,91 +15,6 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
     date: '',
     installments: 1
   });
-
-  const generateExpenseData = async function (expense: ExpenseForm): Promise<Expense[]> {
-    const isCredit = expense.paymentType === 'credit';
-    const iterations = isCredit ? (expense.installments ?? 1) : 1;
-    const expenses: Expense[] = [];
-
-    const transactionId = randomUUID();
-
-    // For each installment, create an expense object and add to the array of expenses
-    for (let i = 1; i <= iterations; i++) {
-      const purchaseDate = addMonthsClamped(expense.date, i - 1);
-      const dateString = purchaseDate.toISOString().split('T')[0];
-
-      let effectiveDateString = dateString;
-
-      if (isCredit && expense.cardBrand) {
-        const month = purchaseDate.getUTCMonth() + 1;
-        const year = purchaseDate.getUTCFullYear();
-
-        // Fetch the billing cycle to know the closing date
-        const res = await fetch(`/api/card-cycles?brand=${expense.cardBrand}&month=${month}&year=${year}`);
-        const cycle = await res.json();
-
-        // Ensure we compare ONLY the date parts (YYYY-MM-DD)
-        // cycle.closingDate could be a string or an ISO object from MongoDB
-        const closingDateStr = typeof cycle.closingDate === 'string' 
-          ? cycle.closingDate.split('T')[0] 
-          : new Date(cycle.closingDate).toISOString().split('T')[0];
-
-        // Comparison using strings is safe for YYYY-MM-DD
-        if (dateString > closingDateStr) {         
-          // Move to NEXT month
-          const nextMonthDate = addMonthsClamped(dateString, 1);
-          const nMonth = nextMonthDate.getUTCMonth() + 1;
-          const nYear = nextMonthDate.getUTCFullYear();
-
-          const resNext = await fetch(`/api/card-cycles?brand=${expense.cardBrand}&month=${nMonth}&year=${nYear}`);
-          const nextCycle = await resNext.json();
-          
-          // Use the dueDate of the NEXT month
-          const rawDueDate = nextCycle.dueDate;
-          effectiveDateString = typeof rawDueDate === 'string' 
-            ? rawDueDate.split('T')[0] 
-            : new Date(rawDueDate).toISOString().split('T')[0];
-        } else {
-          // Stays in current month
-          const rawDueDate = cycle.dueDate;
-          effectiveDateString = typeof rawDueDate === 'string' 
-            ? rawDueDate.split('T')[0] 
-            : new Date(rawDueDate).toISOString().split('T')[0];
-        }
-      }
-
-      const common = {
-        name: expense.name,
-        type: expense.type,
-        subtype: expense.subtype,
-        date: dateString,
-        effectiveDate: effectiveDateString,
-        transactionId: isCredit ? transactionId : undefined
-      };
-
-      let expenseData: Expense;
-      if (expense.paymentType === 'credit') {
-        expenseData = {
-          ...common,
-          value: expense.value === '' ? 0 : Math.round((expense.value / iterations) * 100) / 100,
-          paymentType: 'credit',
-          cardBrand: expense.cardBrand!,
-          installment: i,
-          totalInstallments: iterations
-        };
-      } else {
-        expenseData = {
-          ...common,
-          value: expense.value === '' ? 0 : expense.value,
-          paymentType: expense.paymentType as 'cash' | 'debit' | 'pix' | 'food-voucher' | 'meal-voucher' |'fuel-voucher',
-        };
-      }
-
-      expenses.push(expenseData);
-    }
-
-    return expenses;
-  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -152,22 +59,33 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
       return;
     }
 
-    const expensesData: Expense[] = await generateExpenseData(expense)
+    const isCredit = expense.paymentType === 'credit';
+
+    // One request for the whole purchase: the server expands the installments
+    // and derives every effectiveDate from the card cycle. The optional fields
+    // are omitted rather than sent empty — the create schema is a discriminated
+    // union that rejects a cardBrand on a non-credit expense.
+    const payload = {
+      name: expense.name,
+      value: expense.value === '' ? 0 : expense.value,
+      type: expense.type,
+      subtype: expense.subtype,
+      paymentType: expense.paymentType,
+      date: expense.date,
+      ...(isCredit && {
+        cardBrand: expense.cardBrand,
+        installments: expense.installments ?? 1,
+      }),
+    };
 
     try {
-      const requests = expensesData.map((expense: Expense) => 
-        fetch('/api/expenses', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(expense),
-            })
-      )
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-      const responses = await Promise.all(requests)
-
-      const responsesOK = responses.every(res => res.ok)
-
-      if (responsesOK) {
+      if (res.ok) {
         setExpense({
           name: '',
           value: 0,
@@ -179,8 +97,9 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
         });
         onExpenseAdded();
       } else {
-        console.error("Some requests failed");
-        alert("Erro ao salvar algumas parcelas.");
+        const { error } = await res.json();
+        console.error('Failed to create expense:', error);
+        alert(`Erro ao salvar o gasto. ${error ?? ''}`);
       }
     } catch (error) {
       console.error("Network error:", error);
@@ -245,8 +164,8 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
             <option value="">Selecione o tipo de pagamento</option>
             <option value="credit">Crédito</option>
             <option value="debit">Débito</option>
-            <option value="cash">PIX</option>
-            <option value="other">Dinheiro</option>
+            <option value="pix">PIX</option>
+            <option value="cash">Dinheiro</option>
             <option value="food-voucher">Vale Alimentação</option>
             <option value="meal-voucher">Vale Refeição</option>
             <option value="fuel-voucher">Vale Combustível</option>

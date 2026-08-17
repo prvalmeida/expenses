@@ -1,0 +1,34 @@
+meta {
+  name: Set a subtype through PUT
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_notebook_renamed",
+    "value": 1000,
+    "type": "{{expenseType}}",
+    "subtype": "{{expenseSubtype}}",
+    "paymentType": "pix",
+    "date": "2026-09-01"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  // Arranges the state the next step clears; on its own it also proves the
+  // (type, subtype) pair survives a write.
+  test("the subtype was stored", function () {
+    expect(res.body.data.subtype).to.equal(bru.getVar("expenseSubtype"));
+  });
+}

@@ -1,153 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import connectToDatabase from '../../../../lib/mongodb';
-import Expense from '../../../../lib/models/Expense';
-import { CardCycle } from '../../../../lib/models/CardCycle';
-import { computeEffectiveDate } from '../../../../lib/utils/cycleUtils';
-import { addMonthsClamped } from '../../../../lib/utils/dateUtils';
-import { getExpenseCategories } from '../../../../lib/utils/categoryUtils';
-import { CardBrand, ConfirmedBillItem, NewBillMapping } from '@/types';
-import { BillMapping } from '../../../../lib/models/BillMapping';
-import { billMappingKey } from '../../../../lib/utils/billUtils';
-
-interface ImportBody {
-  items: ConfirmedBillItem[];
-  cardBrand: CardBrand;
-  closingDate: string | null;
-  dueDate: string | null;
-  newMappings?: NewBillMapping[];
-}
+import { ApiError, ERROR_STATUS } from '../../../../lib/api/respond';
+import { importBillSchema } from '../../../../lib/api/schemas/bill';
+import { importBillItems } from '../../../../lib/services/billService';
 
 export async function POST(request: NextRequest) {
   try {
-    await connectToDatabase();
-    const { items, cardBrand, closingDate, dueDate, newMappings }: ImportBody = await request.json();
-
-    if (!cardBrand || !items?.length) {
+    // The internal surface keeps its plain `{ error }` envelope, but not its
+    // cast-and-trust body: a service never inspects payload shape, so without a
+    // schema here an unbounded installmentTotal reaches buildExpenseDocuments.
+    const parsed = importBillSchema.safeParse(await request.json());
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'cardBrand e items são obrigatórios' },
+        { error: parsed.error.issues.map(i => i.message).join('; ') },
         { status: 400 }
       );
     }
 
-    // 1. Persist user-confirmed classifications for future auto-classification
-    if (newMappings?.length) {
-      await Promise.all(
-        newMappings.map(m =>
-          BillMapping.updateOne(
-            { description: billMappingKey(m.description) },
-            { $set: { type: m.type, subtype: m.subtype } },
-            { upsert: true }
-          )
-        )
-      );
-    }
-
-    // 2. Upsert CardCycle so computeEffectiveDate uses the bill's actual closing date
-    if (closingDate && dueDate) {
-      const [year, month] = closingDate.split('-').map(Number);
-      await CardCycle.findOneAndUpdate(
-        { cardBrand, month, year },
-        { closingDate: new Date(closingDate), dueDate: new Date(dueDate) },
-        { upsert: true, new: true }
-      );
-    }
-
-    const categories = await getExpenseCategories();
-    const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
-
-    let imported = 0;
-    // Kept apart: an unclassified row is a problem the user must fix, while an
-    // already-imported installment is the expected outcome of overlapping bills.
-    let skippedInvalid = 0;
-    let skippedExisting = 0;
-
-    for (const item of items) {
-      // Skip items without a category — Expense schema requires type
-      if (item.type === null) {
-        skippedInvalid++;
-        continue;
-      }
-
-      // Skip items whose category no longer exists; drop subtypes not valid for the type
-      const validSubtypes = subtypesByType.get(item.type);
-      if (!validSubtypes) {
-        skippedInvalid++;
-        continue;
-      }
-      const subtype = item.subtype && validSubtypes.has(item.subtype) ? item.subtype : undefined;
-
-      const isInstallment =
-        item.installmentCurrent !== undefined &&
-        item.installmentTotal !== undefined &&
-        item.installmentTotal > 1;
-
-      if (!isInstallment) {
-        const effectiveDate = await computeEffectiveDate(item.date, cardBrand, 'credit');
-        await Expense.create({
-          name: item.description,
-          value: item.value,
-          type: item.type,
-          subtype,
-          paymentType: 'credit',
-          cardBrand,
-          date: item.date,
-          effectiveDate,
-          installment: 1,
-          totalInstallments: 1,
-          transactionId: crypto.randomUUID(),
-        });
-        imported++;
-        continue;
-      }
-
-      // Parcelado: compute effectiveDate for installment 1, then offset per installment
-      const effectiveDate1 = await computeEffectiveDate(item.date, cardBrand, 'credit');
-      const transactionId = crypto.randomUUID();
-      const total = item.installmentTotal!;
-
-      for (let k = 1; k <= total; k++) {
-        const date_k = k === 1
-          ? item.date
-          : addMonthsClamped(item.date, k - 1).toISOString().split('T')[0];
-
-        const effectiveDateK =
-          k === 1
-            ? effectiveDate1
-            : addMonthsClamped(effectiveDate1, k - 1).toISOString().split('T')[0];
-
-        const exists = await Expense.findOne({
-          name: item.description,
-          value: item.value,
-          date: date_k,
-          cardBrand,
-          installment: k,
-          totalInstallments: total,
-        });
-
-        if (exists) {
-          skippedExisting++;
-          continue;
-        }
-
-        await Expense.create({
-          name: item.description,
-          value: item.value,
-          type: item.type,
-          subtype,
-          paymentType: 'credit',
-          cardBrand,
-          date: date_k,
-          effectiveDate: effectiveDateK,
-          installment: k,
-          totalInstallments: total,
-          transactionId,
-        });
-        imported++;
-      }
-    }
-
-    return NextResponse.json({ imported, skippedInvalid, skippedExisting }, { status: 201 });
+    const result = await importBillItems(parsed.data);
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
+    if (error instanceof ApiError) {
+      return NextResponse.json({ error: error.message }, { status: ERROR_STATUS[error.code] });
+    }
     return NextResponse.json({ error: `Falha ao importar fatura: ${error}` }, { status: 500 });
   }
 }

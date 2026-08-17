@@ -9,7 +9,13 @@ npm run dev      # Start development server (http://localhost:3000)
 npm run build    # Build for production
 npm run start    # Start production server
 npm run lint     # Run ESLint
+npm run gen:openapi        # Regenerate public/openapi.yaml from the Zod schemas
+npm run test:api           # Run the Bruno API collection against localhost:3000
+npm run test:api:external  # Only the requests tagged `external` (real fixtures + OpenAI)
+npm run migrate             # Apply pending data migrations (--dry-run / --status also)
 ```
+
+`test:api` writes to whatever database the server it targets is using — see the `bruno/` notes below before pointing it at anything real.
 
 ### Docker
 
@@ -36,11 +42,14 @@ The production `runner` image uses Next.js **standalone output** (`output: 'stan
 
 ```
 lint ∥ build ∥ verify-tag → docker → release
+api-test (workflow_dispatch / tags only, no needs)
 ```
 
-`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
+`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. `lint` also runs `npm run gen:openapi -- --check`: the generator's premise is that a stale spec is a diff rather than a code-review catch, which only holds if something enforces it. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
 
 The last three jobs are tag-only (`refs/tags/v*`). **Releases must be tagged on `main`**: Actions has no native "tag on branch X" filter, so `verify-tag` checks out with `fetch-depth: 0` (a shallow checkout makes the check silently unreliable) and fails if the tagged commit is not an ancestor of `origin/main`.
+
+`api-test` stands apart from that graph on purpose. It starts the compose `prod` profile, seeds categories and runs the Bruno collection, so it needs `MONGODB_URI` and `API_KEY` — which is exactly why it cannot inherit `lint`/`build`'s triggers, and why it generates a throwaway key against the bundled `mongodb` container instead of taking real secrets. Gating `release` on it would make every release depend on a live database being reachable from the runner.
 
 Images publish to **`ghcr.io/prvalmeida/expenses`** authenticated with the built-in `GITHUB_TOKEN` — no registry secrets. A `vX.Y.Z` tag yields `X.Y.Z`, `X.Y`, `X`, and `sha-<short>`; `latest` moves only when the tag has no hyphen, so prereleases (`v2.0.0-rc.1`) never claim it. The build sets **no** `target` — the Dockerfile's final stage is `runner`, and naming a target would ship the hot-reload `dev` stage. `release` gates on `docker` so no release ever points at a version with no image.
 
@@ -53,6 +62,7 @@ Requires a `.env.local` file with:
 MONGODB_URI=<your MongoDB connection string>
 OPENAI_API_KEY=<OpenAI API key — required for receipt parsing>
 PDF_KEY=<CPF do titular, somente números>
+API_KEY=<static credential for the public API; unset means every /api/v1 route returns 401>
 ```
 
 ## Architecture
@@ -110,25 +120,75 @@ Every request carries a `requestId` checked against `latestRequestId` before it 
 
 **Category validation at import boundaries:** Besides the expense/income POST/PUT routes, the bulk import routes validate against `Category` too: `/api/receipts/import` rejects the whole batch (400) if any item/mapping has an invalid `(type, subtype)` pair; `/api/bills/import` skips items whose type no longer exists and drops subtypes not valid for the type (the schema no longer enum-validates, so this is the only guard).
 
+**Public API (`/api/v1/*`):** The authenticated, versioned surface for external callers. It is additive — the internal `/api/*` routes keep their current contract and stay unauthenticated, because they are what the UI calls and a browser has no safe way to hold `API_KEY`. Every v1 handler is `auth → Zod → category validation → service → envelope`, and returns `{ data }` / `{ error: { code, message, details } }` (see `docs/API.md` for the caller-facing contract).
+
+Two rules follow from where the two surfaces differ:
+
+- **Never point client code at `/api/v1/*`.** Doing so requires shipping the key to the browser. When the UI needs behaviour the v1 route has, the *service* is what gets shared — that is what `POST /api/expenses` does with `createExpenses`.
+- **`expenseService.buildExpenseDocuments` is the single source of truth for installment expansion** — shared `transactionId`, per-installment `date` via `addMonthsClamped`, per-installment `effectiveDate` via `computeEffectiveDate`. `AddExpense.tsx` used to re-implement it in the browser, fetching `/api/card-cycles` twice per installment; do not reintroduce a client-side or per-route copy. `valueIsTotal` is an explicit schema field because the two callers disagree about what `value` means: a form submits the purchase total, a bill row is already one installment's amount.
+
+**Data migrations (`lib/migrations/`, ledger in `lib/models/Migration.ts`):** operations that rewrite stored data — as opposed to `sync-indexes`, which is idempotent by nature — are registered, ordered and recorded. Four rules:
+
+- **The unique index on `Migration.name` is the guard, and the claim comes first.** A migration inserts its own name with `status: 'running'` *before* doing any work; a duplicate-key error (code 11000) is the answer to "has this run?". Reading the ledger and then acting reintroduces the gap where two runs both see "no" — the dry-run path does read-then-act, and is only allowed to because it writes nothing.
+- **There is no transaction around work-then-record.** Multi-document transactions need a replica set and the deploy runs a standalone mongod, so the ordering is chosen to make the unsafe outcome the visible one: a crash mid-migration leaves `running` in the ledger and blocks the next attempt, rather than silently repeating a destructive rewrite. A failure marks `failed` and **stops the sequence** — later migrations may assume the broken one ran. Clearing either state is a deliberate human act.
+- **Migrations are append-only history.** Never rename, reorder or edit one that has run anywhere: the name is the ledger key, so a renamed migration is an unapplied one. Corrections are new migrations.
+- **Production runs them through `POST /api/admin/migrations`, not a script in the image.** The `runner` stage ships only `.next/standalone`, and every dependency outside `serverExternalPackages` (mongoose included) is bundled into the compiled server chunks rather than installed — a standalone script in that image cannot require a driver. `scripts/migrate.ts` and the route call the same service, so the ledger is shared between them. Do **not** auto-run migrations from `instrumentation.ts`: seeding lives there because it is guarded by an empty-collection check and is harmless when repeated; a data rewrite is neither.
+
+**Service layer (`lib/services/`):** The pipelines shared between the internal `/api/*` routes and the `/api/v1/*` namespace live here, not in route bodies — `expenseService` (update/delete, including the credit→non-credit `$unset`), `incomeService`, `billService` (PDF→text→`ParsedBillItem[]`), `receiptService` (PDF/URL→`ParseResponse`, plus the import loop). Routes are reduced to request decoding, category validation and error mapping. A service never inspects payload shape (that is the boundary's job) and never imports `next/server`: it signals failure by throwing `ApiError` from `lib/api/respond.ts`, which the route maps to a status.
+
+**API boundary helpers (`lib/api/`):** `respond.ts` (success/error envelope, `ApiErrorCode`, `ApiError`), `auth.ts` (`requireApiKey`), `validate.ts` (Zod adapter), `schemas/` (per-payload Zod schemas). Two rules:
+
+- **Read `API_KEY` inside the guard, never at module scope** — the CI `lint`/`build` jobs deliberately run with no secrets, and a module-scope read makes the build depend on one. An unset key **fails closed**; unset-means-open would turn a misconfigured deploy into an open database.
+- **Dynamic-category validation never moves into Zod.** The boundary order is auth → Zod → `validateExpensePair`/`validateIncomeType` → service. Category validity is a database question against a collection users edit at runtime; freezing the list into a `z.enum` at module load breaks the moment a user adds a category — the same staleness class as the `useCategories` cache problem above. `VALIDATION_FAILED` (malformed payload) and `INVALID_CATEGORY` (well-formed, unknown category) stay distinct for the same reason.
+
+Query schemas use `z.coerce` because every query value arrives as a string; JSON body schemas must **not** coerce, or `{"value": "abc"}` becomes an expense with a `NaN` amount.
+
+**`subtype` is mandatory on the expense payloads only.** `createExpenseSchema`/`updateExpenseSchema` require it alongside `type`, so a caller composing an expense must classify it — the UI's subtype select is `required` to match, and warns when the chosen category has no subtypes to offer (a category created without any cannot satisfy the field). It stays optional or nullable everywhere else, and those are not oversights: the bill/receipt import schemas accept an unclassified row, `buildExpenseDocuments` accepts an absent subtype because `billService` drops one that is invalid for its type and still imports, the list-filter schema uses it as an optional filter, and `BaseExpense.subtype` stays optional because stored documents legitimately lack it (pre-existing records and import rows). Requiring it is a boundary rule, not an invariant of the document.
+
+**Every installment count on the wire goes through `installmentCount` (`schemas/common.ts`, max `MAX_INSTALLMENTS` = 72)** — `createExpenseSchema.installments`, `importReceiptSchema.installments`, and the bill row's `installmentCurrent`/`installmentTotal`. The bound is not cosmetic: `buildExpenseDocuments` awaits a `CardCycle` lookup and an insert per installment, so an unbounded count is an event-loop stall and a flooded collection from one request — and `installmentTotal` is a *guessed* token on Caixa rows. For the same reason the internal `POST /api/bills/import` Zod-validates with `importBillSchema` rather than casting the body: a service never inspects payload shape, so a route that skips the schema has no guard at all.
+
+**The credit ↔ `cardBrand` pairing is enforced on every write path.** `createExpenseSchema` and the receipt import use a discriminated union / refinement; the edit path cannot use a union because `patchExpenseSchema` needs `.partial()`, so `updateExpensePayloadSchema` carries the refinement instead. PATCH validates it against the **merged** payload (`resolveExpensePatch`, then re-validate), never against the patch alone — `{ paymentType: 'credit' }` is only invalid once resolved against a record with no `cardBrand`. Without this the API mints a `paymentType: 'credit'` document with no `cardBrand`, which `CreditExpense` says cannot exist and `updateExpense` would silently skip the `effectiveDate` derivation for.
+
+**Mongoose drops `undefined` keys from an update, so assigning one is not a clear.** `updateExpense` `$unset`s the fields an edit may drop (`subtype`, plus `cardBrand`/`installment`/`totalInstallments` on the credit → non-credit switch) instead of `$set`ting them to `undefined` — otherwise a PUT that moves a record to another type keeps the old `subtype` and orphans it. `$unset` must be omitted entirely when empty; Mongo rejects `{$unset: {}}`. The v1 boundary no longer reaches the `subtype` branch now that the field is mandatory there, but the internal PUT routes (`/api/expenses/[id]`, `/api/expenses/installment-group`) are unvalidated and do — do not delete it as dead code.
+
+**`effectiveDate` is re-derived on every edit, never carried over.** For credit it comes from `computeEffectiveDate`; for any other payment type it falls back to `date`, and `resolveExpensePatch` drops the stored value when the patch moves `date` — the two dates must agree off the card, or the record sits in one month under "DATA DA COMPRA" and another under "FLUXO DE CAIXA".
+
+Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: wire-only request types (`ConfirmedBillItem`, `NewBillMapping`, `ConfirmedReceiptItem`) are `z.infer`red from their schema, while types describing DB documents (`Expense`, `Income`) stay hand-written and the schema carries a `satisfies z.ZodType<…>` assertion. `ParsedBillItem`/`ParsedReceiptItem` are *response* shapes with no schema and stay hand-written.
+
+**API contract (`docs/API.md`, `public/openapi.yaml`):** the YAML is **generated** from the Zod schemas by `npm run gen:openapi` (`scripts/gen-openapi.ts`, Zod 4's native JSON-Schema export — no `zod-to-openapi` dependency). Never hand-edit it; `npm run gen:openapi -- --check` fails when it is stale.
+
+**API tests (`bruno/`, `npm run test:api`):** a Bruno collection of `.bru` files versioned alongside the routes. It covers what unit tests cannot see because the behaviour spans requests: installment expansion, the credit→non-credit `$unset`, `VALIDATION_FAILED` vs `INVALID_CATEGORY`. Three rules:
+
+- The auth header is declared **once** in `collection.bru`; `API_KEY` comes from a gitignored `bruno/.env`, never a committed environment file.
+- Every written record is named `BRUNO_TEST_*` and the `Cleanup` folder sweeps the prefix. The collection writes to whatever `baseUrl` points at, which during development is the real personal-finance database — the marker is what makes debris from an aborted run removable.
+- The `external` tag is **per request, not per folder**: it marks the requests that need a real financial document as a fixture and call OpenAI, which `npm run test:api` excludes and `npm run test:api:external` runs (CI's `api-test`, `workflow_dispatch`/tags only, runs the default set). Most of `Bills`/`Receipts` is tagged; the requests in those folders that are rejected at the boundary — the SSRF allowlist, the `installmentTotal` bound — reach neither the network nor a fixture, so they stay untagged and keep running in CI. Tagging one of those would silently remove it from every run that matters.
+
 ### Directory structure
 
 - `app/` — Next.js App Router pages and API routes; all UI pages are co-located here as `.tsx` files
-- `app/api/expenses/` — GET all, POST, DELETE by query param `?id=`
+- `app/api/v1/` — the public API. `expenses/` (GET filtered+paginated, POST one purchase → N installments), `expenses/[id]/` (GET/PUT/PATCH/DELETE), `expenses/transactions/[transactionId]/` (GET/DELETE the whole installment group), `incomes/` + `incomes/[id]/`, `bills/{parse,import}/`, `receipts/{parse,import}/` (one parse endpoint takes multipart **or** `{ url }`), and read-only `categories/` + `card-cycles/`
+- `app/api/expenses/` — GET all, POST (one purchase, installments expanded server-side via `createExpenses`), DELETE by query param `?id=`
 - `app/api/expenses/[id]/` — GET by id, PUT (whitelisted fields only: `name`, `value`, `type`, `subtype`, `paymentType`, `cardBrand`, `date`, `effectiveDate`), DELETE (with optional `?all=true` for installments)
 - `app/api/income/` — GET all, POST; `app/api/income/[id]/` — DELETE
 - `app/api/card-cycles/` — GET/POST card billing cycle config; POST also recalculates affected expenses
 - `app/api/receipts/parse/` — POST: accepts a PDF file, extracts text via `pdf-parse`, parses with GPT
 - `app/api/receipts/parse-url/` — POST: accepts a SEFAZ NFC-e URL (*.gov.br only), fetches HTML, parses with GPT
 - `app/api/receipts/import/` — POST: saves confirmed receipt items as expenses; upserts new `ProductMapping` entries
-- `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, and `Category` models
+- `app/api/admin/sync-indexes/` — POST: calls `syncIndexes()` on `Store`, `ProductMapping`, `Category`, `Expense` and `Income`. The `Expense`/`Income` indexes back the v1 list filters; existing deploys must run this once after they ship
+- `app/api/admin/migrations/` — GET the ledger, POST to apply pending migrations (`?dryRun=true` reports counts and writes nothing). **Guarded by `requireApiKey` and answering in the v1 envelope**, unlike the rest of `/api/admin`: it rewrites stored data on demand, and the guard's own error body is that envelope
 - `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
 - `app/api/categories/seed/` — POST: forced reseed; thin wrapper over `seedCategories()` in `categoryUtils.ts`
 - `instrumentation.ts` — Next.js boot hook (`register()`); in the Node runtime it auto-runs `seedCategories()` **only when the `Category` collection is empty** (first-run seeding). Guarded by an empty-count check so cloud instances don't re-seed on every cold start; wrapped in try/catch so a DB hiccup never crashes boot. Forced reseed still goes through the POST route.
+- `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt,support}.ts`
+- `lib/services/` — `expenseService` (build/create/list/update/delete), `incomeService`, `billService` (parse + import), `receiptService` (single source of truth — do not re-inline into routes)
+- `scripts/gen-openapi.ts` — generates `public/openapi.yaml` from the Zod schemas
+- `bruno/` — the API test collection (`npm run test:api`); `bruno/.env` and `bruno/fixtures/` are gitignored
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
 - `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
 - `lib/utils/cycleUtils.ts` — `getCycle`, `computeEffectiveDate`, `DEFAULT_SETTINGS` (single source of truth — do not duplicate)
-- `lib/utils/categoryUtils.ts` — category fetch/cache, `validateExpensePair`, `validateIncomeType`, `count*` and `cascadeRename*` helpers (single source of truth — do not duplicate)
+- `lib/utils/categoryUtils.ts` — category fetch/cache, `validateExpensePair`, `validateIncomeType`, `count*` and `cascadeRename*` helpers (single source of truth — do not duplicate). `getCategories()` calls `connectToDatabase()` itself: it is the first DB read on every route that validates a category before reaching a service, and `instrumentation.ts` swallows a failed boot connect, so without it the first request buffers for `bufferTimeoutMS` and 500s instead of failing immediately
+- `lib/migrations/` — the migration registry (`index.ts`, append-only and ordered) plus one file per migration. `lib/services/migrationService.ts` runs them; `scripts/migrate.ts` (`npm run migrate`, `-- --dry-run`, `-- --status`) drives it from a checkout and `POST /api/admin/migrations` drives it in production
 - `lib/utils/receiptUtils.ts` — `interpretAndCrossReference`: calls GPT, upserts `Store`, cross-references `ProductMapping`; supermercado subtypes come from `Category` via `categoryUtils`
 - `hooks/useCategories.ts` — client hook exposing `expenseTypes`, `incomeTypes`, `subtypesFor`, `isValidType`, `isValidPair`, `refetch`; revalidates the shared cache on window `focus`/`visibilitychange` (see below)
 - `components/` — Shared React components (`ExpenseCharts`, `ExpenseTypeSelect`, `EditExpenseModal`)

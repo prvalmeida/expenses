@@ -1,0 +1,30 @@
+meta {
+  name: Read the migration ledger
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{adminUrl}}/migrations
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  // Read-only, and the only request in this folder that touches the ledger: a
+  // POST would apply real migrations to whatever database baseUrl points at,
+  // which during development is the operator's own finances.
+  test("every registered migration reports a state", function () {
+    const states = ["pending", "running", "completed", "failed"];
+    expect(res.body.data.length).to.be.above(0);
+    expect(res.body.data.every(m => states.includes(m.state))).to.equal(true);
+  });
+
+  test("each entry is identified by its ledger key", function () {
+    expect(res.body.data.every(m => typeof m.name === "string" && m.name.length > 0)).to.equal(true);
+  });
+}

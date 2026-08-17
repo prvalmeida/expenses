@@ -1,0 +1,20 @@
+meta {
+  name: Reject a request with no API key
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/expenses
+  body: none
+  auth: none
+}
+
+headers {
+  x-api-key:
+}
+
+assert {
+  res.status: eq 401
+  res.body.error.code: eq UNAUTHORIZED
+}

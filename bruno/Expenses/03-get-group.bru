@@ -1,0 +1,21 @@
+meta {
+  name: Read the installment group
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/expenses/transactions/{{transactionId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("the group resource returns all six parcelas", function () {
+    expect(res.body.data.expenses.length).to.equal(6);
+  });
+}

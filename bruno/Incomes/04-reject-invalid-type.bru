@@ -1,0 +1,34 @@
+meta {
+  name: Reject a PUT with an unknown income type
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/incomes/{{incomeId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_salario",
+    "value": 4200.5,
+    "type": "tipo-que-nao-existe",
+    "date": "2026-03-05"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq INVALID_CATEGORY
+}
+
+tests {
+  // The hole this closes: /api/income/[id] PUT used to spread the whole body
+  // into findByIdAndUpdate with no category check, producing an orphan the
+  // Dashboard flags but the API accepted.
+  test("the stored record was not modified", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

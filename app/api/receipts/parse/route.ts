@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRequire } from 'module';
-import { interpretAndCrossReference } from '../../../../lib/utils/receiptUtils';
-
-const require = createRequire(import.meta.url);
-type PdfData = { text: string; numpages: number };
-const pdfParse: (buffer: Buffer) => Promise<PdfData> = require('pdf-parse');
+import { ApiError, ERROR_STATUS } from '../../../../lib/api/respond';
+import { parseReceiptFromPdf } from '../../../../lib/services/receiptService';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,19 +11,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Arquivo PDF não enviado' }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const parsed = await pdfParse(buffer);
-
-    if (!parsed.text.trim()) {
-      return NextResponse.json(
-        { error: 'PDF não contém texto extraível. Possível PDF escaneado sem OCR.' },
-        { status: 400 }
-      );
-    }
-
-    const result = await interpretAndCrossReference(parsed.text);
+    const result = await parseReceiptFromPdf(Buffer.from(await file.arrayBuffer()));
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof ApiError) {
+      return NextResponse.json({ error: error.message }, { status: ERROR_STATUS[error.code] });
+    }
     return NextResponse.json({ error: `Falha ao processar nota: ${error}` }, { status: 500 });
   }
 }

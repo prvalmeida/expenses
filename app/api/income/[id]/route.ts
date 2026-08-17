@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '../../../../lib/mongodb';
 import Income from '../../../../lib/models/Income';
+import { validateIncomeType } from '../../../../lib/utils/categoryUtils';
+import { updateIncome, deleteIncome } from '../../../../lib/services/incomeService';
 
 export async function GET(
   request: NextRequest,
@@ -22,15 +24,13 @@ export async function GET(
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    await connectToDatabase();
-    const body = await request.json();
-    const { ...updateData } = body;
+    const { name, value, type, date } = await request.json();
 
-    const updatedIncome = await Income.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    if (!(await validateIncomeType(type))) {
+      return NextResponse.json({ error: 'Tipo de receita inválido.' }, { status: 400 });
+    }
+
+    const updatedIncome = await updateIncome(id, { name, value, type, date });
 
     if (!updatedIncome) {
       return NextResponse.json({ error: 'Income not found' }, { status: 404 });
@@ -45,9 +45,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    await connectToDatabase();
-
-    const deletedIncome = await Income.findByIdAndDelete(id);
+    const deletedIncome = await deleteIncome(id);
 
     if (!deletedIncome) {
       return NextResponse.json({ error: 'Income not found.' }, { status: 404 });

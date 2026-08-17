@@ -1,3 +1,15 @@
+// Wire-only request types are inferred from the Zod schemas that validate them
+// (see the `Confirmed*`/`NewBillMapping` re-exports at the bottom): they exist
+// purely to describe request bodies, so a schema that drops a field must break
+// every reader. Types describing DB documents stay hand-written here and are
+// `satisfies`-checked from the schema side instead — the UI constructs them
+// directly and they must not be reshaped by an API concern.
+//
+// `import type` is load-bearing: lib/api/schemas/common.ts imports CardBrand
+// from this module at runtime, so a value import here would close the cycle.
+import type { ConfirmedBillItemBody, NewBillMappingBody } from '../lib/api/schemas/bill';
+import type { ConfirmedReceiptItemBody } from '../lib/api/schemas/receipt';
+
 export enum CardBrand {
     MasterSantander = 'Master Santander',
     Visa = 'Visa Caixa',
@@ -108,6 +120,18 @@ interface OtherExpense extends BaseExpense {
 
 export type Expense = CreditExpense | OtherExpense;
 
+// The eight fields an edit may touch. Derived from BaseExpense so renaming a
+// document field breaks `updateExpenseSchema`, which is `satisfies`-checked
+// against this type.
+export type EditableExpenseFields = Pick<
+  BaseExpense,
+  'name' | 'value' | 'type' | 'subtype' | 'date'
+> & {
+  paymentType: Expense['paymentType'];
+  cardBrand?: CardBrand;
+  effectiveDate?: string;
+};
+
 export type ExpenseForm = {
   name: string;
   value: number | '';
@@ -150,15 +174,6 @@ export type ParsedReceiptItem = {
   unit?: string;
 };
 
-export type ConfirmedReceiptItem = {
-  description: string;
-  value: number;
-  type: string;
-  subtype?: string;
-  qty?: number;
-  unit?: string;
-};
-
 export type ParsedBillItem = {
   date: string;
   description: string;
@@ -171,18 +186,9 @@ export type ParsedBillItem = {
   isPossibleDuplicate?: boolean;
 };
 
-export type NewBillMapping = {
-  description: string;
-  type: string;
-  subtype: string | null;
-};
-
-export type ConfirmedBillItem = {
-  date: string;
-  description: string;
-  value: number;
-  installmentCurrent?: number;
-  installmentTotal?: number;
-  type: string | null;
-  subtype: string | null;
-};
+// Request bodies — inferred, never hand-written. ParsedBillItem/ParsedReceiptItem
+// above stay hand-written: they are *response* shapes read by ImportBill.tsx and
+// ImportReceipt.tsx, not payloads any schema validates.
+export type ConfirmedBillItem = ConfirmedBillItemBody;
+export type NewBillMapping = NewBillMappingBody;
+export type ConfirmedReceiptItem = ConfirmedReceiptItemBody;

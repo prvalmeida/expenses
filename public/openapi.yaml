@@ -1,0 +1,1034 @@
+openapi: 3.0.3
+info:
+  title: Expenses API
+  version: 1.0.0
+  description: "API pública do gerenciador de finanças. Todas as rotas exigem o header x-api-key (ou Authorization: Bearer). Categorias são editáveis em tempo de execução: consulte /v1/categories antes de escrever, e trate INVALID_CATEGORY relendo essa lista."
+servers:
+  - url: /api/v1
+security:
+  - apiKey: []
+paths:
+  /expenses:
+    get:
+      summary: Lista gastos com filtros e paginação por cursor
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 100
+            type: integer
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 500
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-fA-F]{24}$
+        - name: dateField
+          in: query
+          required: false
+          schema:
+            default: date
+            type: string
+            enum:
+              - date
+              - effectiveDate
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+        - name: subtype
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+        - name: paymentType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - credit
+              - cash
+              - debit
+              - pix
+              - food-voucher
+              - meal-voucher
+              - fuel-voucher
+        - name: cardBrand
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - Master Santander
+              - Visa Caixa
+              - Elo Caixa
+        - name: transactionId
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Página de gastos e o nextCursor
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: &a1
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+    post:
+      summary: Cria uma compra, expandindo as parcelas no servidor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                    value:
+                      type: number
+                      minimum: 0
+                      exclusiveMinimum: true
+                    type:
+                      type: string
+                      minLength: 1
+                    subtype:
+                      type: string
+                      minLength: 1
+                    date:
+                      type: string
+                      pattern: ^\d{4}-\d{2}-\d{2}$
+                    paymentType:
+                      type: string
+                      enum:
+                        - credit
+                    cardBrand:
+                      type: string
+                      enum:
+                        - Master Santander
+                        - Visa Caixa
+                        - Elo Caixa
+                    installments:
+                      default: 1
+                      type: integer
+                      minimum: 0
+                      exclusiveMinimum: true
+                      maximum: 72
+                    valueIsTotal:
+                      default: true
+                      type: boolean
+                  required:
+                    - name
+                    - value
+                    - type
+                    - subtype
+                    - date
+                    - paymentType
+                    - cardBrand
+                - type: object
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                    value:
+                      type: number
+                      minimum: 0
+                      exclusiveMinimum: true
+                    type:
+                      type: string
+                      minLength: 1
+                    subtype:
+                      type: string
+                      minLength: 1
+                    date:
+                      type: string
+                      pattern: ^\d{4}-\d{2}-\d{2}$
+                    paymentType:
+                      type: string
+                      enum:
+                        - cash
+                        - debit
+                        - pix
+                        - food-voucher
+                        - meal-voucher
+                        - fuel-voucher
+                    cardBrand:
+                      not: {}
+                    installment:
+                      not: {}
+                    totalInstallments:
+                      not: {}
+                  required:
+                    - name
+                    - value
+                    - type
+                    - subtype
+                    - date
+                    - paymentType
+      responses:
+        "201":
+          description: Os N registros criados e o transactionId compartilhado
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /expenses/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Busca um gasto
+      responses:
+        "200":
+          description: O gasto
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+    put:
+      summary: Substitui os oito campos editáveis de um gasto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                value:
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+                type:
+                  type: string
+                  minLength: 1
+                subtype:
+                  type: string
+                  minLength: 1
+                paymentType:
+                  type: string
+                  enum:
+                    - credit
+                    - cash
+                    - debit
+                    - pix
+                    - food-voucher
+                    - meal-voucher
+                    - fuel-voucher
+                cardBrand:
+                  type: string
+                  enum:
+                    - Master Santander
+                    - Visa Caixa
+                    - Elo Caixa
+                date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                effectiveDate:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+              required:
+                - name
+                - value
+                - type
+                - subtype
+                - paymentType
+                - date
+      responses:
+        "200":
+          description: O gasto atualizado
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+    patch:
+      summary: Atualiza parte dos campos editáveis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                value:
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+                type:
+                  type: string
+                  minLength: 1
+                subtype:
+                  type: string
+                  minLength: 1
+                paymentType:
+                  type: string
+                  enum:
+                    - credit
+                    - cash
+                    - debit
+                    - pix
+                    - food-voucher
+                    - meal-voucher
+                    - fuel-voucher
+                cardBrand:
+                  type: string
+                  enum:
+                    - Master Santander
+                    - Visa Caixa
+                    - Elo Caixa
+                date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                effectiveDate:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+      responses:
+        "200":
+          description: O gasto atualizado
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+    delete:
+      summary: Exclui um único registro
+      responses:
+        "200":
+          description: Quantidade excluída
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+  /expenses/transactions/{transactionId}:
+    parameters:
+      - name: transactionId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Lista todas as parcelas de uma compra
+      responses:
+        "200":
+          description: As parcelas do grupo
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+    delete:
+      summary: Exclui a compra inteira (todas as parcelas)
+      responses:
+        "200":
+          description: Quantidade excluída
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+  /incomes:
+    get:
+      summary: Lista receitas
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 100
+            type: integer
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 500
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-fA-F]{24}$
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Página de receitas e o nextCursor
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+    post:
+      summary: Cria uma receita
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                value:
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+                type:
+                  type: string
+                  minLength: 1
+                date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+              required:
+                - name
+                - value
+                - type
+                - date
+      responses:
+        "201":
+          description: A receita criada
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /incomes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Busca uma receita
+      responses:
+        "200":
+          description: A receita
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+    put:
+      summary: Atualiza uma receita
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                value:
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+                type:
+                  type: string
+                  minLength: 1
+                date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+              required:
+                - name
+                - value
+                - type
+                - date
+      responses:
+        "200":
+          description: A receita atualizada
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+    delete:
+      summary: Exclui uma receita
+      responses:
+        "200":
+          description: Quantidade excluída
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "404":
+          description: NOT_FOUND
+          content:
+            application/json:
+              schema: *a1
+  /bills/parse:
+    post:
+      summary: Extrai as transações de um PDF de fatura
+      description: A resposta é reenviável a /bills/import sem transformação. `password` só é necessário para faturas protegidas; o padrão é a variável PDF_KEY do servidor.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                cardBrand:
+                  type: string
+                  enum:
+                    - Master Santander
+                    - Visa Caixa
+                    - Elo Caixa
+                password:
+                  type: string
+                  minLength: 1
+              required:
+                - file
+                - cardBrand
+      responses:
+        "200":
+          description: items, cardBrand, closingDate e dueDate
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "422":
+          description: DOCUMENT_UNREADABLE
+          content:
+            application/json:
+              schema: *a1
+  /bills/import:
+    post:
+      summary: Importa as transações revisadas de uma fatura
+      description: Itens com type null ou categoria inexistente contam como skippedInvalid e são os únicos acionáveis; skippedExisting é o resultado esperado de faturas com sobreposição. Subtipos inválidos para o tipo são descartados sem bloquear a linha.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  minItems: 1
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      date:
+                        type: string
+                        pattern: ^\d{4}-\d{2}-\d{2}$
+                      description:
+                        type: string
+                        minLength: 1
+                      value:
+                        type: number
+                        minimum: 0
+                        exclusiveMinimum: true
+                      installmentCurrent:
+                        type: integer
+                        minimum: 0
+                        exclusiveMinimum: true
+                        maximum: 72
+                      installmentTotal:
+                        type: integer
+                        minimum: 0
+                        exclusiveMinimum: true
+                        maximum: 72
+                      type:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                      subtype:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                    required:
+                      - date
+                      - description
+                      - value
+                      - type
+                      - subtype
+                cardBrand:
+                  type: string
+                  enum:
+                    - Master Santander
+                    - Visa Caixa
+                    - Elo Caixa
+                closingDate:
+                  default: null
+                  nullable: true
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                dueDate:
+                  default: null
+                  nullable: true
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                newMappings:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        minLength: 1
+                      type:
+                        type: string
+                        minLength: 1
+                      subtype:
+                        nullable: true
+                        type: string
+                        minLength: 1
+                    required:
+                      - description
+                      - type
+                      - subtype
+              required:
+                - items
+                - cardBrand
+      responses:
+        "201":
+          description: "{ imported, skippedInvalid, skippedExisting }"
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /receipts/parse:
+    post:
+      summary: Interpreta uma NF-e a partir de um PDF (multipart) ou de um link SEFAZ (JSON)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+                - file
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  format: uri
+              required:
+                - url
+      responses:
+        "200":
+          description: Loja e itens classificados
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "422":
+          description: DOCUMENT_UNREADABLE
+          content:
+            application/json:
+              schema: *a1
+        "502":
+          description: UPSTREAM_FAILED
+          content:
+            application/json:
+              schema: *a1
+  /receipts/import:
+    post:
+      summary: Importa os itens confirmados de uma NF-e
+      description: Diferente da fatura, um par (type, subtype) inválido rejeita o lote inteiro com INVALID_CATEGORY.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cnpj:
+                  type: string
+                  minLength: 1
+                address:
+                  type: string
+                  minLength: 1
+                date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                paymentType:
+                  type: string
+                  enum:
+                    - credit
+                    - cash
+                    - debit
+                    - pix
+                    - food-voucher
+                    - meal-voucher
+                    - fuel-voucher
+                cardBrand:
+                  type: string
+                  enum:
+                    - Master Santander
+                    - Visa Caixa
+                    - Elo Caixa
+                items:
+                  minItems: 1
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        minLength: 1
+                      value:
+                        type: number
+                        minimum: 0
+                        exclusiveMinimum: true
+                      type:
+                        type: string
+                        minLength: 1
+                      subtype:
+                        type: string
+                        minLength: 1
+                      qty:
+                        type: number
+                        minimum: 0
+                        exclusiveMinimum: true
+                      unit:
+                        type: string
+                        minLength: 1
+                    required:
+                      - description
+                      - value
+                      - type
+                newMappings:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        minLength: 1
+                      value:
+                        type: number
+                        minimum: 0
+                        exclusiveMinimum: true
+                      type:
+                        type: string
+                        minLength: 1
+                      subtype:
+                        type: string
+                        minLength: 1
+                      qty:
+                        type: number
+                        minimum: 0
+                        exclusiveMinimum: true
+                      unit:
+                        type: string
+                        minLength: 1
+                    required:
+                      - description
+                      - value
+                      - type
+                storeDefaultType:
+                  type: string
+                  minLength: 1
+                installments:
+                  default: 1
+                  type: integer
+                  minimum: 0
+                  exclusiveMinimum: true
+                  maximum: 72
+              required:
+                - cnpj
+                - date
+                - paymentType
+                - items
+      responses:
+        "201":
+          description: Os gastos criados
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /categories:
+    get:
+      summary: Lista as categorias e subtipos válidos
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - expense
+              - income
+      responses:
+        "200":
+          description: As categorias
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /card-cycles:
+    get:
+      summary: Consulta o ciclo (fechamento/vencimento) de um cartão
+      parameters:
+        - name: brand
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - Master Santander
+              - Visa Caixa
+              - Elo Caixa
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 2000
+            maximum: 2100
+      responses:
+        "200":
+          description: closingDate e dueDate do ciclo
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - UNAUTHORIZED
+                - VALIDATION_FAILED
+                - INVALID_CATEGORY
+                - NOT_FOUND
+                - PDF_PASSWORD_REQUIRED
+                - DOCUMENT_UNREADABLE
+                - UPSTREAM_FAILED
+                - INTERNAL_ERROR
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string

@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "gen:openapi": "tsx scripts/gen-openapi.ts",
+    "migrate": "tsx --env-file=.env.local scripts/migrate.ts",
+    "test:api": "cd bruno && bru run . -r --env local --sandbox developer --exclude-tags external",
+    "test:api:external": "cd bruno && bru run . -r --env local --sandbox developer --tags external"
   },
   "dependencies": {
     "@types/pdf-parse": "^1.1.5",
@@ -17,16 +21,20 @@
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.7.284",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@usebruno/cli": "^4.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.23.12",
+    "typescript": "^5",
+    "yaml": "^2.9.0"
   }
 }

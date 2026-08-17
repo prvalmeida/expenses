@@ -1,0 +1,40 @@
+meta {
+  name: Reject an out-of-range installmentTotal
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/bills/import
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "date": "2026-03-10",
+        "description": "BRUNO_TEST_unbounded",
+        "value": 10,
+        "installmentCurrent": 1,
+        "installmentTotal": 999999,
+        "type": null,
+        "subtype": null
+      }
+    ],
+    "cardBrand": "Master Santander"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+docs {
+  Not tagged external: it is rejected at the boundary, so it needs no statement
+  fixture and never reaches OpenAI. The bound is what keeps one request from
+  expanding into a million rows, each costing a CardCycle lookup and an insert —
+  including one produced by a mis-guessed Caixa `NN DE NN` token.
+}

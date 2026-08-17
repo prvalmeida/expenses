@@ -1,0 +1,87 @@
+meta {
+  name: Create a 6x installment purchase
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_notebook",
+    "value": 5000.46,
+    "type": "{{expenseType}}",
+    "subtype": "{{expenseSubtype}}",
+    "paymentType": "credit",
+    "cardBrand": "Master Santander",
+    "date": "2026-03-31",
+    "installments": 6
+  }
+}
+
+vars:pre-request {
+  expenseType: compras
+  expenseSubtype: Roupas
+}
+
+vars:post-response {
+  transactionId: res.body.data.transactionId
+  firstExpenseId: res.body.data.expenses[0]._id
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  // One request creating N records is the headline behaviour, and none of it is
+  // observable from a single response field — hence the assertions here.
+  const expenses = res.body.data.expenses;
+  
+  test("six records were created", function () {
+    expect(expenses.length).to.equal(6);
+  });
+  
+  test("all six share one transactionId", function () {
+    const ids = new Set(expenses.map(e => e.transactionId));
+    expect(ids.size).to.equal(1);
+    expect(expenses[0].transactionId).to.equal(res.body.data.transactionId);
+  });
+  
+  test("the total is split across the installments", function () {
+    // Derived from what was actually submitted rather than hardcoded: the
+    // assertion is "the total was divided", and it should not need editing
+    // every time the request's value does.
+    const perValue = Math.round((req.getBody().value / 6) * 100) / 100;
+    expect(expenses.every(e => e.value === perValue)).to.equal(true);
+  });
+  
+  test("installments are numbered 1..6", function () {
+    expect(expenses.map(e => e.installment)).to.eql([1, 2, 3, 4, 5, 6]);
+    expect(expenses.every(e => e.totalInstallments === 6)).to.equal(true);
+  });
+  
+  test("the purchase date clamps to the last day of short months", function () {
+    // 2026-03-31 + 1 month is 2026-04-30, not 2026-05-01.
+    expect(expenses[1].date).to.equal("2026-04-30");
+  });
+  
+  test("effectiveDate advances one cycle per installment", function () {
+    const dates = expenses.map(e => e.effectiveDate);
+    expect(new Set(dates).size).to.equal(6);
+    for (let i = 1; i < dates.length; i++) {
+      expect(dates[i] > dates[i - 1]).to.equal(true);
+    }
+  });
+}
+
+docs {
+  The pre-request vars override what 01 discovered, and the override persists for
+  the rest of the run — so the subtype has to be pinned alongside the type. Left
+  unpinned, every later request would send a pair whose halves come from two
+  different categories and get INVALID_CATEGORY, now that subtype is mandatory.
+}

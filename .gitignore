@@ -42,5 +42,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# bruno — the key lives in bruno/.env (already covered by .env*), and fixtures
+# are real financial documents unless deliberately synthetic
+/bruno/fixtures/*
+!/bruno/fixtures/README.md
+/bruno/results.*
+
 .claude/worktrees/
 .claude/settings*.json

@@ -1,0 +1,37 @@
+meta {
+  name: Reject a credit edit with no cardBrand
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_notebook_renamed",
+    "value": 1000,
+    "type": "{{expenseType}}",
+    "subtype": "{{expenseSubtype}}",
+    "paymentType": "credit",
+    "date": "2026-03-31"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+tests {
+  // createExpenseSchema enforces the pairing with a discriminated union, which
+  // an edit cannot use (PATCH needs .partial()). Accepting this wrote a credit
+  // expense with no cardBrand — a shape CreditExpense says cannot exist — and
+  // skipped the effectiveDate derivation, leaving the old one behind.
+  test("the record was not changed", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Delete the income
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/incomes/{{incomeId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.deletedCount: eq 1
+}

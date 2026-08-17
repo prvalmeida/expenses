@@ -1,0 +1,31 @@
+meta {
+  name: Reject a patch to credit with no cardBrand
+  type: http
+  seq: 11
+}
+
+patch {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "paymentType": "credit"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+tests {
+  // The patch alone looks valid — it is only invalid once resolved against a
+  // record that carries no cardBrand, which is why the merged payload is
+  // re-validated rather than the patch.
+  test("the record was not changed", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

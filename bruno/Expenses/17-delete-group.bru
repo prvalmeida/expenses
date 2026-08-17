@@ -1,0 +1,24 @@
+meta {
+  name: Delete the rest of the purchase
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{baseUrl}}/expenses/transactions/{{transactionId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.scope: eq group
+}
+
+tests {
+  // A single-record delete removed exactly one, so five remain — the group
+  // delete must take all of them and leave nothing behind.
+  test("the five remaining parcelas are removed", function () {
+    expect(res.body.data.deletedCount).to.equal(5);
+  });
+}

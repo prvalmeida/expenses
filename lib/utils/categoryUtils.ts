@@ -28,8 +28,14 @@ function toData(doc: { kind: CategoryKind; name: string; subtypes: string[]; ord
   return { kind: doc.kind, name: doc.name, subtypes: doc.subtypes ?? [], order: doc.order };
 }
 
+// Connects itself rather than trusting the caller: this is the first DB read on
+// every route that validates a category before reaching a service, and
+// instrumentation.ts swallows a failed boot connect — without this the first
+// request buffers for bufferTimeoutMS and 500s instead of failing immediately
+// with the missing-MONGODB_URI error.
 export async function getCategories(): Promise<CategoryData[]> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
+  await connectToDatabase();
   const docs = await Category.find({}).sort({ order: 1, name: 1 }).lean<CategoryData[]>();
   const data = docs.map(toData);
   cache = { at: Date.now(), data };

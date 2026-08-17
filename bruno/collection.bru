@@ -1,0 +1,18 @@
+headers {
+  x-api-key: {{process.env.API_KEY}}
+  Content-Type: application/json
+}
+
+docs {
+  Auth is declared once here, at collection level. Copying the header into every
+  request would drift the moment the header name changes.
+
+  The key itself is never committed: it comes from a gitignored bruno/.env,
+  which Bruno auto-loads as process.env. See bruno/.env.example.
+
+  Every request that writes creates records named with the BRUNO_TEST_ prefix
+  and deletes them again at the end of its chain. The collection points at
+  whatever baseUrl says, and during development that is the real database
+  holding real personal finances — the marker is what makes debris from an
+  aborted run identifiable. The Cleanup folder removes anything left behind.
+}

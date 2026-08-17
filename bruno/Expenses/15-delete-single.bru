@@ -1,0 +1,17 @@
+meta {
+  name: Delete one parcela
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.scope: eq single
+  res.body.data.deletedCount: eq 1
+}

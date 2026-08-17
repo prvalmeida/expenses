@@ -1,0 +1,28 @@
+meta {
+  name: Reject a URL outside the SEFAZ allowlist
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/receipts/parse
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "url": "https://example.com/nota"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+docs {
+  Not tagged external: it never reaches the network. The SSRF guard is exactly
+  the thing that must keep holding on a route an authenticated third party can
+  reach, so it belongs in the default run.
+}
