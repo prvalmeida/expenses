@@ -69,7 +69,7 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
       name: expense.name,
       value: expense.value === '' ? 0 : expense.value,
       type: expense.type,
-      ...(expense.subtype && { subtype: expense.subtype }),
+      subtype: expense.subtype,
       paymentType: expense.paymentType,
       date: expense.date,
       ...(isCredit && {

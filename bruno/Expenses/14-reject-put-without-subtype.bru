@@ -1,0 +1,36 @@
+meta {
+  name: Reject a PUT with no subtype
+  type: http
+  seq: 14
+}
+
+put {
+  url: {{baseUrl}}/expenses/{{firstExpenseId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "BRUNO_TEST_notebook_renamed",
+    "value": 1000,
+    "type": "{{expenseType}}",
+    "paymentType": "pix",
+    "date": "2026-09-01"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+tests {
+  // subtype is mandatory on the expense payloads, so an omitted one is rejected
+  // rather than treated as a clear. This request used to assert the opposite —
+  // that PUT-means-replace blanked the stored subtype — which is exactly the
+  // behaviour the mandatory field removes.
+  test("the record was not changed", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

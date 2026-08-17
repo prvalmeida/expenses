@@ -151,6 +151,7 @@ paths:
                     - name
                     - value
                     - type
+                    - subtype
                     - date
                     - paymentType
                     - cardBrand
@@ -191,6 +192,7 @@ paths:
                     - name
                     - value
                     - type
+                    - subtype
                     - date
                     - paymentType
       responses:
@@ -281,6 +283,7 @@ paths:
                 - name
                 - value
                 - type
+                - subtype
                 - paymentType
                 - date
       responses:

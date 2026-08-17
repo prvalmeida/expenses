@@ -36,6 +36,14 @@ export default function ExpenseTypeSelect({ expense, onChange }: ExpenseTypeSele
           ⚠ Categoria atual &ldquo;{expense.type}&rdquo; não existe mais — selecione uma válida.
         </p>
       )}
+      {/* A category with no subtypes cannot satisfy the mandatory field, so it
+          is called out here rather than failing as a 400 on submit. */}
+      {expense.type && !typeInvalid && !loading && subtypes.length === 0 && (
+        <p className="text-xs text-amber-700">
+          ⚠ A categoria &ldquo;{expense.type}&rdquo; não tem subtipos cadastrados — cadastre um em
+          Configurar Categorias antes de lançar um gasto nela.
+        </p>
+      )}
       {expense.type && !typeInvalid && subtypes.length > 0 && (
         <div>
           <label className="block text-sm font-medium mb-1">Subtipo</label>
@@ -44,8 +52,9 @@ export default function ExpenseTypeSelect({ expense, onChange }: ExpenseTypeSele
             value={subtypeInvalid ? "" : expense.subtype || ""}
             onChange={onChange}
             className="w-full p-2 border rounded"
+            required
           >
-            <option value="">Selecione o subtipo (opcional)</option>
+            <option value="">Selecione o subtipo</option>
             {[...subtypes]
               .sort((a, b) => a.localeCompare(b))
               .map((st) => (

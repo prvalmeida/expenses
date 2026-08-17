@@ -14,7 +14,13 @@ const base = {
   name: z.string().trim().min(1, 'Nome é obrigatório'),
   value: brlAmount,
   type: z.string().trim().min(1, 'Categoria é obrigatória'),
-  subtype: z.string().trim().min(1).optional(),
+  // Mandatory on the expense payloads, unlike everywhere else `subtype`
+  // appears. The import schemas keep it optional/nullable on purpose: a bill row
+  // the user never classified still imports, and `buildExpenseDocuments` accepts
+  // an absent subtype because billService drops one that is invalid for its
+  // type. Requiring it here is a boundary rule for expenses a caller composes
+  // itself, not an invariant of the stored document.
+  subtype: z.string().trim().min(1, 'Subcategoria é obrigatória'),
   date: isoDate,
 };
 

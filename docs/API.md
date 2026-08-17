@@ -101,8 +101,11 @@ repasse `nextCursor` como `cursor` até vir `null`.
 - `PUT /api/v1/expenses/{id}` substitui os oito campos editáveis; `PATCH` altera um subconjunto.
   `transactionId`, `installment` e `totalInstallments` nunca são aceitos — um grupo de parcelas se
   refaz reimportando, não editando uma parcela.
-- Substituir é substituir: um `subtype` omitido no `PUT` é **removido** do registro, não mantido.
-  Para preservá-lo, reenvie-o — ou use `PATCH`, que resolve o payload contra o registro salvo.
+- `subtype` é **obrigatório** ao criar e ao editar um gasto, como `type`. Um `PUT` sem ele é
+  rejeitado com `VALIDATION_FAILED`; no `PATCH` a exigência vale sobre o payload mesclado, então
+  registros antigos gravados sem subtipo só voltam a ser editáveis informando um.
+  As rotas de importação (fatura e nota) seguem aceitando itens sem subtipo — lá ele é sugerido
+  automaticamente e um subtipo inválido para o tipo é descartado sem impedir a importação.
 - `paymentType: "credit"` exige `cardBrand` também na edição, e no `PATCH` a exigência é avaliada
   sobre o resultado da mesclagem: `PATCH {"paymentType":"credit"}` em um registro sem `cardBrand`
   retorna `VALIDATION_FAILED`.
