@@ -930,6 +930,38 @@ paths:
           content:
             application/json:
               schema: *a1
+  /telegram/expenses:
+    post:
+      summary: Cria um gasto a partir de texto amigável de Telegram
+      description: Aceita um bloco de texto com campos como nome, valor, categoria, subcategoria, pagamento e data. Quando dryRun=true, só valida e normaliza sem gravar no banco.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                dryRun:
+                  default: false
+                  type: boolean
+              required:
+                - text
+      responses:
+        "201":
+          description: O gasto criado a partir do texto
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
   /categories:
     get:
       summary: Lista as categorias e subtipos válidos
