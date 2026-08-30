@@ -122,11 +122,19 @@ function offsetIso(base: string, days: number): string {
   return todayIso(date);
 }
 
+// Strict pt-BR money grammar, applied before any conversion — the same
+// discipline as BRL_AMOUNT guarding parseBRLAmount in the bill parsers, but
+// for free-form text where nothing guarantees the shape. A dot-decimal
+// "42.90" is ambiguous (en-US 42.9 vs a typo'd pt-BR 42,90) and must be
+// rejected, never guessed: the old strip-every-dot code turned it into 4290,
+// a silent 100x corruption that sailed through brlAmount.
+const AMOUNT_GRAMMAR = /^(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)$/i;
+
 function parseAmount(raw?: string): number | undefined {
   if (!raw) return undefined;
-  const cleaned = raw.replace(/^r\$\s*/i, '').replace(/\./g, '').replace(',', '.').trim();
-  const value = Number(cleaned);
-  return Number.isFinite(value) ? value : undefined;
+  const match = raw.trim().match(AMOUNT_GRAMMAR);
+  if (!match) return undefined;
+  return Number(match[1].replace(/\./g, '').replace(',', '.'));
 }
 
 function parseInstallments(raw?: string): number | undefined {
@@ -137,16 +145,32 @@ function parseInstallments(raw?: string): number | undefined {
   return Number.isInteger(value) ? value : undefined;
 }
 
+// A shape-only regex accepts "2026-13-31" and "31/02/2026"; downstream, the
+// credit flow feeds that month into getCycle, whose Date.UTC overflows
+// silently into the next year. Date.UTC normalizes overflow, so a round-trip
+// equality is a real calendar check — month 1-12, day valid for the month,
+// leap years included.
+function toIsoDate(year: number, month: number, day: number): string | undefined {
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) {
+    return undefined;
+  }
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 function parseDate(raw: string | undefined, baseToday: string): string | undefined {
   if (!raw) return baseToday;
   const normalized = fold(raw);
   if (normalized === 'hoje') return baseToday;
   if (normalized === 'ontem') return offsetIso(baseToday, -1);
-  if (normalized === 'amanha' || normalized === 'amanhã') return offsetIso(baseToday, 1);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return raw.trim();
+  if (normalized === 'amanha') return offsetIso(baseToday, 1);
 
-  const br = raw.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const trimmed = raw.trim();
+  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return toIsoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const br = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return toIsoDate(Number(br[3]), Number(br[2]), Number(br[1]));
   return undefined;
 }
 
