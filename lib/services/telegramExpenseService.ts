@@ -1,7 +1,6 @@
 import { ZodError } from 'zod';
 import { createExpenseSchema, CreateExpenseBody } from '@/lib/api/schemas/expense';
 import { ApiErrorDetails } from '@/lib/api/respond';
-import { getExpenseCategories } from '@/lib/utils/categoryUtils';
 import { CardBrand } from '@/types';
 
 const FIELD_ALIASES = new Map<string, keyof DraftExpense>([
@@ -29,41 +28,45 @@ const FIELD_ALIASES = new Map<string, keyof DraftExpense>([
   ['parcelas', 'installments'],
 ]);
 
-const PAYMENT_TYPE_ALIASES: Record<string, CreateExpenseBody['paymentType']> = {
-  credit: 'credit',
-  credito: 'credit',
-  'crédito': 'credit',
-  cash: 'cash',
-  dinheiro: 'cash',
-  especie: 'cash',
-  'espécie': 'cash',
-  debit: 'debit',
-  debito: 'debit',
-  'débito': 'debit',
-  pix: 'pix',
-  'vale alimentacao': 'food-voucher',
-  'vale alimentação': 'food-voucher',
-  'alimentacao': 'food-voucher',
-  'alimentação': 'food-voucher',
-  'vale refeicao': 'meal-voucher',
-  'vale refeição': 'meal-voucher',
-  refeicao: 'meal-voucher',
-  refeição: 'meal-voucher',
-  'vale combustivel': 'fuel-voucher',
-  'vale combustível': 'fuel-voucher',
-  combustivel: 'fuel-voucher',
-  combustível: 'fuel-voucher',
-};
+// Maps, not object literals: a literal like { credit: 'credit' } resolves
+// "constructor" through the prototype chain (truthy — an Object function),
+// dodging the friendly invalid-payment error for a garbage key. Map.get has
+// no prototype to leak through.
+const PAYMENT_TYPE_ALIASES = new Map<string, CreateExpenseBody['paymentType']>([
+  ['credit', 'credit'],
+  ['credito', 'credit'],
+  ['crédito', 'credit'],
+  ['cash', 'cash'],
+  ['dinheiro', 'cash'],
+  ['especie', 'cash'],
+  ['espécie', 'cash'],
+  ['debit', 'debit'],
+  ['debito', 'debit'],
+  ['débito', 'debit'],
+  ['pix', 'pix'],
+  ['vale alimentacao', 'food-voucher'],
+  ['vale alimentação', 'food-voucher'],
+  ['alimentacao', 'food-voucher'],
+  ['alimentação', 'food-voucher'],
+  ['vale refeicao', 'meal-voucher'],
+  ['vale refeição', 'meal-voucher'],
+  ['refeicao', 'meal-voucher'],
+  ['refeição', 'meal-voucher'],
+  ['vale combustivel', 'fuel-voucher'],
+  ['vale combustível', 'fuel-voucher'],
+  ['combustivel', 'fuel-voucher'],
+  ['combustível', 'fuel-voucher'],
+]);
 
-const CARD_BRAND_ALIASES: Record<string, CreateExpenseBody['cardBrand']> = {
-  'master santander': CardBrand.MasterSantander,
-  master: CardBrand.MasterSantander,
-  mastercard: CardBrand.MasterSantander,
-  'visa caixa': CardBrand.Visa,
-  visa: CardBrand.Visa,
-  'elo caixa': CardBrand.EloCaixa,
-  elo: CardBrand.EloCaixa,
-};
+const CARD_BRAND_ALIASES = new Map<string, CreateExpenseBody['cardBrand']>([
+  ['master santander', CardBrand.MasterSantander],
+  ['master', CardBrand.MasterSantander],
+  ['mastercard', CardBrand.MasterSantander],
+  ['visa caixa', CardBrand.Visa],
+  ['visa', CardBrand.Visa],
+  ['elo caixa', CardBrand.EloCaixa],
+  ['elo', CardBrand.EloCaixa],
+]);
 
 type DraftExpense = {
   name?: string;
@@ -176,12 +179,12 @@ function parseDate(raw: string | undefined, baseToday: string): string | undefin
 
 function parsePaymentType(raw?: string): CreateExpenseBody['paymentType'] | undefined {
   if (!raw) return undefined;
-  return PAYMENT_TYPE_ALIASES[fold(raw)];
+  return PAYMENT_TYPE_ALIASES.get(fold(raw));
 }
 
 function parseCardBrand(raw?: string): CreateExpenseBody['cardBrand'] | undefined {
   if (!raw) return undefined;
-  return CARD_BRAND_ALIASES[fold(raw)];
+  return CARD_BRAND_ALIASES.get(fold(raw));
 }
 
 function splitTypeAndSubtype(rawType?: string, rawSubtype?: string) {
@@ -305,15 +308,4 @@ export function parseTelegramExpenseText(text: string, now = new Date()): Telegr
     ignoredLines,
     recognizedFields,
   };
-}
-
-export async function resolveExpenseCategoryCasing(type: string, subtype: string) {
-  const categories = await getExpenseCategories();
-  const category = categories.find(item => fold(item.name) === fold(type));
-  if (!category) return null;
-
-  const matchedSubtype = category.subtypes.find(item => fold(item) === fold(subtype));
-  if (!matchedSubtype) return null;
-
-  return { type: category.name, subtype: matchedSubtype };
 }

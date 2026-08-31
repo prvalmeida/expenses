@@ -4,7 +4,8 @@ import { created, fail, failFrom, ok } from '@/lib/api/respond';
 import { telegramExpenseTextSchema } from '@/lib/api/schemas/telegram';
 import { validateBody, validationFailed } from '@/lib/api/validate';
 import { createExpenses } from '@/lib/services/expenseService';
-import { parseTelegramExpenseText, resolveExpenseCategoryCasing } from '@/lib/services/telegramExpenseService';
+import { parseTelegramExpenseText } from '@/lib/services/telegramExpenseService';
+import { resolveExpenseCategoryCasing } from '@/lib/utils/categoryUtils';
 
 export async function POST(request: NextRequest) {
   const unauthorized = requireApiKey(request);

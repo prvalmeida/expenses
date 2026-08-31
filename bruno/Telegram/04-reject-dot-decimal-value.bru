@@ -1,0 +1,35 @@
+meta {
+  name: Reject malformed Telegram text with VALIDATION_FAILED
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/telegram/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "nome: almoço\nvalor: 42.90\ncategoria: comida\nsubcategoria: Restaurante\npagamento: pix"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+tests {
+  // 42.90 is the exact shape the B1 regression guards: a dot-decimal must be
+  // rejected with the message that teaches the pt-BR format, never guessed
+  // into 4290.
+  test("the value error teaches the pt-BR format", function () {
+    expect(res.body.error.details.value[0]).to.equal("Valor inválido. Use um número como 42,90.");
+  });
+
+  test("nothing was created", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

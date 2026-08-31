@@ -1,0 +1,33 @@
+meta {
+  name: Reject Telegram text with an unknown category
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/telegram/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "nome: BRUNO_TEST_unknown_cat_telegram\nvalor: 42,90\ncategoria: categoria-que-nao-existe\nsubcategoria: também não existe\npagamento: pix"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+tests {
+  // Same contract as POST /expenses: well-formed text, unknown category —
+  // the caller recovers by re-reading /v1/categories, not by fixing code.
+  test("the code is INVALID_CATEGORY, not VALIDATION_FAILED", function () {
+    expect(res.body.error.code).to.equal("INVALID_CATEGORY");
+  });
+
+  test("nothing was created", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}

@@ -49,6 +49,11 @@ jobs:
       # code-review catch — is unenforced, and the next schema change drifts it.
       - run: npm run gen:openapi -- --check
 
+      # Pure node:test unit tests (parser grammars, schema guards) — no DB, no
+      # server, seconds to run, so they belong on the every-push path next to
+      # lint. The Bruno collection stays in api-test: it writes to a database.
+      - run: npm run test:unit
+
   build:
     name: Build
     runs-on: ubuntu-latest

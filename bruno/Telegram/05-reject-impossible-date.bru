@@ -1,0 +1,34 @@
+meta {
+  name: Reject an impossible date in Telegram text
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/telegram/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "nome: BRUNO_TEST_bad_date_telegram\nvalor: 100,00\ncategoria: compras\nsubcategoria: outros\npagamento: crédito\ncartão: visa\ndata: 31/13/2026"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq VALIDATION_FAILED
+}
+
+tests {
+  // The B2 regression: month 13 used to pass the shape-only check and
+  // overflow the credit cycle's Date.UTC into the next year.
+  test("the date error names the accepted formats", function () {
+    expect(res.body.error.details.date[0]).to.equal("Data inválida. Use YYYY-MM-DD, DD/MM/YYYY, hoje ou ontem.");
+  });
+
+  test("nothing was created", function () {
+    expect(res.body.data).to.equal(undefined);
+  });
+}
