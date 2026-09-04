@@ -21,6 +21,7 @@ import {
 import { createIncomeSchema, listIncomesQuerySchema } from '../lib/api/schemas/income';
 import { importBillSchema, parseBillSchema } from '../lib/api/schemas/bill';
 import { importReceiptSchema, parseReceiptUrlSchema } from '../lib/api/schemas/receipt';
+import { telegramExpenseTextSchema } from '../lib/api/schemas/telegram';
 import { cardCycleQuerySchema, categoriesQuerySchema } from '../lib/api/schemas/support';
 import { ERROR_STATUS } from '../lib/api/respond';
 
@@ -225,6 +226,16 @@ const document = {
           'INVALID_CATEGORY.',
         requestBody: jsonBody(importReceiptSchema),
         responses: responses('201', 'Os gastos criados'),
+      },
+    },
+    '/telegram/expenses': {
+      post: {
+        summary: 'Cria um gasto a partir de texto amigável de Telegram',
+        description:
+          'Aceita um bloco de texto com campos como nome, valor, categoria, subcategoria, pagamento e data. ' +
+          'Quando dryRun=true, só valida e normaliza sem gravar no banco.',
+        requestBody: jsonBody(telegramExpenseTextSchema),
+        responses: responses('201', 'O gasto criado a partir do texto'),
       },
     },
     '/categories': {

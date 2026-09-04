@@ -1,0 +1,48 @@
+meta {
+  name: Create an expense from Telegram-style text
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/telegram/expenses
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "nome: BRUNO_TEST_almoco telegram\nvalor: 42,90\ncategoria: comida\nsubcategoria: Restaurante\npagamento: pix\ndata: 2026-08-29"
+  }
+}
+
+vars:post-response {
+  createdExpenseId: res.body.data.expenses[0]._id
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  const created = res.body.data.expenses[0];
+
+  test("returns one created expense", function () {
+    expect(res.body.data.expenses.length).to.equal(1);
+  });
+
+  test("normalizes telegram text into a valid expense", function () {
+    expect(created.name).to.equal("BRUNO_TEST_almoco telegram");
+    expect(created.value).to.equal(42.90);
+    expect(created.type).to.equal("comida");
+    expect(created.subtype).to.equal("Restaurante");
+    expect(created.paymentType).to.equal("pix");
+    expect(created.date).to.equal("2026-08-29");
+    expect(created.effectiveDate).to.equal("2026-08-29");
+  });
+}
+
+docs {
+  This route is the Telegram-friendly write path: it accepts human-friendly text
+  and translates it into the canonical /expenses payload server-side.
+}

@@ -97,6 +97,26 @@ export async function validateExpensePair(type: string, subtype?: string | null)
   return cat.subtypes.includes(subtype);
 }
 
+// Resolves the canonical casing of a caller-supplied type/subtype pair. Unlike
+// validateExpensePair (a boolean), this returns the exact names the database
+// will echo back, so the Telegram parser can accept "comida / RESTAURANTE"
+// and store the canonical "comida / Restaurante". Case- and accent-insensitive
+// (fold), which is intentionally looser than validateExpensePair — that one
+// guards server-side defaults where the caller already knows the exact names.
+export async function resolveExpenseCategoryCasing(
+  type: string,
+  subtype: string
+): Promise<{ type: string; subtype: string } | null> {
+  const fold = (s: string) =>
+    s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
+  const category = (await getExpenseCategories()).find(c => fold(c.name) === fold(type));
+  if (!category) return null;
+  const matchedSubtype = category.subtypes.find(s => fold(s) === fold(subtype));
+  if (!matchedSubtype) return null;
+  return { type: category.name, subtype: matchedSubtype };
+}
+
 export async function validateIncomeType(type: string): Promise<boolean> {
   return (await getIncomeCategories()).some(c => c.name === type);
 }

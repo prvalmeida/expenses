@@ -9,6 +9,7 @@ npm run dev      # Start development server (http://localhost:3000)
 npm run build    # Build for production
 npm run start    # Start production server
 npm run lint     # Run ESLint
+npm run test:unit          # node:test unit tests (parser grammars, schema guards; no DB)
 npm run gen:openapi        # Regenerate public/openapi.yaml from the Zod schemas
 npm run test:api           # Run the Bruno API collection against localhost:3000
 npm run test:api:external  # Only the requests tagged `external` (real fixtures + OpenAI)
@@ -45,7 +46,7 @@ lint ∥ build ∥ verify-tag → docker → release
 api-test (workflow_dispatch / tags only, no needs)
 ```
 
-`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. `lint` also runs `npm run gen:openapi -- --check`: the generator's premise is that a stale spec is a diff rather than a code-review catch, which only holds if something enforces it. Neither receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
+`lint` and `build` are separate parallel jobs (no `needs`) so a lint error and a type error surface in the same run. `lint` also runs `npm run gen:openapi -- --check`: the generator's premise is that a stale spec is a diff rather than a code-review catch, which only holds if something enforces it. It also runs `npm run test:unit` (node:test, no DB, seconds to run) — the Bruno collection cannot live on the every-push path because it writes to a database, so it stays in `api-test`. Neither `lint` nor `build` receives secrets: `MONGODB_URI` and `OPENAI_API_KEY` are read inside `connectToDatabase()` / `getOpenAI()`, never at module load, so `next build` needs no env. Do not add placeholders — they would mask a regression where something *does* connect at build time.
 
 The last three jobs are tag-only (`refs/tags/v*`). **Releases must be tagged on `main`**: Actions has no native "tag on branch X" filter, so `verify-tag` checks out with `fetch-depth: 0` (a shallow checkout makes the check silently unreliable) and fails if the tagged commit is not an ancestor of `origin/main`.
 
