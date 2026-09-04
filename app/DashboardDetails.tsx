@@ -370,7 +370,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
       </div>
 
       {/* Full expense table */}
-      <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
+      <div className="bg-white shadow ring-1 ring-black/5 rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-wrap">
           <label className="text-xs font-bold text-gray-700 uppercase whitespace-nowrap">Filtrar por Categoria</label>
           <select

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import AddExpense from './AddExpense';
 import AddIncome from './AddIncome';
 import DashBoard from './Dashboard';
@@ -9,10 +9,11 @@ import CardConfigPage from './CardConfig';
 import ImportReceipt from './ImportReceipt';
 import ImportBill from './ImportBill';
 import CategoryConfig from './CategoryConfig';
+import NavMenu, { viewTitle, type ViewId } from '@/components/NavMenu';
 
 export default function MainPage() {
-  // 1. Update the type to include 'cardConfig'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'dashboardDetails' | 'addExpense' | 'addIncome' | 'cardConfig' | 'categoryConfig' | 'importReceipt' | 'importBill'>('dashboard');
+  const [currentView, setCurrentView] = useState<ViewId>('dashboard');
+  const [navOpen, setNavOpen] = useState(false);
 
   // Carries the dashboard's selected month / view mode into the details view
   const [detailsMonth, setDetailsMonth] = useState<string>(() => {
@@ -21,134 +22,124 @@ export default function MainPage() {
   });
   const [detailsViewMode, setDetailsViewMode] = useState<'purchase' | 'payment'>('purchase');
 
+  // Every view switch goes through here so the mobile drawer can never stay
+  // open over the new screen — including the switches driven by callbacks
+  // (import finished, back from details).
+  const selectView = useCallback((view: ViewId) => {
+    setCurrentView(view);
+    setNavOpen(false);
+  }, []);
+
   const handleOpenDetails = useCallback((month: string, viewMode: 'purchase' | 'payment') => {
     setDetailsMonth(month);
     setDetailsViewMode(viewMode);
-    setCurrentView('dashboardDetails');
-  }, []);
+    selectView('dashboardDetails');
+  }, [selectView]);
 
   const handleExpenseAdded = useCallback(() => {
-    setCurrentView('dashboard');
-  }, []);
+    selectView('dashboard');
+  }, [selectView]);
 
   const handleIncomeAdded = useCallback(() => {
-    setCurrentView('dashboard');
-  }, []);
+    selectView('dashboard');
+  }, [selectView]);
 
   const handleImported = useCallback(() => {
-    setCurrentView('dashboard');
-  }, []);
+    selectView('dashboard');
+  }, [selectView]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navOpen]);
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <div className="w-56 bg-gray-200 p-4 border-r border-gray-300">
+    <div className="flex min-h-dvh bg-gray-50">
+      {/* Sidebar (md and up) */}
+      <div className="hidden md:block w-56 shrink-0 bg-gray-200 p-4 border-r border-gray-300 md:sticky md:top-0 md:h-dvh md:overflow-y-auto">
         <h2 className="text-lg font-bold mb-6 text-gray-800">Financeiro</h2>
-        
-        <nav className="space-y-3">
-          <button
-            onClick={() => setCurrentView('dashboard')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'dashboard' || currentView === 'dashboardDetails' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            📊 Dashboard
-          </button>
-
-          <button
-            onClick={() => setCurrentView('addExpense')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'addExpense' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            ➕ Novo Gasto
-          </button>
-
-          <button
-            onClick={() => setCurrentView('addIncome')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'addIncome' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            ➕ Nova Receita
-          </button>
-
-          <hr className="border-gray-400 my-4" />
-
-          <button
-            onClick={() => setCurrentView('cardConfig')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'cardConfig' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            💳 Fechamento Cartão
-          </button>
-
-          <button
-            onClick={() => setCurrentView('categoryConfig')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'categoryConfig' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            🏷️ Categorias
-          </button>
-
-          <button
-            onClick={() => setCurrentView('importReceipt')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'importReceipt' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            📄 Importar NF
-          </button>
-
-          <button
-            onClick={() => setCurrentView('importBill')}
-            className={`w-full text-left p-2 rounded transition-colors ${
-              currentView === 'importBill' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-            }`}
-          >
-            💳 Importar Fatura
-          </button>
-        </nav>
+        <NavMenu currentView={currentView} onSelect={selectView} />
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 p-6 overflow-y-auto">
-        {/* 3. Conditional Rendering Logic */}
-        {currentView === 'dashboard' && <DashBoard onOpenDetails={handleOpenDetails} />}
-
-        {currentView === 'dashboardDetails' && (
-          <DashboardDetails
-            initialMonth={detailsMonth}
-            initialViewMode={detailsViewMode}
-            onBack={() => setCurrentView('dashboard')}
+      {/* Drawer (below md) */}
+      {navOpen && (
+        <div className="md:hidden fixed inset-0 z-40" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setNavOpen(false)}
           />
-        )}
+          <div className="absolute inset-y-0 left-0 w-64 max-w-[85vw] bg-gray-200 p-4 shadow-xl overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold text-gray-800">Financeiro</h2>
+              <button
+                onClick={() => setNavOpen(false)}
+                aria-label="Fechar menu"
+                className="text-gray-500 hover:text-gray-800 text-2xl leading-none px-3 py-1"
+              >
+                &times;
+              </button>
+            </div>
+            <NavMenu currentView={currentView} onSelect={selectView} />
+          </div>
+        </div>
+      )}
 
-        {currentView === 'addExpense' && (
-          <AddExpense onExpenseAdded={handleExpenseAdded} />
-        )}
-        
-        {currentView === 'addIncome' && (
-          <AddIncome onIncomeAdded={handleIncomeAdded} />
-        )}
-        
-        {currentView === 'cardConfig' && (
-          <CardConfigPage />
-        )}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Top bar (below md) */}
+        <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-gray-200 border-b border-gray-300 px-3 py-2">
+          <button
+            onClick={() => setNavOpen(true)}
+            aria-label="Abrir menu"
+            aria-expanded={navOpen}
+            className="p-2.5 -ml-1 rounded text-gray-700 hover:bg-gray-300"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <span className="font-bold text-gray-800 truncate">{viewTitle(currentView)}</span>
+        </header>
 
-        {currentView === 'categoryConfig' && (
-          <CategoryConfig />
-        )}
+        {/* Main Content */}
+        <div className="flex-1 min-w-0 p-3 sm:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {currentView === 'dashboard' && <DashBoard onOpenDetails={handleOpenDetails} />}
 
-        {currentView === 'importReceipt' && (
-          <ImportReceipt onImported={handleImported} />
-        )}
+          {currentView === 'dashboardDetails' && (
+            <DashboardDetails
+              initialMonth={detailsMonth}
+              initialViewMode={detailsViewMode}
+              onBack={() => selectView('dashboard')}
+            />
+          )}
 
-        {currentView === 'importBill' && (
-          <ImportBill onDone={() => setCurrentView('dashboard')} />
-        )}
+          {currentView === 'addExpense' && (
+            <AddExpense onExpenseAdded={handleExpenseAdded} />
+          )}
+
+          {currentView === 'addIncome' && (
+            <AddIncome onIncomeAdded={handleIncomeAdded} />
+          )}
+
+          {currentView === 'cardConfig' && (
+            <CardConfigPage />
+          )}
+
+          {currentView === 'categoryConfig' && (
+            <CategoryConfig />
+          )}
+
+          {currentView === 'importReceipt' && (
+            <ImportReceipt onImported={handleImported} />
+          )}
+
+          {currentView === 'importBill' && (
+            <ImportBill onDone={() => selectView('dashboard')} />
+          )}
+        </div>
       </div>
     </div>
   );
