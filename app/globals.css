@@ -19,8 +19,31 @@
   }
 }
 
+html {
+  /* Safety net: a single overflowing element must not scroll the whole page
+     sideways on a phone. Horizontal scrolling belongs to the wrappers that
+     opt into it (overflow-x-auto), not to the document. Kept off `body` on
+     purpose: overflow on both makes body the scroll container and breaks
+     `position: sticky` on the import screens' action bars. */
+  overflow-x: hidden;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* The fallback stack must live *inside* var(): a list after the closing
+     paren is not a fallback, so if --font-sans ever fails to resolve the whole
+     declaration is dropped and the page renders in the browser's default
+     serif rather than falling back to Arial. */
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+}
+
+/* Safari iOS zooms into any focused field whose font-size is under 16px, and
+   most form controls here are text-sm. Force 16px up to the sm breakpoint. */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }

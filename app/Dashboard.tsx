@@ -139,19 +139,19 @@ export default function DashBoard({ onOpenDetails }: Props) {
       </div>
 
       {/* Totals side by side (compact) */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className={`p-4 rounded-xl border-l-4 shadow-sm bg-white ${viewMode === 'purchase' ? 'border-blue-500' : 'border-green-500'}`}>
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
             {viewMode === 'purchase' ? 'Gastos' : 'A Pagar'}
           </p>
-          <p className="text-xl font-black mt-1 text-gray-900">
+          <p className="text-lg sm:text-xl font-black mt-1 text-gray-900">
             R$ {totalThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </p>
         </div>
 
         <div className="p-4 rounded-xl border-l-4 border-purple-500 shadow-sm bg-white">
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Receitas</p>
-          <p className="text-xl font-black mt-1 text-gray-900">
+          <p className="text-lg sm:text-xl font-black mt-1 text-gray-900">
             R$ {totalIncomeThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </p>
         </div>
@@ -159,7 +159,7 @@ export default function DashBoard({ onOpenDetails }: Props) {
         {viewMode === 'payment' && (
           <div className="p-4 rounded-xl border-l-4 border-yellow-500 shadow-sm bg-white">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Poupança</p>
-            <p className={`text-xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            <p className={`text-lg sm:text-xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               R$ {(totalIncomeThisMonth - totalThisMonth).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
           </div>
@@ -177,7 +177,7 @@ export default function DashBoard({ onOpenDetails }: Props) {
             </div>
             <button
               onClick={() => onOpenDetails(selectedMonth, viewMode)}
-              className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50"
+              className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
               title="Ver detalhes"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -232,7 +232,7 @@ export default function DashBoard({ onOpenDetails }: Props) {
                   </span>
                   <button
                     onClick={() => income._id && handleDeleteIncome(income._id)}
-                    className="text-red-400 hover:text-red-600 transition-colors p-1"
+                    className="text-red-400 hover:text-red-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
                     title="Excluir receita"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

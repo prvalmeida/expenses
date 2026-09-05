@@ -105,7 +105,7 @@ export default function CardConfigPage() {
       ) : (
         <div className="space-y-6">
           {Object.values(CardBrand).map((brand) => (
-            <div key={brand} className="flex flex-col sm:flex-row gap-4 items-end p-4 border rounded-lg hover:bg-gray-50 transition-colors">
+            <div key={brand} className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-end p-4 border rounded-lg hover:bg-gray-50 transition-colors">
               <div className="flex-1">
                 <span className="block text-lg font-semibold text-gray-700">{brand}</span>
               </div>

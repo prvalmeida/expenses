@@ -359,13 +359,13 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             onChange={e =>
               updateItem(index, 'resolvedValue', parseFloat(e.target.value) || 0)
             }
-            className="w-24 p-0.5 border rounded text-xs text-right bg-transparent focus:bg-white [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-24 min-w-24 p-0.5 border rounded text-xs text-right bg-transparent focus:bg-white [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
         </td>
         <td className="p-1.5 border border-gray-200 text-center">
           <button
             onClick={() => removeItem(index)}
-            className="text-red-400 hover:text-red-600 font-bold px-2"
+            className="text-red-400 hover:text-red-600 font-bold px-2 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
           >
             ✕
           </button>
@@ -375,7 +375,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-4">
+    <div className="max-w-5xl mx-auto p-3 sm:p-4">
       <h2 className="text-xl font-bold mb-2">Revisar Fatura</h2>
       <div className="text-sm text-gray-600 mb-4 space-y-1">
         <p>
@@ -404,7 +404,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       {/* Normal items */}
       {normalPairs.length > 0 && (
         <div className="overflow-x-auto mb-6">
-          <table className="w-full text-sm border-collapse">
+          <table className="w-full min-w-[840px] text-sm border-collapse">
             <thead>
               <tr className="bg-gray-100 text-left">
                 <th className="p-2 border border-gray-200 w-8 text-center">
@@ -445,7 +445,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             <span className="text-xs text-gray-500">Já existem gastos com a mesma data e valor</span>
           </div>
           <div className="overflow-x-auto mb-6 border border-amber-200 rounded">
-            <table className="w-full text-sm border-collapse">
+            <table className="w-full min-w-[840px] text-sm border-collapse">
               <thead>
                 <tr className="bg-amber-50 text-left">
                   <th className="p-2 border border-amber-200 w-8 text-center">
@@ -497,10 +497,12 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         </p>
       )}
 
-      <div className="flex gap-3">
+      {/* Sticky so the confirm button stays reachable: a bill review can run
+          for hundreds of pixels of scrolling. */}
+      <div className="sticky bottom-0 -mx-3 sm:-mx-4 px-3 sm:px-4 py-3 bg-white border-t border-gray-200 flex flex-col sm:flex-row gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <button
           onClick={() => setStep(1)}
-          className="py-2 px-4 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+          className="order-last sm:order-none py-2 px-4 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
         >
           Voltar
         </button>
@@ -512,12 +514,12 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             Remover selecionados ({selectedIndices.size})
           </button>
         )}
-        <div className="flex-1" />
+        <div className="hidden sm:block sm:flex-1" />
         {normalPairs.length > 0 && (
           <button
             onClick={() => handleImport(normalPairs.map(p => p.item))}
             disabled={loading || categoriesLoading}
-            className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="order-first sm:order-none py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Confirmar ${normalPairs.length} ${normalPairs.length === 1 ? 'transação' : 'transações'}`}
           </button>
@@ -526,7 +528,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           <button
             onClick={() => handleImport(duplicatePairs.map(p => p.item))}
             disabled={loading || categoriesLoading}
-            className="py-2 px-4 bg-amber-500 text-white rounded text-sm font-bold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="order-first sm:order-none py-2 px-4 bg-amber-500 text-white rounded text-sm font-bold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Importar ${duplicatePairs.length} ${duplicatePairs.length === 1 ? 'duplicata' : 'duplicatas'}`}
           </button>

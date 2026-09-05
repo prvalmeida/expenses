@@ -108,8 +108,8 @@ All amounts match the single shared `BRL_AMOUNT` pattern (`1.234,56`) — never 
 
 Three entry points with deliberately different guarantees — do not collapse them into one `load(force)`:
 - `ensureCategories()` (mount) — cache, else the in-flight request, else a fetch.
-- `refreshCategories()` (`refetch`, after a mutation) — **always** issues a request started after the call, so it can never resolve with a response predating the mutation. Reusing an in-flight request here is unsafe even if that request was itself forced: `CategoryConfig`'s rename flows use `window.prompt`, and dismissing the prompt fires `focus`, so a revalidation is routinely in flight at the moment the PUT resolves. Same-tick calls (one per mounted consumer) coalesce through a microtask-queued `queuedRefresh`.
-- `revalidateCategories()` (focus/visibility) — best-effort: reuses an in-flight request and skips entirely within `REVALIDATE_INTERVAL_MS`, since `focus` and `visibilitychange` both fire on a tab return and `focus` also fires on file-picker/prompt dismissal.
+- `refreshCategories()` (`refetch`, after a mutation) — **always** issues a request started after the call, so it can never resolve with a response predating the mutation. Reusing an in-flight request here is unsafe even if that request was itself forced: `focus` fires on any return to the tab and on dismissing a file picker (both import screens), so a revalidation is routinely in flight at the moment a mutation resolves. `CategoryConfig`'s rename flow used `window.prompt` — whose dismissal also fired `focus` — and now uses an in-page dialog; the guarantee is what the rule rests on, not that one trigger. Same-tick calls (one per mounted consumer) coalesce through a microtask-queued `queuedRefresh`.
+- `revalidateCategories()` (focus/visibility) — best-effort: reuses an in-flight request and skips entirely within `REVALIDATE_INTERVAL_MS`, since `focus` and `visibilitychange` both fire on a tab return and `focus` also fires on file-picker dismissal.
 
 Every request carries a `requestId` checked against `latestRequestId` before it writes `cache` or broadcasts, and only clears `inflight` if it is still the current request — responses can settle out of order, and a superseded one must not clobber newer data. A non-OK response **throws** rather than falling back to `[]`: the success branch writes the shared cache and broadcasts, so with revalidation on every focus a single 500 would otherwise blank categories app-wide and make every expense look orphaned. For the same reason `cachedCategories()` treats an empty list as "not loaded" (`Category` is seeded on first boot), so a bad load cannot stick.
 
@@ -206,3 +206,14 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 ### Navigation
 
 `app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, or `importBill`. There is no client-side router — view switching is purely state-driven.
+
+### Responsive shell conventions
+
+Four rules the mobile layout depends on, each of which failed silently once:
+
+- **The next/font variable classes belong on `<html>`, not `<body>`.** Tailwind's `@theme` maps `--font-sans: var(--font-geist-sans)` on `:root`; if `--font-geist-sans` is only defined lower down, `--font-sans` is a reference to nothing, and any `font-family` using it is invalid at computed-value time — the declaration is *dropped* and the whole app renders in the browser's default serif. For the same reason a fallback stack must sit **inside** `var(--font-sans, Arial, …)`: a list written after the closing paren is not a fallback.
+- **Safe-area padding must be restated per breakpoint.** `pb-[max(0.75rem,env(safe-area-inset-bottom))]` is unconditional and outranks `sm:p-6`'s bottom edge, so the desktop layout silently loses its bottom padding unless a `sm:pb-[…]` follows.
+- **The mobile drawer locks `document.body` scroll and traps Tab.** The document scrolls (there is no `h-screen` + inner scroll container), so a `fixed inset-0` overlay without the lock lets a drag on the scrim scroll the page underneath; and `role="dialog" aria-modal="true"` promises focus containment, so the drawer implements it and returns focus to the hamburger on close.
+- **A duplicated control needs its `indeterminate` state on both nodes.** Rows that render twice (a `hidden md:table` table plus a `md:hidden` card list) share one `sortedExpenses` array and one selection set; `indeterminate` is a DOM property with no React prop, so it goes through a **callback ref applied to both inputs**, never a single `useRef` — otherwise a partial selection reads as "nothing selected" on whichever breakpoint the ref missed.
+
+Modal dismiss paths (Escape, scrim click) follow the same `busy` guard as the buttons: dismissing mid-request loses the user's input and strands the error in a page-level banner the dialog was covering.

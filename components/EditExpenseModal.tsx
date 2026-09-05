@@ -111,17 +111,21 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
 
   return createPortal(
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] sm:max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-6">
+        <div className="p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold">Editar Gasto</h2>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            <button
+              onClick={onClose}
+              aria-label="Fechar"
+              className="text-gray-400 hover:text-gray-600 text-2xl leading-none min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
+            >&times;</button>
           </div>
           {isInstallment && (
             <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-2 mb-4">

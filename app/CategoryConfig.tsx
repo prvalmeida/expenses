@@ -1,12 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCategories, type CategoryDoc } from '@/hooks/useCategories';
 
 type DeleteTarget =
   | { level: 'type'; kind: 'expense' | 'income'; name: string; count: number }
   | { level: 'subtype'; type: string; subtype: string; count: number };
+
+type RenameTarget =
+  | { level: 'type'; kind: 'expense' | 'income'; name: string }
+  | { level: 'subtype'; type: string; subtype: string };
+
+const currentName = (t: RenameTarget) => (t.level === 'type' ? t.name : t.subtype);
 
 export default function CategoryConfig() {
   const { categories, refetch, loading } = useCategories();
@@ -15,6 +21,8 @@ export default function CategoryConfig() {
   const [newSubtype, setNewSubtype] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [reassignTo, setReassignTo] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,29 +80,49 @@ export default function CategoryConfig() {
     if (ok) setNewSubtype(prev => ({ ...prev, [type]: '' }));
   };
 
-  const renameType = async (kind: 'expense' | 'income', oldName: string) => {
-    const newName = window.prompt(`Renomear categoria "${oldName}" para:`, oldName);
-    if (!newName || newName.trim() === oldName) return;
-    await runAction(() =>
-      fetch('/api/categories', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'renameType', kind, oldName, newName: newName.trim() }),
-      })
-    );
+  const startRename = (target: RenameTarget) => {
+    setError(null);
+    setRenameValue(currentName(target));
+    setRenameTarget(target);
   };
 
-  const renameSubtype = async (type: string, oldSub: string) => {
-    const newSub = window.prompt(`Renomear subcategoria "${oldSub}" para:`, oldSub);
-    if (!newSub || newSub.trim() === oldSub) return;
-    await runAction(() =>
+  const confirmRename = async () => {
+    if (!renameTarget) return;
+    const value = renameValue.trim();
+    if (!value || value === currentName(renameTarget)) {
+      setRenameTarget(null);
+      return;
+    }
+    const body =
+      renameTarget.level === 'type'
+        ? { action: 'renameType', kind: renameTarget.kind, oldName: renameTarget.name, newName: value }
+        : { action: 'renameSubtype', type: renameTarget.type, oldSub: renameTarget.subtype, newSub: value };
+    const ok = await runAction(() =>
       fetch('/api/categories', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'renameSubtype', type, oldSub, newSub: newSub.trim() }),
+        body: JSON.stringify(body),
       })
     );
+    if (ok) setRenameTarget(null);
   };
+
+  useEffect(() => {
+    if (!renameTarget && !deleteTarget) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || busy) return;
+      setRenameTarget(null);
+      setDeleteTarget(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [renameTarget, deleteTarget, busy]);
+
+  // Dismissing while a request is in flight loses the typed name and sends the
+  // failure to the page-level banner, which only renders with no dialog open —
+  // so both dismiss paths follow the buttons and stay disabled while busy.
+  const closeRenameDialog = () => { if (!busy) setRenameTarget(null); };
+  const closeDeleteDialog = () => { if (!busy) setDeleteTarget(null); };
 
   const attemptDeleteType = async (kind: 'expense' | 'income', name: string) => {
     setError(null);
@@ -173,7 +201,7 @@ export default function CategoryConfig() {
             {isExpense && (
               <button
                 onClick={() => toggleExpand(cat.name)}
-                className="text-gray-400 hover:text-gray-700 text-xs w-4"
+                className="text-gray-400 hover:text-gray-700 text-xs w-4 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center -my-2 sm:my-0"
                 title={isOpen ? 'Recolher' : 'Expandir'}
               >
                 {isOpen ? '▼' : '▶'}
@@ -186,16 +214,16 @@ export default function CategoryConfig() {
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button
-              onClick={() => renameType(cat.kind, cat.name)}
+              onClick={() => startRename({ level: 'type', kind: cat.kind, name: cat.name })}
               disabled={busy}
-              className="text-blue-400 hover:text-blue-600 text-xs font-bold px-2 py-1"
+              className="text-blue-400 hover:text-blue-600 text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
             >
               Renomear
             </button>
             <button
               onClick={() => attemptDeleteType(cat.kind, cat.name)}
               disabled={busy}
-              className="text-red-400 hover:text-red-600 text-xs font-bold px-2 py-1"
+              className="text-red-400 hover:text-red-600 text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
             >
               Excluir
             </button>
@@ -211,16 +239,16 @@ export default function CategoryConfig() {
                 <span className="text-xs text-gray-700">{sub}</span>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => renameSubtype(cat.name, sub)}
+                    onClick={() => startRename({ level: 'subtype', type: cat.name, subtype: sub })}
                     disabled={busy}
-                    className="text-blue-400 hover:text-blue-600 text-[11px] font-bold px-1.5"
+                    className="text-blue-400 hover:text-blue-600 text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
                   >
                     Renomear
                   </button>
                   <button
                     onClick={() => attemptDeleteSubtype(cat.name, sub)}
                     disabled={busy}
-                    className="text-red-400 hover:text-red-600 text-[11px] font-bold px-1.5"
+                    className="text-red-400 hover:text-red-600 text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
                   >
                     Excluir
                   </button>
@@ -254,7 +282,7 @@ export default function CategoryConfig() {
     <div className="max-w-2xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Categorias</h1>
 
-      {error && (
+      {error && !renameTarget && !deleteTarget && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
       )}
 
@@ -311,9 +339,12 @@ export default function CategoryConfig() {
       </div>
 
       {deleteTarget && createPortal(
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setDeleteTarget(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="p-6 space-y-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={closeDeleteDialog}>
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-4 sm:p-6 space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
               <h2 className="text-lg font-bold">
                 Excluir {deleteTarget.level === 'type' ? 'categoria' : 'subcategoria'} “
                 {deleteTarget.level === 'type' ? deleteTarget.name : deleteTarget.subtype}”
@@ -337,10 +368,15 @@ export default function CategoryConfig() {
                 </select>
               </div>
 
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+              )}
+
               <div className="flex gap-2 pt-2">
                 <button
-                  onClick={() => setDeleteTarget(null)}
-                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+                  onClick={closeDeleteDialog}
+                  disabled={busy}
+                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
@@ -360,6 +396,70 @@ export default function CategoryConfig() {
                 Excluir mesmo assim (deixar órfãos)
               </button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {renameTarget && createPortal(
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
+          onClick={closeRenameDialog}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <form
+              onSubmit={e => { e.preventDefault(); confirmRename(); }}
+              className="p-4 sm:p-6 space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+            >
+              <h2 className="text-lg font-bold">
+                Renomear {renameTarget.level === 'type' ? 'categoria' : 'subcategoria'} “
+                {currentName(renameTarget)}”
+              </h2>
+
+              {renameTarget.level === 'subtype' && (
+                <p className="text-sm text-gray-600">
+                  Em <span className="font-semibold">{renameTarget.type}</span>. Os gastos, mapeamentos e lojas
+                  que usam este nome são atualizados junto.
+                </p>
+              )}
+
+              <div>
+                <label htmlFor="rename-input" className="block text-xs font-bold text-gray-700 mb-1 uppercase">Novo nome</label>
+                <input
+                  id="rename-input"
+                  autoFocus
+                  type="text"
+                  value={renameValue}
+                  onChange={e => setRenameValue(e.target.value)}
+                  className="w-full p-2 border rounded text-sm"
+                />
+              </div>
+
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={closeRenameDialog}
+                  disabled={busy}
+                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy || !renameValue.trim() || renameValue.trim() === currentName(renameTarget)}
+                  className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+                >
+                  {busy ? 'Salvando...' : 'Renomear'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>,
         document.body
