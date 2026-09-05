@@ -32,10 +32,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    // The font variables belong on <html>: Tailwind's @theme resolves
+    // --font-sans from --font-geist-sans at :root, so declaring them any lower
+    // leaves --font-sans referencing an undefined variable and makes every
+    // font-family that uses it invalid at computed-value time.
+    <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body className="antialiased">
         {children}
       </body>
     </html>

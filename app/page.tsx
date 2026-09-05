@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AddExpense from './AddExpense';
 import AddIncome from './AddIncome';
 import DashBoard from './Dashboard';
@@ -14,6 +14,9 @@ import NavMenu, { viewTitle, type ViewId } from '@/components/NavMenu';
 export default function MainPage() {
   const [currentView, setCurrentView] = useState<ViewId>('dashboard');
   const [navOpen, setNavOpen] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const closeNavRef = useRef<HTMLButtonElement>(null);
+  const openNavRef = useRef<HTMLButtonElement>(null);
 
   // Carries the dashboard's selected month / view mode into the details view
   const [detailsMonth, setDetailsMonth] = useState<string>(() => {
@@ -51,10 +54,42 @@ export default function MainPage() {
   useEffect(() => {
     if (!navOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setNavOpen(false);
+      if (e.key === 'Escape') {
+        setNavOpen(false);
+        return;
+      }
+      // role="dialog" + aria-modal promises focus containment, so deliver it:
+      // Tab must cycle inside the drawer instead of reaching the content the
+      // overlay hides.
+      if (e.key !== 'Tab' || !drawerRef.current) return;
+      const focusables = drawerRef.current.querySelectorAll<HTMLElement>('a[href], button, [tabindex]:not([tabindex="-1"])');
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !drawerRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !drawerRef.current.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    // The drawer covers a document that scrolls, so without this a drag on the
+    // scrim scrolls the page underneath and leaves it at an unrelated offset
+    // once the drawer closes.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // aria-modal claims focus containment; at minimum move focus into the
+    // drawer so Tab does not walk straight into the content behind it.
+    closeNavRef.current?.focus();
+    const opener = openNavRef.current;
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      opener?.focus();
+    };
   }, [navOpen]);
 
   return (
@@ -72,10 +107,14 @@ export default function MainPage() {
             className="absolute inset-0 bg-black/50"
             onClick={() => setNavOpen(false)}
           />
-          <div className="absolute inset-y-0 left-0 w-64 max-w-[85vw] bg-gray-200 p-4 shadow-xl overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+          <div
+            ref={drawerRef}
+            className="absolute inset-y-0 left-0 w-64 max-w-[85vw] bg-gray-200 p-4 shadow-xl overflow-y-auto pb-[env(safe-area-inset-bottom)]"
+          >
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-lg font-bold text-gray-800">Financeiro</h2>
               <button
+                ref={closeNavRef}
                 onClick={() => setNavOpen(false)}
                 aria-label="Fechar menu"
                 className="text-gray-500 hover:text-gray-800 text-2xl leading-none px-3 py-1"
@@ -92,6 +131,7 @@ export default function MainPage() {
         {/* Top bar (below md) */}
         <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-gray-200 border-b border-gray-300 px-3 py-2">
           <button
+            ref={openNavRef}
             onClick={() => setNavOpen(true)}
             aria-label="Abrir menu"
             aria-expanded={navOpen}
@@ -105,7 +145,9 @@ export default function MainPage() {
         </header>
 
         {/* Main Content */}
-        <div className="flex-1 min-w-0 p-3 sm:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        {/* The safe-area bottom padding has to be restated per breakpoint: an
+            unconditional arbitrary pb-* would override sm:p-6's bottom edge. */}
+        <div className="flex-1 min-w-0 p-3 sm:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]">
           {currentView === 'dashboard' && <DashBoard onOpenDetails={handleOpenDetails} />}
 
           {currentView === 'dashboardDetails' && (

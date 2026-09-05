@@ -31,7 +31,11 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  /* The fallback stack must live *inside* var(): a list after the closing
+     paren is not a fallback, so if --font-sans ever fails to resolve the whole
+     declaration is dropped and the page renders in the browser's default
+     serif rather than falling back to Arial. */
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
 }
 
 /* Safari iOS zooms into any focused field whose font-size is under 16px, and

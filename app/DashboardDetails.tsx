@@ -1,7 +1,7 @@
 'use client';
 
 import { Expense } from "@/types";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import EditExpenseModal from "../components/EditExpenseModal";
 import { useCategories } from "@/hooks/useCategories";
 
@@ -71,7 +71,6 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [typeFilter, setTypeFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingOriginalDate, setEditingOriginalDate] = useState<string | undefined>();
@@ -167,12 +166,16 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
     }
   };
 
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate =
-        selectedIds.size > 0 && selectedIds.size < visibleExpenses.length;
-    }
-  }, [selectedIds, visibleExpenses]);
+  // A callback ref rather than a single useRef: the md+ header checkbox and the
+  // mobile "Selecionar todos" checkbox are two separate nodes, and a partial
+  // selection has to read as partial on both.
+  const someVisibleSelected = selectedIds.size > 0 && selectedIds.size < visibleExpenses.length;
+  const selectAllRef = useCallback(
+    (el: HTMLInputElement | null) => {
+      if (el) el.indeterminate = someVisibleSelected;
+    },
+    [someVisibleSelected]
+  );
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
@@ -632,6 +635,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
             <li className="flex items-center gap-3 px-3 py-2 bg-gray-50">
               <input
                 type="checkbox"
+                ref={selectAllRef}
                 className="h-4 w-4"
                 checked={allVisibleSelected}
                 onChange={(e) => selectAllVisible(e.target.checked)}

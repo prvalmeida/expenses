@@ -206,3 +206,14 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 ### Navigation
 
 `app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, or `importBill`. There is no client-side router — view switching is purely state-driven.
+
+### Responsive shell conventions
+
+Four rules the mobile layout depends on, each of which failed silently once:
+
+- **The next/font variable classes belong on `<html>`, not `<body>`.** Tailwind's `@theme` maps `--font-sans: var(--font-geist-sans)` on `:root`; if `--font-geist-sans` is only defined lower down, `--font-sans` is a reference to nothing, and any `font-family` using it is invalid at computed-value time — the declaration is *dropped* and the whole app renders in the browser's default serif. For the same reason a fallback stack must sit **inside** `var(--font-sans, Arial, …)`: a list written after the closing paren is not a fallback.
+- **Safe-area padding must be restated per breakpoint.** `pb-[max(0.75rem,env(safe-area-inset-bottom))]` is unconditional and outranks `sm:p-6`'s bottom edge, so the desktop layout silently loses its bottom padding unless a `sm:pb-[…]` follows.
+- **The mobile drawer locks `document.body` scroll and traps Tab.** The document scrolls (there is no `h-screen` + inner scroll container), so a `fixed inset-0` overlay without the lock lets a drag on the scrim scroll the page underneath; and `role="dialog" aria-modal="true"` promises focus containment, so the drawer implements it and returns focus to the hamburger on close.
+- **A duplicated control needs its `indeterminate` state on both nodes.** Rows that render twice (a `hidden md:table` table plus a `md:hidden` card list) share one `sortedExpenses` array and one selection set; `indeterminate` is a DOM property with no React prop, so it goes through a **callback ref applied to both inputs**, never a single `useRef` — otherwise a partial selection reads as "nothing selected" on whichever breakpoint the ref missed.
+
+Modal dismiss paths (Escape, scrim click) follow the same `busy` guard as the buttons: dismissing mid-request loses the user's input and strands the error in a page-level banner the dialog was covering.

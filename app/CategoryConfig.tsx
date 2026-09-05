@@ -110,13 +110,19 @@ export default function CategoryConfig() {
   useEffect(() => {
     if (!renameTarget && !deleteTarget) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || busy) return;
       setRenameTarget(null);
       setDeleteTarget(null);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [renameTarget, deleteTarget]);
+  }, [renameTarget, deleteTarget, busy]);
+
+  // Dismissing while a request is in flight loses the typed name and sends the
+  // failure to the page-level banner, which only renders with no dialog open —
+  // so both dismiss paths follow the buttons and stay disabled while busy.
+  const closeRenameDialog = () => { if (!busy) setRenameTarget(null); };
+  const closeDeleteDialog = () => { if (!busy) setDeleteTarget(null); };
 
   const attemptDeleteType = async (kind: 'expense' | 'income', name: string) => {
     setError(null);
@@ -333,7 +339,7 @@ export default function CategoryConfig() {
       </div>
 
       {deleteTarget && createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={() => setDeleteTarget(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={closeDeleteDialog}>
           <div
             className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
@@ -368,8 +374,9 @@ export default function CategoryConfig() {
 
               <div className="flex gap-2 pt-2">
                 <button
-                  onClick={() => setDeleteTarget(null)}
-                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+                  onClick={closeDeleteDialog}
+                  disabled={busy}
+                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
@@ -397,7 +404,7 @@ export default function CategoryConfig() {
       {renameTarget && createPortal(
         <div
           className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
-          onClick={() => setRenameTarget(null)}
+          onClick={closeRenameDialog}
         >
           <div
             className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
@@ -438,8 +445,9 @@ export default function CategoryConfig() {
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setRenameTarget(null)}
-                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+                  onClick={closeRenameDialog}
+                  disabled={busy}
+                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
