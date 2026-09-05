@@ -19,11 +19,12 @@
   }
 }
 
-html,
-body {
+html {
   /* Safety net: a single overflowing element must not scroll the whole page
      sideways on a phone. Horizontal scrolling belongs to the wrappers that
-     opt into it (overflow-x-auto), not to the document. */
+     opt into it (overflow-x-auto), not to the document. Kept off `body` on
+     purpose: overflow on both makes body the scroll container and breaks
+     `position: sticky` on the import screens' action bars. */
   overflow-x: hidden;
 }
 

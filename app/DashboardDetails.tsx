@@ -601,7 +601,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                   <div className="flex items-center justify-center gap-1">
                     <button
                       onClick={() => startEdit(expense)}
-                      className="text-blue-400 hover:text-blue-600 transition-colors p-1"
+                      className="text-blue-400 hover:text-blue-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
                       title="Editar despesa"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -610,7 +610,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                     </button>
                     <button
                       onClick={() => requestDelete(expense)}
-                      className="text-red-400 hover:text-red-600 transition-colors p-1"
+                      className="text-red-400 hover:text-red-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
                       title={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -671,7 +671,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <button
                   onClick={() => startEdit(expense)}
-                  className="text-blue-400 hover:text-blue-600 transition-colors p-2"
+                  className="text-blue-400 hover:text-blue-600 transition-colors p-2 min-h-11 min-w-11 inline-flex items-center justify-center"
                   aria-label="Editar despesa"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -680,7 +680,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                 </button>
                 <button
                   onClick={() => requestDelete(expense)}
-                  className="text-red-400 hover:text-red-600 transition-colors p-2"
+                  className="text-red-400 hover:text-red-600 transition-colors p-2 min-h-11 min-w-11 inline-flex items-center justify-center"
                   aria-label={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

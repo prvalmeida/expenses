@@ -341,7 +341,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
       allResolved && !categoriesLoading && !!paymentType && (paymentType !== 'credit' || !!cardBrand);
 
     return (
-      <div className="max-w-2xl mx-auto p-4">
+      <div className="max-w-2xl mx-auto p-3 sm:p-4">
         <h2 className="text-xl font-bold mb-2">Revisar Itens</h2>
         <div className="text-sm text-gray-600 mb-4 space-y-1">
           <p><span className="font-semibold">Estabelecimento:</span> {parsed.store.name}</p>
@@ -534,7 +534,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           </p>
         )}
 
-        <div className="flex gap-3">
+        <div className="sticky bottom-0 -mx-3 sm:-mx-4 px-3 sm:px-4 py-3 bg-white border-t border-gray-200 flex gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={() => setStep(1)}
             className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"

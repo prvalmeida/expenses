@@ -173,7 +173,7 @@ export default function CategoryConfig() {
             {isExpense && (
               <button
                 onClick={() => toggleExpand(cat.name)}
-                className="text-gray-400 hover:text-gray-700 text-xs w-4"
+                className="text-gray-400 hover:text-gray-700 text-xs w-4 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center -my-2 sm:my-0"
                 title={isOpen ? 'Recolher' : 'Expandir'}
               >
                 {isOpen ? '▼' : '▶'}
@@ -188,14 +188,14 @@ export default function CategoryConfig() {
             <button
               onClick={() => renameType(cat.kind, cat.name)}
               disabled={busy}
-              className="text-blue-400 hover:text-blue-600 text-xs font-bold px-2 py-1"
+              className="text-blue-400 hover:text-blue-600 text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
             >
               Renomear
             </button>
             <button
               onClick={() => attemptDeleteType(cat.kind, cat.name)}
               disabled={busy}
-              className="text-red-400 hover:text-red-600 text-xs font-bold px-2 py-1"
+              className="text-red-400 hover:text-red-600 text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
             >
               Excluir
             </button>
@@ -213,14 +213,14 @@ export default function CategoryConfig() {
                   <button
                     onClick={() => renameSubtype(cat.name, sub)}
                     disabled={busy}
-                    className="text-blue-400 hover:text-blue-600 text-[11px] font-bold px-1.5"
+                    className="text-blue-400 hover:text-blue-600 text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
                   >
                     Renomear
                   </button>
                   <button
                     onClick={() => attemptDeleteSubtype(cat.name, sub)}
                     disabled={busy}
-                    className="text-red-400 hover:text-red-600 text-[11px] font-bold px-1.5"
+                    className="text-red-400 hover:text-red-600 text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
                   >
                     Excluir
                   </button>
@@ -311,9 +311,12 @@ export default function CategoryConfig() {
       </div>
 
       {deleteTarget && createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDeleteTarget(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="p-6 space-y-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={() => setDeleteTarget(null)}>
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-4 sm:p-6 space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
               <h2 className="text-lg font-bold">
                 Excluir {deleteTarget.level === 'type' ? 'categoria' : 'subcategoria'} “
                 {deleteTarget.level === 'type' ? deleteTarget.name : deleteTarget.subtype}”

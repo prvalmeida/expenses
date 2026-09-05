@@ -177,7 +177,7 @@ export default function DashBoard({ onOpenDetails }: Props) {
             </div>
             <button
               onClick={() => onOpenDetails(selectedMonth, viewMode)}
-              className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50"
+              className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
               title="Ver detalhes"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -232,7 +232,7 @@ export default function DashBoard({ onOpenDetails }: Props) {
                   </span>
                   <button
                     onClick={() => income._id && handleDeleteIncome(income._id)}
-                    className="text-red-400 hover:text-red-600 transition-colors p-1"
+                    className="text-red-400 hover:text-red-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
                     title="Excluir receita"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
