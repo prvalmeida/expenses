@@ -139,19 +139,19 @@ export default function DashBoard({ onOpenDetails }: Props) {
       </div>
 
       {/* Totals side by side (compact) */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className={`p-4 rounded-xl border-l-4 shadow-sm bg-white ${viewMode === 'purchase' ? 'border-blue-500' : 'border-green-500'}`}>
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
             {viewMode === 'purchase' ? 'Gastos' : 'A Pagar'}
           </p>
-          <p className="text-xl font-black mt-1 text-gray-900">
+          <p className="text-lg sm:text-xl font-black mt-1 text-gray-900">
             R$ {totalThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </p>
         </div>
 
         <div className="p-4 rounded-xl border-l-4 border-purple-500 shadow-sm bg-white">
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Receitas</p>
-          <p className="text-xl font-black mt-1 text-gray-900">
+          <p className="text-lg sm:text-xl font-black mt-1 text-gray-900">
             R$ {totalIncomeThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </p>
         </div>
@@ -159,7 +159,7 @@ export default function DashBoard({ onOpenDetails }: Props) {
         {viewMode === 'payment' && (
           <div className="p-4 rounded-xl border-l-4 border-yellow-500 shadow-sm bg-white">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Poupança</p>
-            <p className={`text-xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            <p className={`text-lg sm:text-xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               R$ {(totalIncomeThisMonth - totalThisMonth).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
           </div>
