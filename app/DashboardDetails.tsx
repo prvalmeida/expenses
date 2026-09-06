@@ -1,7 +1,7 @@
 'use client';
 
 import { Expense } from "@/types";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import EditExpenseModal from "../components/EditExpenseModal";
 import { useCategories } from "@/hooks/useCategories";
 
@@ -21,6 +21,42 @@ function prevMonth(ym: string) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+type BarRowProps = {
+  label: string;
+  bar: ReactNode;
+  values: ReactNode;
+  action?: ReactNode;
+  onClick?: () => void;
+  active?: boolean;
+};
+
+/**
+ * One label + bar + value(s) row. The old fixed widths (w-32 label plus one or
+ * two w-24 values) overflow a phone before the bar gets any space at all, so
+ * below sm the row becomes two lines: label and values on top, bar underneath.
+ */
+function BarRow({ label, bar, values, action, onClick, active }: BarRowProps) {
+  const className = `w-full grid items-center gap-x-3 gap-y-2 p-2 rounded text-left grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[8rem_minmax(0,1fr)_auto] ${
+    active ? 'bg-blue-50' : onClick ? 'hover:bg-gray-50' : ''
+  }`;
+
+  const content = (
+    <>
+      <div className="truncate text-sm font-medium text-gray-700" title={label}>{label}</div>
+      <div className="order-last col-span-2 sm:order-none sm:col-span-1">{bar}</div>
+      <div className="flex items-baseline justify-end gap-3">
+        {values}
+        {action}
+      </div>
+    </>
+  );
+
+  if (onClick) {
+    return <button onClick={onClick} className={className}>{content}</button>;
+  }
+  return <div className={className}>{content}</div>;
+}
+
 export default function DashboardDetails({ initialMonth, initialViewMode, onBack }: Props) {
   const { expenseTypes, isValidType, isValidPair } = useCategories();
   const isOrphan = useCallback(
@@ -35,7 +71,6 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [typeFilter, setTypeFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingOriginalDate, setEditingOriginalDate] = useState<string | undefined>();
@@ -73,6 +108,55 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
     [allExpenses, dateOf, inMonth, selectedMonth]
   );
 
+  const visibleExpenses = useMemo(
+    () => filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter),
+    [filteredExpenses, typeFilter]
+  );
+
+  // The md+ table and the mobile card list render from this one array, so both
+  // show the same rows in the same order with the same selection state.
+  const sortedExpenses = useMemo(() => {
+    const dir = sortDirection === 'asc' ? 1 : -1;
+    return [...visibleExpenses].sort((a, b) => {
+      if (sortColumn === 'date') {
+        const dateA = viewMode === 'purchase' ? a.date : a.effectiveDate;
+        const dateB = viewMode === 'purchase' ? b.date : b.effectiveDate;
+        return (dateA < dateB ? -1 : dateA > dateB ? 1 : 0) * dir;
+      }
+      if (sortColumn === 'name') return a.name.localeCompare(b.name) * dir;
+      if (sortColumn === 'type') return a.type.localeCompare(b.type) * dir;
+      if (sortColumn === 'paymentType') {
+        const cmp = a.paymentType.localeCompare(b.paymentType);
+        if (cmp !== 0) return cmp * dir;
+        const aCard = ('cardBrand' in a ? (a as { cardBrand?: string }).cardBrand : '') ?? '';
+        const bCard = ('cardBrand' in b ? (b as { cardBrand?: string }).cardBrand : '') ?? '';
+        return aCard.localeCompare(bCard) * dir;
+      }
+      return (a.value - b.value) * dir;
+    });
+  }, [visibleExpenses, sortColumn, sortDirection, viewMode]);
+
+  const allVisibleSelected =
+    visibleExpenses.length > 0 && visibleExpenses.every(e => selectedIds.has(e._id!));
+
+  const selectAllVisible = (checked: boolean) => {
+    setSelectedIds(checked ? new Set(visibleExpenses.map(e => e._id!)) : new Set());
+  };
+
+  const toggleSelected = (id: string, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const displayDate = useCallback(
+    (e: Expense) => new Date(`${dateOf(e)}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' }),
+    [dateOf]
+  );
+
   const handleSort = (column: 'date' | 'name' | 'type' | 'value' | 'paymentType') => {
     if (column === sortColumn) {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -82,13 +166,16 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
     }
   };
 
-  useEffect(() => {
-    const visible = filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter);
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate =
-        selectedIds.size > 0 && selectedIds.size < visible.length;
-    }
-  }, [selectedIds, filteredExpenses, typeFilter]);
+  // A callback ref rather than a single useRef: the md+ header checkbox and the
+  // mobile "Selecionar todos" checkbox are two separate nodes, and a partial
+  // selection has to read as partial on both.
+  const someVisibleSelected = selectedIds.size > 0 && selectedIds.size < visibleExpenses.length;
+  const selectAllRef = useCallback(
+    (el: HTMLInputElement | null) => {
+      if (el) el.indeterminate = someVisibleSelected;
+    },
+    [someVisibleSelected]
+  );
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
@@ -130,6 +217,29 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
     });
     setEditingExpense(null);
     setEditingOriginalDate(undefined);
+  };
+
+  // Opening the editor needs the installment group's first date, so both the
+  // table row and the mobile card go through this instead of repeating it.
+  const startEdit = (expense: Expense) => {
+    setEditingExpense(expense);
+    if (expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1 && expense.transactionId) {
+      const first = allExpenses
+        .filter(e => e.transactionId === expense.transactionId)
+        .sort((a, b) => {
+          const aI = a.paymentType === 'credit' ? a.installment : 0;
+          const bI = b.paymentType === 'credit' ? b.installment : 0;
+          return aI - bI;
+        })[0];
+      setEditingOriginalDate(first?.date);
+    } else {
+      setEditingOriginalDate(undefined);
+    }
+  };
+
+  const requestDelete = (expense: Expense) => {
+    if (!expense._id) return;
+    handleDelete(expense._id, (expense.totalInstallments ?? 0) > 1);
   };
 
   const handleDelete = async (id: string, hasMultiple: boolean) => {
@@ -237,7 +347,7 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
             </button>
           </div>
           {analysisMode === 'compare' && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <input type="month" value={monthA} onChange={e => setMonthA(e.target.value)} className="p-1 border rounded text-sm" />
               <span className="text-sm">vs</span>
               <input type="month" value={monthB} onChange={e => setMonthB(e.target.value)} className="p-1 border rounded text-sm" />
@@ -259,17 +369,18 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                     const w = Math.round((value / max) * 100);
                     const active = effectiveType === type;
                     return (
-                      <button
+                      <BarRow
                         key={type}
+                        label={type}
+                        active={active}
                         onClick={() => setSelectedType(type)}
-                        className={`w-full flex items-center gap-3 p-2 rounded text-left ${active ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                      >
-                        <div className="w-32 text-sm font-medium text-gray-700">{type}</div>
-                        <div className="flex-1 bg-gray-100 rounded h-4 overflow-hidden">
-                          <div style={{ width: `${w}%` }} className="h-4 bg-blue-500" />
-                        </div>
-                        <div className="w-24 text-right text-sm font-black text-gray-900">R$ {fmt(value)}</div>
-                      </button>
+                        bar={
+                          <div className="bg-gray-100 rounded h-4 overflow-hidden">
+                            <div style={{ width: `${w}%` }} className="h-4 bg-blue-500" />
+                          </div>
+                        }
+                        values={<span className="text-sm font-black text-gray-900 tabular-nums">R$ {fmt(value)}</span>}
+                      />
                     );
                   });
                 })()}
@@ -288,13 +399,16 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                   return list.map(([sub, val]) => {
                     const w = Math.round((val / max) * 100);
                     return (
-                      <div key={sub} className="w-full flex items-center gap-3 p-2 rounded text-left">
-                        <div className="w-32 text-sm font-medium text-gray-700">{sub}</div>
-                        <div className="flex-1 bg-gray-100 rounded h-4 overflow-hidden">
-                          <div style={{ width: `${w}%` }} className="h-4 bg-green-500" />
-                        </div>
-                        <div className="w-24 text-right text-sm font-black text-gray-900">R$ {fmt(val)}</div>
-                      </div>
+                      <BarRow
+                        key={sub}
+                        label={sub}
+                        bar={
+                          <div className="bg-gray-100 rounded h-4 overflow-hidden">
+                            <div style={{ width: `${w}%` }} className="h-4 bg-green-500" />
+                          </div>
+                        }
+                        values={<span className="text-sm font-black text-gray-900 tabular-nums">R$ {fmt(val)}</span>}
+                      />
                     );
                   });
                 })()}
@@ -316,16 +430,25 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                     const a = ta.get(type) ?? 0;
                     const b = tb.get(type) ?? 0;
                     return (
-                      <div key={type} className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-50 text-left">
-                        <div className="w-32 text-sm font-medium text-gray-700">{type}</div>
-                        <div className="flex-1 bg-gray-100 rounded h-4 overflow-hidden relative">
-                          <div style={{ width: `${Math.round((a / max) * 100)}%` }} className="h-4 bg-blue-500 absolute left-0 top-0" />
-                          <div style={{ width: `${Math.round((b / max) * 100)}%` }} className="h-4 bg-green-500 absolute left-0 top-0 opacity-60" />
-                        </div>
-                        <div className="w-24 text-right text-xs font-black text-blue-600">{fmt(a)}</div>
-                        <div className="w-24 text-right text-xs font-black text-green-600">{fmt(b)}</div>
-                        <button onClick={() => setSelectedType(type)} className="text-xs text-indigo-600">Detalhar</button>
-                      </div>
+                      <BarRow
+                        key={type}
+                        label={type}
+                        bar={
+                          <div className="bg-gray-100 rounded h-4 overflow-hidden relative">
+                            <div style={{ width: `${Math.round((a / max) * 100)}%` }} className="h-4 bg-blue-500 absolute left-0 top-0" />
+                            <div style={{ width: `${Math.round((b / max) * 100)}%` }} className="h-4 bg-green-500 absolute left-0 top-0 opacity-60" />
+                          </div>
+                        }
+                        values={
+                          <>
+                            <span className="text-xs font-black text-blue-600 tabular-nums">{fmt(a)}</span>
+                            <span className="text-xs font-black text-green-600 tabular-nums">{fmt(b)}</span>
+                          </>
+                        }
+                        action={
+                          <button onClick={() => setSelectedType(type)} className="text-xs text-indigo-600 px-2 py-1">Detalhar</button>
+                        }
+                      />
                     );
                   });
                 })()}
@@ -350,15 +473,22 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                       const va = sa.get(sub) ?? 0;
                       const vb = sb.get(sub) ?? 0;
                       return (
-                        <div key={sub} className="w-full flex items-center gap-3 p-2 rounded text-left">
-                          <div className="w-32 text-sm font-medium text-gray-700">{sub}</div>
-                          <div className="flex-1 bg-gray-100 rounded h-4 overflow-hidden relative">
-                            <div style={{ width: `${Math.round((va / max) * 100)}%` }} className="h-4 bg-blue-500 absolute left-0 top-0" />
-                            <div style={{ width: `${Math.round((vb / max) * 100)}%` }} className="h-4 bg-green-500 absolute left-0 top-0 opacity-60" />
-                          </div>
-                          <div className="w-24 text-right text-xs font-black text-blue-600">{fmt(va)}</div>
-                          <div className="w-24 text-right text-xs font-black text-green-600">{fmt(vb)}</div>
-                        </div>
+                        <BarRow
+                          key={sub}
+                          label={sub}
+                          bar={
+                            <div className="bg-gray-100 rounded h-4 overflow-hidden relative">
+                              <div style={{ width: `${Math.round((va / max) * 100)}%` }} className="h-4 bg-blue-500 absolute left-0 top-0" />
+                              <div style={{ width: `${Math.round((vb / max) * 100)}%` }} className="h-4 bg-green-500 absolute left-0 top-0 opacity-60" />
+                            </div>
+                          }
+                          values={
+                            <>
+                              <span className="text-xs font-black text-blue-600 tabular-nums">{fmt(va)}</span>
+                              <span className="text-xs font-black text-green-600 tabular-nums">{fmt(vb)}</span>
+                            </>
+                          }
+                        />
                       );
                     });
                   })()}
@@ -370,13 +500,13 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
       </div>
 
       {/* Full expense table */}
-      <div className="bg-white shadow ring-1 ring-black ring-opacity-5 rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-wrap">
+      <div className="bg-white shadow ring-1 ring-black/5 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
           <label className="text-xs font-bold text-gray-700 uppercase whitespace-nowrap">Filtrar por Categoria</label>
           <select
             value={typeFilter}
             onChange={(e) => { setTypeFilter(e.target.value); setSelectedIds(new Set()); }}
-            className="rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+            className="w-full sm:w-auto rounded-md border-gray-300 shadow-sm text-sm p-2 border"
           >
             <option value="">Todos os Tipos</option>
             {[...expenseTypes].sort().map((type) => (
@@ -386,27 +516,21 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
           {selectedIds.size > 0 && (
             <button
               onClick={handleBulkDelete}
-              className="ml-auto bg-red-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-red-700"
+              className="w-full sm:w-auto sm:ml-auto bg-red-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-red-700"
             >
               Excluir selecionados ({selectedIds.size})
             </button>
           )}
         </div>
-        <table className="min-w-full divide-y divide-gray-300">
+        <table className="hidden md:table min-w-full divide-y divide-gray-300">
           <thead className="bg-gray-50">
             <tr>
               <th className="py-3 px-3 w-10 text-center">
                 <input
                   type="checkbox"
                   ref={selectAllRef}
-                  checked={(() => {
-                    const visible = filteredExpenses.filter(e => typeFilter === '' || e.type === typeFilter);
-                    return visible.length > 0 && visible.every(e => selectedIds.has(e._id!));
-                  })()}
-                  onChange={(e) => {
-                    const visible = filteredExpenses.filter(exp => typeFilter === '' || exp.type === typeFilter);
-                    setSelectedIds(e.target.checked ? new Set(visible.map(exp => exp._id!)) : new Set());
-                  }}
+                  checked={allVisibleSelected}
+                  onChange={(e) => selectAllVisible(e.target.checked)}
                 />
               </th>
               <th
@@ -443,45 +567,17 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {filteredExpenses
-              .filter((expense) => typeFilter === '' || expense.type === typeFilter)
-              .sort((a, b) => {
-                const dir = sortDirection === 'asc' ? 1 : -1;
-                if (sortColumn === 'date') {
-                  const dateA = viewMode === 'purchase' ? a.date : a.effectiveDate;
-                  const dateB = viewMode === 'purchase' ? b.date : b.effectiveDate;
-                  return (dateA < dateB ? -1 : dateA > dateB ? 1 : 0) * dir;
-                }
-                if (sortColumn === 'name') return a.name.localeCompare(b.name) * dir;
-                if (sortColumn === 'type') return a.type.localeCompare(b.type) * dir;
-                if (sortColumn === 'paymentType') {
-                  const cmp = a.paymentType.localeCompare(b.paymentType);
-                  if (cmp !== 0) return cmp * dir;
-                  const aCard = ('cardBrand' in a ? (a as { cardBrand?: string }).cardBrand : '') ?? '';
-                  const bCard = ('cardBrand' in b ? (b as { cardBrand?: string }).cardBrand : '') ?? '';
-                  return aCard.localeCompare(bCard) * dir;
-                }
-                return (a.value - b.value) * dir;
-              })
-              .map((expense) => (
+            {sortedExpenses.map((expense) => (
               <tr key={expense._id} className="hover:bg-gray-50 transition-colors">
                 <td className="py-4 px-3 text-center">
                   <input
                     type="checkbox"
                     checked={selectedIds.has(expense._id!)}
-                    onChange={(e) => {
-                      setSelectedIds(prev => {
-                        const next = new Set(prev);
-                        if (e.target.checked) next.add(expense._id!);
-                        else next.delete(expense._id!);
-                        return next;
-                      });
-                    }}
+                    onChange={(e) => toggleSelected(expense._id!, e.target.checked)}
                   />
                 </td>
                 <td className="whitespace-nowrap py-4 px-4 text-sm text-gray-600 font-medium">
-                  {new Date(`${viewMode === 'purchase' ? expense.date : expense.effectiveDate}T12:00:00Z`)
-                    .toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                  {displayDate(expense)}
                 </td>
                 <td className="px-3 py-4 text-sm text-gray-900 font-semibold">{expense.name}</td>
                 <td className="px-3 py-4">
@@ -507,22 +603,8 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                 <td className="px-3 py-4 text-center">
                   <div className="flex items-center justify-center gap-1">
                     <button
-                      onClick={() => {
-                        setEditingExpense(expense);
-                        if (expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1 && expense.transactionId) {
-                          const first = allExpenses
-                            .filter(e => e.transactionId === expense.transactionId)
-                            .sort((a, b) => {
-                              const aI = a.paymentType === 'credit' ? a.installment : 0;
-                              const bI = b.paymentType === 'credit' ? b.installment : 0;
-                              return aI - bI;
-                            })[0];
-                          setEditingOriginalDate(first?.date);
-                        } else {
-                          setEditingOriginalDate(undefined);
-                        }
-                      }}
-                      className="text-blue-400 hover:text-blue-600 transition-colors p-1"
+                      onClick={() => startEdit(expense)}
+                      className="text-blue-400 hover:text-blue-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
                       title="Editar despesa"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -530,13 +612,8 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
                       </svg>
                     </button>
                     <button
-                      onClick={() => {
-                        if (expense._id) {
-                          const isInstallment = (expense.totalInstallments ?? 0) > 1;
-                          handleDelete(expense._id, isInstallment);
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-600 transition-colors p-1"
+                      onClick={() => requestDelete(expense)}
+                      className="text-red-400 hover:text-red-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
                       title={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -549,7 +626,76 @@ export default function DashboardDetails({ initialMonth, initialViewMode, onBack
             ))}
           </tbody>
         </table>
-        {filteredExpenses.length === 0 && (
+
+        {/* Below md the same rows render as cards: seven columns with badges
+            and two action buttons cannot be read on a phone, and horizontal
+            scrolling would not fix it. */}
+        <ul className="md:hidden divide-y divide-gray-200">
+          {sortedExpenses.length > 0 && (
+            <li className="flex items-center gap-3 px-3 py-2 bg-gray-50">
+              <input
+                type="checkbox"
+                ref={selectAllRef}
+                className="h-4 w-4"
+                checked={allVisibleSelected}
+                onChange={(e) => selectAllVisible(e.target.checked)}
+              />
+              <span className="text-xs font-bold text-gray-500 uppercase">Selecionar todos</span>
+            </li>
+          )}
+          {sortedExpenses.map((expense) => (
+            <li key={expense._id} className="flex gap-3 p-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 shrink-0"
+                checked={selectedIds.has(expense._id!)}
+                onChange={(e) => toggleSelected(expense._id!, e.target.checked)}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold text-gray-900 break-words">{expense.name}</span>
+                  <span className="text-sm font-black text-gray-900 tabular-nums shrink-0">R$ {fmt(expense.value)}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${isOrphan(expense) ? 'text-amber-800 bg-amber-100' : 'text-blue-700 bg-blue-50'}`}>
+                    {isOrphan(expense) && <span title="Categoria ou subcategoria inexistente — edite para corrigir">⚠ </span>}
+                    {expense.type}
+                  </span>
+                  {expense.subtype && (
+                    <span className="text-[10px] text-gray-400 font-bold uppercase">{expense.subtype}</span>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {displayDate(expense)} · <span className="capitalize">{expense.paymentType}</span>
+                  {expense.paymentType === 'credit' && (
+                    <span className="text-blue-500 font-bold"> · {expense.cardBrand} ({expense.installment}/{expense.totalInstallments})</span>
+                  )}
+                </p>
+              </div>
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <button
+                  onClick={() => startEdit(expense)}
+                  className="text-blue-400 hover:text-blue-600 transition-colors p-2 min-h-11 min-w-11 inline-flex items-center justify-center"
+                  aria-label="Editar despesa"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => requestDelete(expense)}
+                  className="text-red-400 hover:text-red-600 transition-colors p-2 min-h-11 min-w-11 inline-flex items-center justify-center"
+                  aria-label={expense.totalInstallments && expense.totalInstallments > 1 ? "Excluir parcelas" : "Excluir despesa"}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+        {visibleExpenses.length === 0 && (
           <div className="p-10 text-center text-gray-400 text-sm">Nenhum gasto encontrado.</div>
         )}
       </div>
