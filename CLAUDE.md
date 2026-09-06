@@ -156,6 +156,14 @@ Query schemas use `z.coerce` because every query value arrives as a string; JSON
 
 Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: wire-only request types (`ConfirmedBillItem`, `NewBillMapping`, `ConfirmedReceiptItem`) are `z.infer`red from their schema, while types describing DB documents (`Expense`, `Income`) stay hand-written and the schema carries a `satisfies z.ZodType<…>` assertion. `ParsedBillItem`/`ParsedReceiptItem` are *response* shapes with no schema and stay hand-written.
 
+**Telegram/Hermes CLI helpers (`scripts/telegram-*.ts`, shared `scripts/lib/cliEnv.ts`):** the bridge scripts are thin `/api/v1` clients driven by an assistant, so their failures must be legible to it — three rules, each of which failed silently once:
+
+- **Flag parsing goes through `parseFlags`, never `argv[++i]`.** A value flag at the end of argv resolved to `undefined`, which made `--category` print the whole category list as if no filter had been asked for, and `--api-key` overwrite a valid `.env.local` key with nothing. `parseFlags` throws `CliArgsError` (exit code 2) for a missing or empty value; unknown tokens stay ignored because the caller is an assistant that may pass extra context.
+- **`.env.local` values are unquoted by `readDotEnvLocal`.** `API_KEY="abc"` is valid dotenv, and sending the quotes in `x-api-key` 401s with no indication why.
+- **Errors print what the API said, not the status alone.** `readBody` + `describeApiError` surface the v1 envelope's `code`/`message`/`details`, so a 401 distinguishes a wrong key from an unset server-side `API_KEY`. A 200 whose body is not the expected shape is reported as a probable `EXPENSES_API_BASE_URL` misconfiguration rather than being cast and crashing on `.filter`.
+
+`telegram:categories` numbers its output (`N) nome`) and therefore accepts the printed index as well as the name; a category with **no** subtypes exits non-zero with a message, since it cannot satisfy the mandatory `subtype` field and an empty stdout is indistinguishable from success. `docs/telegram-hermes-bridge.md` carries the standing instruction the bridge is driven by — a new command that is not listed there will never be invoked.
+
 **API contract (`docs/API.md`, `public/openapi.yaml`):** the YAML is **generated** from the Zod schemas by `npm run gen:openapi` (`scripts/gen-openapi.ts`, Zod 4's native JSON-Schema export — no `zod-to-openapi` dependency). Never hand-edit it; `npm run gen:openapi -- --check` fails when it is stale.
 
 **API tests (`bruno/`, `npm run test:api`):** a Bruno collection of `.bru` files versioned alongside the routes. It covers what unit tests cannot see because the behaviour spans requests: installment expansion, the credit→non-credit `$unset`, `VALIDATION_FAILED` vs `INVALID_CATEGORY`. Three rules:
@@ -183,6 +191,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 - `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt,support}.ts`
 - `lib/services/` — `expenseService` (build/create/list/update/delete), `incomeService`, `billService` (parse + import), `receiptService` (single source of truth — do not re-inline into routes)
 - `scripts/gen-openapi.ts` — generates `public/openapi.yaml` from the Zod schemas
+- `scripts/telegram-record-expense.ts` (`npm run telegram:record`) and `scripts/telegram-categories.ts` (`npm run telegram:categories`) — the Hermes/Telegram CLI bridge; `scripts/lib/cliEnv.ts` holds their shared dotenv reading, flag parsing and error formatting (single source of truth — do not re-inline)
 - `bruno/` — the API test collection (`npm run test:api`); `bruno/.env` and `bruno/fixtures/` are gitignored
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
