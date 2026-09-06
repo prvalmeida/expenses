@@ -77,6 +77,19 @@ Or preview without writing:
 npm run telegram:record -- --dry-run --text "nome: almoço; valor: 42,90; categoria: comida; subcategoria: Restaurante; pagamento: pix"
 ```
 
+Para descobrir as categorias e subcategorias disponíveis antes de gravar:
+
+```bash
+npm run telegram:categories                       # lista as categorias de despesa
+npm run telegram:categories -- --category comida  # lista as subcategorias
+npm run telegram:categories -- --category 2       # idem, pelo número impresso
+```
+
+Saída: uma linha `N) nome` por item. Códigos de saída: `0` sucesso, `1` erro de
+API/configuração (a mensagem do envelope `{ error }` é impressa), `2` uso
+inválido. Uma categoria sem subcategorias sai com `1` e uma mensagem — ela não
+consegue satisfazer o campo obrigatório `subcategoria`.
+
 Environment used by the helper:
 - `EXPENSES_API_BASE_URL` (default `http://localhost:3000/api/v1`)
 - `EXPENSES_API_KEY` (falls back to `API_KEY`)
@@ -91,6 +104,11 @@ subcategoria, pagamento e data. Se for crédito, também cartão e parcelas.
 Quando tiver dados suficientes, execute no repositório expenses:
 
 npm run telegram:record -- --text "nome: ...; valor: ...; categoria: ...; subcategoria: ...; pagamento: ...; data: ..."
+
+Se eu não souber a categoria ou a subcategoria, liste as opções com:
+
+npm run telegram:categories
+npm run telegram:categories -- --category "<categoria>"
 
 Se faltar algum campo obrigatório, pergunte apenas pelo que falta.
 Se eu pedir conferência antes de gravar, use --dry-run.

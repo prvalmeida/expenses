@@ -11,6 +11,7 @@
     "gen:openapi": "tsx scripts/gen-openapi.ts",
     "migrate": "tsx --env-file=.env.local scripts/migrate.ts",
     "telegram:record": "tsx scripts/telegram-record-expense.ts",
+    "telegram:categories": "tsx scripts/telegram-categories.ts",
     "test:api": "cd bruno && bru run . -r --env local --sandbox developer --exclude-tags external",
     "test:api:external": "cd bruno && bru run . -r --env local --sandbox developer --tags external",
     "test:api:prod": "cd bruno && bru run . -r --env prod --sandbox developer --exclude-tags external"
