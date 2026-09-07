@@ -4,7 +4,7 @@ import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
 import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
-import { mapPluggyTransaction } from '../utils/pluggyUtils';
+import { mapPluggyTransaction, deriveDirection, derivePaymentType, PluggyAccountLike } from '../utils/pluggyUtils';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -144,9 +144,40 @@ interface ExistingTransactionSnapshot {
   date: string;
 }
 
+interface StagingDerivation {
+  direction?: 'outflow' | 'inflow';
+  paymentType?: string;
+  cardBrand?: string;
+  status: 'pending' | 'anomaly';
+  statusReason?: string;
+}
+
+// Direction and payment type/cardBrand, computed through the pure ladders in
+// pluggyUtils.ts. The ignore rules (step 10) are layered on top of this by the
+// caller — this function only ever produces 'pending' or 'anomaly'.
+function deriveStaging(tx: PluggyTransactionApi, account: PluggyAccountLike): StagingDerivation {
+  const { direction, anomalyReason } = deriveDirection(tx);
+  if (!direction) {
+    return { status: 'anomaly', statusReason: anomalyReason };
+  }
+
+  const { paymentType, cardBrand } = derivePaymentType(tx, account);
+  return { direction, paymentType, cardBrand, status: 'pending' };
+}
+
+function stagingSetFields(staging: StagingDerivation): Record<string, unknown> {
+  return {
+    ...(staging.direction !== undefined && { direction: staging.direction }),
+    ...(staging.paymentType !== undefined && { paymentType: staging.paymentType }),
+    ...(staging.cardBrand !== undefined && { cardBrand: staging.cardBrand }),
+    status: staging.status,
+  };
+}
+
 // The idempotency rule, keyed on pluggyId:
-// - new                       -> insert as 'pending'.
-// - existing, pending/ignored -> refresh raw fields, bump lastSeenAt.
+// - new                       -> insert as 'pending' (or 'anomaly' if the
+//   direction ladder cannot resolve without a guess).
+// - existing, pending/ignored -> refresh raw fields, re-derive, bump lastSeenAt.
 // - existing, imported        -> raw fields are NEVER touched. If amount or
 //   date drifted since import, flag 'anomaly' and leave the Expense alone —
 //   editing an already-posted expense is a decision for a human, not a poller.
@@ -154,7 +185,7 @@ interface ExistingTransactionSnapshot {
 //   a later phase already decided this row's fate; a resync must not revisit it.
 async function upsertTransaction(
   tx: PluggyTransactionApi,
-  account: { accountId: string; itemId: string },
+  account: PluggyAccountLike & { accountId: string; itemId: string },
   { dryRun = false }: { dryRun?: boolean } = {}
 ): Promise<PluggyUpsertOutcome> {
   const fields = mapPluggyTransaction(tx);
@@ -163,6 +194,7 @@ async function upsertTransaction(
     .lean<ExistingTransactionSnapshot | null>();
 
   if (!existing) {
+    const staging = deriveStaging(tx, account);
     if (!dryRun) {
       const now = new Date();
       await PluggyTransaction.create({
@@ -170,12 +202,13 @@ async function upsertTransaction(
         accountId: account.accountId,
         itemId: account.itemId,
         ...fields,
-        status: 'pending',
+        ...stagingSetFields(staging),
+        ...(staging.statusReason !== undefined && { statusReason: staging.statusReason }),
         firstSeenAt: now,
         lastSeenAt: now,
       });
     }
-    return 'created';
+    return staging.status === 'anomaly' ? 'anomaly' : 'created';
   }
 
   if (existing.status === 'imported') {
@@ -191,13 +224,19 @@ async function upsertTransaction(
   }
 
   if (existing.status === 'pending' || existing.status === 'ignored') {
+    const staging = deriveStaging(tx, account);
     if (!dryRun) {
+      const $set: Record<string, unknown> = { ...fields, ...stagingSetFields(staging), lastSeenAt: new Date() };
+      const $unset: Record<string, ''> = {};
+      if (staging.statusReason !== undefined) $set.statusReason = staging.statusReason;
+      else $unset.statusReason = '';
+
       await PluggyTransaction.updateOne(
         { pluggyId: tx.id },
-        { $set: { ...fields, lastSeenAt: new Date() } }
+        Object.keys($unset).length ? { $set, $unset } : { $set }
       );
     }
-    return 'updated';
+    return staging.status === 'anomaly' ? 'anomaly' : 'updated';
   }
 
   return 'unchanged';
