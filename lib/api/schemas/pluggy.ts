@@ -64,15 +64,20 @@ export const updateAccountLinkSchema = z
 
 // The manual review path: explicit rows a human classified, rather than a
 // BillMapping hit or an account default.
-const importPluggyStagedItemSchema = z.object({
-  pluggyId: z.string().trim().min(1),
-  kind: z.enum(['expense', 'income']),
-  type: z.string().trim().min(1),
-  subtype: z.string().trim().min(1).optional(),
-  paymentType: paymentType.optional(),
-  cardBrand: cardBrand.optional(),
-  newMapping: z.boolean().optional(),
-});
+const importPluggyStagedItemSchema = z
+  .object({
+    pluggyId: z.string().trim().min(1),
+    kind: z.enum(['expense', 'income']),
+    type: z.string().trim().min(1),
+    subtype: z.string().trim().min(1).optional(),
+    paymentType: paymentType.optional(),
+    cardBrand: cardBrand.optional(),
+    newMapping: z.boolean().optional(),
+  })
+  .refine(input => input.paymentType !== 'credit' || Boolean(input.cardBrand), {
+    path: ['cardBrand'],
+    message: 'cardBrand é obrigatório quando paymentType é credit',
+  });
 
 export const importPluggyStagedSchema = z.object({
   items: z.array(importPluggyStagedItemSchema).min(1, 'items é obrigatório'),
