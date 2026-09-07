@@ -1,16 +1,23 @@
 import connectToDatabase from '../mongodb';
+import Expense from '../models/Expense';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
+import { BillMapping } from '../models/BillMapping';
 import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
 import {
   mapPluggyTransaction,
   deriveDirection,
   derivePaymentType,
+  deriveInstallments,
   shouldIgnore,
   PluggyAccountLike,
 } from '../utils/pluggyUtils';
+import { billMappingKey } from '../utils/billUtils';
+import { validateExpensePair } from '../utils/categoryUtils';
+import { buildExpenseDocuments } from './expenseService';
+import { addMonthsClamped } from '../utils/dateUtils';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -404,4 +411,100 @@ export async function syncAll({ dryRun = false }: { dryRun?: boolean } = {}): Pr
   } finally {
     await releaseLock();
   }
+}
+
+export interface AutoImportResult {
+  expensesImported: number;
+  incomesImported: number;
+  stillPending: number;
+  skippedExisting: number;
+}
+
+// A Pluggy row's date is the POSTING date of the one installment it
+// represents, not the original purchase date — buildExpenseDocuments walks
+// forward from `date` treating it as installment 1, so a mid-series row must
+// be backed off by (installmentCurrent - 1) months before being passed in.
+// addMonthsClamped handles the negative offset correctly.
+function anchorPurchaseDate(row: { date: string }, installments?: { current: number }): string {
+  if (!installments) return row.date;
+  return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
+}
+
+// Over status: 'pending' outflows whose pluggyStatus is POSTED — a PENDING
+// row can still change amount or disappear entirely, and a row that
+// disappears is never re-fetched, so it must never be auto-imported.
+async function autoImportExpenses(result: AutoImportResult): Promise<void> {
+  const rows = await PluggyTransaction.find({ status: 'pending', direction: 'outflow', pluggyStatus: 'POSTED' });
+
+  for (const row of rows) {
+    const mapping = await BillMapping.findOne({ description: billMappingKey(row.description) });
+    if (!mapping) {
+      result.stillPending++;
+      continue;
+    }
+
+    const valid = await validateExpensePair(mapping.type, mapping.subtype ?? undefined);
+    if (!valid) {
+      // A mapping pointing at a renamed-away category must surface in
+      // review, never import against an orphaned type/subtype.
+      row.suggestedType = mapping.type;
+      if (mapping.subtype) row.suggestedSubtype = mapping.subtype;
+      await row.save();
+      result.stillPending++;
+      continue;
+    }
+
+    const installments = deriveInstallments({
+      installmentCurrent: row.installmentCurrent ?? undefined,
+      installmentTotal: row.installmentTotal ?? undefined,
+    });
+    // installmentCurrent is required to expand: a row that carries a total
+    // but no plausible current stays pending rather than being expanded from
+    // an unknown offset.
+    if (row.installmentTotal && row.installmentTotal > 1 && !installments) {
+      row.statusReason =
+        'Parcela sem número de parcela atual plausível — não é possível ancorar a data de compra.';
+      await row.save();
+      result.stillPending++;
+      continue;
+    }
+
+    const documents = await buildExpenseDocuments({
+      name: row.description,
+      value: Math.abs(row.amount),
+      type: mapping.type,
+      subtype: mapping.subtype ?? undefined,
+      paymentType: row.paymentType ?? 'debit',
+      cardBrand: row.cardBrand ?? undefined,
+      date: anchorPurchaseDate(row, installments),
+      installments: installments ? installments.total : 1,
+      valueIsTotal: false,
+    });
+
+    const importedIds: string[] = [];
+    for (const document of documents) {
+      const created = await Expense.create(document);
+      importedIds.push(String(created._id));
+    }
+
+    row.status = 'imported';
+    row.importedExpenseIds = importedIds;
+    await row.save();
+    result.expensesImported++;
+  }
+}
+
+export async function autoImportStaged(): Promise<AutoImportResult> {
+  await connectToDatabase();
+
+  const result: AutoImportResult = {
+    expensesImported: 0,
+    incomesImported: 0,
+    stillPending: 0,
+    skippedExisting: 0,
+  };
+
+  await autoImportExpenses(result);
+
+  return result;
 }
