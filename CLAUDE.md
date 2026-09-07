@@ -231,7 +231,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 ### Navigation
 
-`app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, or `importBill`. There is no client-side router — view switching is purely state-driven.
+`app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, `importBill`, `pluggySync`, or `pluggyConfig`. There is no client-side router — view switching is purely state-driven. The `ViewId` union and the nav entries live in `components/NavMenu.tsx`, so a new view is added in both places.
 
 ### Responsive shell conventions
 
