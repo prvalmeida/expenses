@@ -39,6 +39,13 @@ const PluggyTransactionSchema = new mongoose.Schema(
       default: 'pending',
     },
     statusReason: { type: String, required: false },
+    // Set by the review screen's "não ignorar" action. A resync re-derives
+    // direction/paymentType/status on every pending/ignored row, and without
+    // this flag that re-derive would silently re-ignore the row: the ignore
+    // rules match on the description/counterparty, which never changes, so
+    // the human's override would be a no-op past the next sync. When set, the
+    // ignore step is skipped and the row stays 'pending'.
+    ignoreOverridden: { type: Boolean, required: true, default: false },
     suggestedType: { type: String, required: false },
     suggestedSubtype: { type: String, required: false },
     importedExpenseIds: { type: [String], required: false },

@@ -231,6 +231,7 @@ interface ExistingTransactionSnapshot {
   status: string;
   amount: number;
   date: string;
+  ignoreOverridden: boolean;
 }
 
 interface StagingDerivation {
@@ -244,11 +245,15 @@ interface StagingDerivation {
 // Direction, payment type/cardBrand and the ignore rules, computed through the
 // pure ladders in pluggyUtils.ts: direction first (an unresolved cross-check
 // short-circuits to 'anomaly' before anything else runs), then payment type,
-// then the double-counting guard.
+// then the double-counting guard. `skipIgnore` is set once a human has
+// un-ignored this row (PluggyTransaction.ignoreOverridden) — the ignore
+// signal (description/counterparty) never changes, so re-running it here
+// would silently overturn that decision on every resync.
 function deriveStaging(
   tx: PluggyTransactionApi,
   account: PluggyAccountLike,
-  linkedAccountIds: ReadonlySet<string>
+  linkedAccountIds: ReadonlySet<string>,
+  { skipIgnore = false }: { skipIgnore?: boolean } = {}
 ): StagingDerivation {
   const { direction, anomalyReason } = deriveDirection(tx);
   if (!direction) {
@@ -256,9 +261,11 @@ function deriveStaging(
   }
 
   const { paymentType, cardBrand } = derivePaymentType(tx, account);
-  const ignore = shouldIgnore(tx, account, direction, { linkedAccountIds });
-  if (ignore.ignored) {
-    return { direction, paymentType, cardBrand, status: 'ignored', statusReason: `${ignore.ruleId}: ${ignore.reason}` };
+  if (!skipIgnore) {
+    const ignore = shouldIgnore(tx, account, direction, { linkedAccountIds });
+    if (ignore.ignored) {
+      return { direction, paymentType, cardBrand, status: 'ignored', statusReason: `${ignore.ruleId}: ${ignore.reason}` };
+    }
   }
 
   return { direction, paymentType, cardBrand, status: 'pending' };
@@ -290,7 +297,7 @@ async function upsertTransaction(
 ): Promise<PluggyUpsertOutcome> {
   const fields = mapPluggyTransaction(tx);
   const existing = await PluggyTransaction.findOne({ pluggyId: tx.id })
-    .select('status amount date')
+    .select('status amount date ignoreOverridden')
     .lean<ExistingTransactionSnapshot | null>();
 
   if (!existing) {
@@ -324,7 +331,7 @@ async function upsertTransaction(
   }
 
   if (existing.status === 'pending' || existing.status === 'ignored') {
-    const staging = deriveStaging(tx, account, linkedAccountIds);
+    const staging = deriveStaging(tx, account, linkedAccountIds, { skipIgnore: existing.ignoreOverridden });
     if (!dryRun) {
       const $set: Record<string, unknown> = { ...fields, ...stagingSetFields(staging), lastSeenAt: new Date() };
       const $unset: Record<string, ''> = {};
