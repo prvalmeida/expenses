@@ -393,6 +393,19 @@ export async function syncAccount(
   return result;
 }
 
+// The review screen's one-click "não ignorar": only a currently-ignored row
+// can move back to pending — imported/anomaly/skipped_existing status is not a
+// toggle a human flips from the review screen.
+export async function unignoreTransaction(pluggyId: string) {
+  await connectToDatabase();
+
+  return PluggyTransaction.findOneAndUpdate(
+    { pluggyId, status: 'ignored' },
+    { $set: { status: 'pending' }, $unset: { statusReason: '' } },
+    { new: true }
+  );
+}
+
 export interface ListPluggyTransactionsFilter {
   status?: string;
   accountId?: string;
