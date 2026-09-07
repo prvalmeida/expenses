@@ -347,7 +347,24 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
         />
       ),
       date: displayDate(row.date),
-      description: row.description,
+      // A PENDING row is still mutable at the bank: its amount can change and
+      // it can vanish entirely, which is why autoImportStaged never touches
+      // one. It is importable by hand, so the flag has to be visible — and it
+      // goes on `description` because both breakpoints (the md:table row and
+      // the mobile card) render this same value.
+      description: (
+        <>
+          {row.pluggyStatus === 'PENDING' && (
+            <span
+              title="Lançamento ainda não consolidado pelo banco — valor e data podem mudar."
+              className="mr-1 inline-block rounded bg-amber-200 px-1 text-[10px] font-bold text-amber-900 align-middle"
+            >
+              PENDENTE
+            </span>
+          )}
+          {row.description}
+        </>
+      ),
       installment: row.installmentCurrent !== undefined && row.installmentTotal !== undefined
         ? `${row.installmentCurrent}/${row.installmentTotal}`
         : '—',

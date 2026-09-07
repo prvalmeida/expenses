@@ -356,14 +356,17 @@ export async function syncAccount(
   if (!account) throw new ApiError('VALIDATION_FAILED', `Conta Pluggy desconhecida: ${accountId}`);
   if (!account.enabled) throw new ApiError('VALIDATION_FAILED', `Conta Pluggy desabilitada: ${accountId}`);
 
-  // Read inside the function, never at module scope — see client.ts. A bad
-  // value falls back rather than propagating: `Number('')` is 0, which would
-  // silently disable the overlap window the late-posting guarantee rests on,
-  // and a non-numeric one is NaN, which surfaces much later as an opaque
-  // RangeError from `new Date(NaN).toISOString()` inside computeSyncWindow.
-  const configuredOverlap = Number(process.env.PLUGGY_SYNC_OVERLAP_DAYS);
+  // Read inside the function, never at module scope — see client.ts. Anything
+  // that is not an explicitly configured, finite, positive number falls back
+  // to the default: an unset OR EMPTY value must not disable the overlap the
+  // late-posting guarantee rests on (`Number('')` is 0, not NaN, so trimming
+  // and testing for emptiness has to come first), and a non-numeric one would
+  // otherwise reach computeSyncWindow as NaN and surface much later as an
+  // opaque RangeError from `new Date(NaN).toISOString()`.
+  const rawOverlap = (process.env.PLUGGY_SYNC_OVERLAP_DAYS ?? '').trim();
+  const configuredOverlap = rawOverlap === '' ? NaN : Number(rawOverlap);
   const overlapDays =
-    Number.isFinite(configuredOverlap) && configuredOverlap >= 0
+    Number.isFinite(configuredOverlap) && configuredOverlap > 0
       ? configuredOverlap
       : DEFAULT_OVERLAP_DAYS;
   const { from, to } = computeSyncWindow(account, overlapDays);
