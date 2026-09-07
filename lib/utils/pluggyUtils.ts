@@ -124,3 +124,102 @@ export function deriveInstallments(fields: {
   if (total > MAX_INSTALLMENTS) return undefined;
   return { current, total };
 }
+
+export interface ShouldIgnoreContext {
+  // accountId of every currently-linked PluggyAccount (any status), so an own
+  // transfer can be recognized even when the counterparty leg belongs to a
+  // disabled account.
+  linkedAccountIds: ReadonlySet<string>;
+}
+
+export interface IgnoreRuleInput {
+  tx: PluggyTransactionApi;
+  account: PluggyAccountLike;
+  direction: PluggyDirection;
+  context: ShouldIgnoreContext;
+}
+
+export interface IgnoreRule {
+  id: string;
+  reason: string;
+  test: (input: IgnoreRuleInput) => boolean;
+}
+
+// Description patterns vary by bank; matched loosely on purpose — missing one
+// leaves a row in review (safe), matching one wrongly hides a real
+// transaction (not safe), so a false negative is the failure to prefer.
+const CARD_BILL_PATTERNS = [
+  /PAGAMENTO\s+FATURA/i,
+  /PAGTO\s+CART[AÃ]O/i,
+  /PAGAMENTO\s+DE\s+CART[AÃ]O/i,
+  /PAGAMENTO\s+CART[AÃ]O/i,
+];
+
+function ownDocumentsFromEnv(): Set<string> {
+  const raw = process.env.PLUGGY_OWN_DOCUMENTS ?? '';
+  return new Set(
+    raw
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+  );
+}
+
+// The double-counting guard (plan step 10) — the highest-risk correctness item
+// in the integration. A plain array, not a switch, so `statusReason` can name
+// the rule that fired and the review screen can offer a one-click un-ignore
+// per rule rather than one undifferentiated "ignored" bucket.
+export const PLUGGY_IGNORE_RULES: IgnoreRule[] = [
+  {
+    id: 'credit-inflow',
+    reason: 'Entrada em conta de cartão de crédito (pagamento de fatura ou estorno) — não é renda.',
+    test: ({ account, direction }) => account.kind === 'CREDIT' && direction === 'inflow',
+  },
+  {
+    id: 'card-bill-payment',
+    reason: 'Pagamento de fatura de cartão — as compras já entram pela conta de crédito.',
+    test: ({ account, direction, tx }) =>
+      account.kind === 'BANK' &&
+      direction === 'outflow' &&
+      CARD_BILL_PATTERNS.some(pattern => pattern.test(tx.description ?? '')),
+  },
+  {
+    id: 'own-transfer',
+    reason: 'Transferência entre contas da própria família.',
+    test: ({ tx, context }) => {
+      const ownDocuments = ownDocumentsFromEnv();
+      const payerDoc = tx.paymentData?.payer?.documentNumber ?? undefined;
+      const receiverDoc = tx.paymentData?.receiver?.documentNumber ?? undefined;
+      if ((payerDoc && ownDocuments.has(payerDoc)) || (receiverDoc && ownDocuments.has(receiverDoc))) {
+        return true;
+      }
+
+      const payerAccountId = tx.paymentData?.payer?.accountId ?? undefined;
+      const receiverAccountId = tx.paymentData?.receiver?.accountId ?? undefined;
+      return (
+        (!!payerAccountId && context.linkedAccountIds.has(payerAccountId)) ||
+        (!!receiverAccountId && context.linkedAccountIds.has(receiverAccountId))
+      );
+    },
+  },
+];
+
+export interface IgnoreOutcome {
+  ignored: boolean;
+  ruleId?: string;
+  reason?: string;
+}
+
+export function shouldIgnore(
+  tx: PluggyTransactionApi,
+  account: PluggyAccountLike,
+  direction: PluggyDirection,
+  context: ShouldIgnoreContext
+): IgnoreOutcome {
+  for (const rule of PLUGGY_IGNORE_RULES) {
+    if (rule.test({ tx, account, direction, context })) {
+      return { ignored: true, ruleId: rule.id, reason: rule.reason };
+    }
+  }
+  return { ignored: false };
+}

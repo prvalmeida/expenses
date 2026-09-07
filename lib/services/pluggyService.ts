@@ -4,7 +4,13 @@ import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
 import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
-import { mapPluggyTransaction, deriveDirection, derivePaymentType, PluggyAccountLike } from '../utils/pluggyUtils';
+import {
+  mapPluggyTransaction,
+  deriveDirection,
+  derivePaymentType,
+  shouldIgnore,
+  PluggyAccountLike,
+} from '../utils/pluggyUtils';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -148,20 +154,30 @@ interface StagingDerivation {
   direction?: 'outflow' | 'inflow';
   paymentType?: string;
   cardBrand?: string;
-  status: 'pending' | 'anomaly';
+  status: 'pending' | 'ignored' | 'anomaly';
   statusReason?: string;
 }
 
-// Direction and payment type/cardBrand, computed through the pure ladders in
-// pluggyUtils.ts. The ignore rules (step 10) are layered on top of this by the
-// caller — this function only ever produces 'pending' or 'anomaly'.
-function deriveStaging(tx: PluggyTransactionApi, account: PluggyAccountLike): StagingDerivation {
+// Direction, payment type/cardBrand and the ignore rules, computed through the
+// pure ladders in pluggyUtils.ts: direction first (an unresolved cross-check
+// short-circuits to 'anomaly' before anything else runs), then payment type,
+// then the double-counting guard.
+function deriveStaging(
+  tx: PluggyTransactionApi,
+  account: PluggyAccountLike,
+  linkedAccountIds: ReadonlySet<string>
+): StagingDerivation {
   const { direction, anomalyReason } = deriveDirection(tx);
   if (!direction) {
     return { status: 'anomaly', statusReason: anomalyReason };
   }
 
   const { paymentType, cardBrand } = derivePaymentType(tx, account);
+  const ignore = shouldIgnore(tx, account, direction, { linkedAccountIds });
+  if (ignore.ignored) {
+    return { direction, paymentType, cardBrand, status: 'ignored', statusReason: `${ignore.ruleId}: ${ignore.reason}` };
+  }
+
   return { direction, paymentType, cardBrand, status: 'pending' };
 }
 
@@ -186,6 +202,7 @@ function stagingSetFields(staging: StagingDerivation): Record<string, unknown> {
 async function upsertTransaction(
   tx: PluggyTransactionApi,
   account: PluggyAccountLike & { accountId: string; itemId: string },
+  linkedAccountIds: ReadonlySet<string>,
   { dryRun = false }: { dryRun?: boolean } = {}
 ): Promise<PluggyUpsertOutcome> {
   const fields = mapPluggyTransaction(tx);
@@ -194,7 +211,7 @@ async function upsertTransaction(
     .lean<ExistingTransactionSnapshot | null>();
 
   if (!existing) {
-    const staging = deriveStaging(tx, account);
+    const staging = deriveStaging(tx, account, linkedAccountIds);
     if (!dryRun) {
       const now = new Date();
       await PluggyTransaction.create({
@@ -224,7 +241,7 @@ async function upsertTransaction(
   }
 
   if (existing.status === 'pending' || existing.status === 'ignored') {
-    const staging = deriveStaging(tx, account);
+    const staging = deriveStaging(tx, account, linkedAccountIds);
     if (!dryRun) {
       const $set: Record<string, unknown> = { ...fields, ...stagingSetFields(staging), lastSeenAt: new Date() };
       const $unset: Record<string, ''> = {};
@@ -260,6 +277,12 @@ export async function syncAccount(
   const overlapDays = Number(process.env.PLUGGY_SYNC_OVERLAP_DAYS ?? DEFAULT_OVERLAP_DAYS);
   const { from, to } = computeSyncWindow(account, overlapDays);
 
+  // Every currently-linked account, for the own-transfer ignore rule — a
+  // counterparty leg is "our own" even if that account is disabled.
+  const linkedAccountIds = new Set(
+    (await PluggyAccount.find({}).select('accountId').lean<{ accountId: string }[]>()).map(a => a.accountId)
+  );
+
   const result: SyncAccountResult = { accountId, fetched: 0, created: 0, updated: 0, anomalies: 0 };
 
   for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
@@ -270,7 +293,7 @@ export async function syncAccount(
     // would happen, but upsertTransaction writes nothing when dryRun is set —
     // the same contract a migration's dry run has.
     for (const tx of rows) {
-      const outcome = await upsertTransaction(tx, account, { dryRun });
+      const outcome = await upsertTransaction(tx, account, linkedAccountIds, { dryRun });
       if (outcome === 'created') result.created++;
       else if (outcome === 'updated') result.updated++;
       else if (outcome === 'anomaly') result.anomalies++;

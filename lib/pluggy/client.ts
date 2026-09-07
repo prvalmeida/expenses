@@ -187,8 +187,8 @@ export interface PluggyTransactionApi {
   type?: string; // 'DEBIT' | 'CREDIT'
   paymentData?: {
     paymentMethod?: string | null;
-    payer?: unknown;
-    receiver?: unknown;
+    payer?: { documentNumber?: string | null; accountId?: string | null } | null;
+    receiver?: { documentNumber?: string | null; accountId?: string | null } | null;
   } | null;
   creditCardMetadata?: {
     installmentNumber?: number | null;
