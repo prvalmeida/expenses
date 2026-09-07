@@ -472,7 +472,21 @@ async function insertExpenseDocuments(
 // row can still change amount or disappear entirely, and a row that
 // disappears is never re-fetched, so it must never be auto-imported.
 async function autoImportExpenses(result: AutoImportResult): Promise<void> {
-  const rows = await PluggyTransaction.find({ status: 'pending', direction: 'outflow', pluggyStatus: 'POSTED' });
+  // enabled: false means "fetched into staging but never imported" — a row
+  // staged while its account was still enabled must stop being auto-imported
+  // the moment the account is disabled, so this is a query filter, not just a
+  // gate on new rows.
+  const enabledAccountIds = (
+    await PluggyAccount.find({ enabled: true }).select('accountId').lean<{ accountId: string }[]>()
+  ).map(a => a.accountId);
+  if (enabledAccountIds.length === 0) return;
+
+  const rows = await PluggyTransaction.find({
+    status: 'pending',
+    direction: 'outflow',
+    pluggyStatus: 'POSTED',
+    accountId: { $in: enabledAccountIds },
+  });
 
   for (const row of rows) {
     const mapping = await BillMapping.findOne({ description: billMappingKey(row.description) });
@@ -543,7 +557,9 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
 // couple of manual clicks a month. Same POSTED-only rule as expenses: a
 // PENDING row can still vanish and must never be auto-imported.
 async function autoImportIncomes(result: AutoImportResult): Promise<void> {
-  const accounts = await PluggyAccount.find({ kind: 'BANK' }).lean<
+  // Same enabled-only rule as autoImportExpenses: a disabled account's pending
+  // rows must sit in staging, not import.
+  const accounts = await PluggyAccount.find({ kind: 'BANK', enabled: true }).lean<
     { accountId: string; defaultIncomeType?: string | null }[]
   >();
   const accountsById = new Map(accounts.map(a => [a.accountId, a]));
