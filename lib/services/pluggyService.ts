@@ -16,7 +16,7 @@ import {
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
 import { validateExpensePair } from '../utils/categoryUtils';
-import { buildExpenseDocuments } from './expenseService';
+import { buildExpenseDocuments, ExpenseDocument } from './expenseService';
 import { addMonthsClamped } from '../utils/dateUtils';
 import { ApiError } from '../api/respond';
 
@@ -430,6 +430,43 @@ function anchorPurchaseDate(row: { date: string }, installments?: { current: num
   return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
 }
 
+// The skipped_existing check, within Pluggy only — reuses billService's guard
+// (billService.ts ~227-236) exactly as written: an exact match on { name,
+// value, date, cardBrand, installment, totalInstallments }, applied only to
+// expanded installment rows. It works here because both sides of the
+// comparison are produced by buildExpenseDocuments from the same anchor date,
+// which is only true once the anchor-date correction above is in place. A
+// single non-installment charge appearing twice is two charges, not a dupe —
+// so non-installment documents are never deduped.
+async function insertExpenseDocuments(
+  documents: ExpenseDocument[],
+  isInstallment: boolean
+): Promise<{ importedIds: string[]; skippedExisting: number }> {
+  const importedIds: string[] = [];
+  let skippedExisting = 0;
+
+  for (const document of documents) {
+    if (isInstallment) {
+      const exists = await Expense.findOne({
+        name: document.name,
+        value: document.value,
+        date: document.date,
+        cardBrand: document.cardBrand,
+        installment: document.installment,
+        totalInstallments: document.totalInstallments,
+      });
+      if (exists) {
+        skippedExisting++;
+        continue;
+      }
+    }
+    const created = await Expense.create(document);
+    importedIds.push(String(created._id));
+  }
+
+  return { importedIds, skippedExisting };
+}
+
 // Over status: 'pending' outflows whose pluggyStatus is POSTED — a PENDING
 // row can still change amount or disappear entirely, and a row that
 // disappears is never re-fetched, so it must never be auto-imported.
@@ -481,16 +518,19 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
       valueIsTotal: false,
     });
 
-    const importedIds: string[] = [];
-    for (const document of documents) {
-      const created = await Expense.create(document);
-      importedIds.push(String(created._id));
-    }
+    const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, !!installments);
+    result.skippedExisting += skippedExisting;
 
-    row.status = 'imported';
-    row.importedExpenseIds = importedIds;
+    if (importedIds.length > 0) {
+      row.status = 'imported';
+      row.importedExpenseIds = importedIds;
+      result.expensesImported++;
+    } else {
+      // Every expanded installment already existed — this row is a re-post
+      // of a purchase whose group another Pluggy row already imported.
+      row.status = 'skipped_existing';
+    }
     await row.save();
-    result.expensesImported++;
   }
 }
 
