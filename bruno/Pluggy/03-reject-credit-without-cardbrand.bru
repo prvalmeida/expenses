@@ -1,0 +1,38 @@
+meta {
+  name: Reject a CREDIT link row with no cardBrand
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{internalUrl}}/pluggy/accounts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "accountId": "BRUNO_TEST_missing_cardbrand",
+    "kind": "CREDIT",
+    "enabled": true
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+tests {
+  test("the refinement names cardBrand, not the accountId lookup", function () {
+    expect(res.body.error).to.match(/cardBrand/);
+  });
+}
+
+docs {
+  updateAccountLinkSchema's .refine() (lib/api/schemas/pluggy.ts) enforces the
+  same credit <-> cardBrand pairing CLAUDE.md documents for updateExpense:
+  accepting this would let a CREDIT PluggyAccount reach the enable step with no
+  cardBrand, and every Expense it later builds would be a document
+  CreditExpense says cannot exist. The account name does not need to exist —
+  the schema rejects the payload before updateAccountLink ever queries for it.
+}

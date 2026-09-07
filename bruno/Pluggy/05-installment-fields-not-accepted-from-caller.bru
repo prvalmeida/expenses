@@ -1,0 +1,58 @@
+meta {
+  name: installmentTotal is not a caller-supplied field
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{internalUrl}}/pluggy/import
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "pluggyId": "BRUNO_TEST_pluggy_unbounded_installments",
+        "kind": "expense",
+        "type": "BRUNO_TEST_categoria_inexistente",
+        "subtype": "BRUNO_TEST_subtipo_inexistente",
+        "paymentType": "credit",
+        "cardBrand": "Master Santander",
+        "installmentCurrent": 1,
+        "installmentTotal": 999999
+      }
+    ]
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  test("the request is not rejected for carrying these fields — they are simply ignored", function () {
+    expect(res.body.imported).to.equal(0);
+    expect(res.body.skippedInvalid).to.equal(1);
+  });
+}
+
+docs {
+  Unlike createExpenseSchema, importReceiptSchema and the bill row schema —
+  which all bound an installment count on the wire via installmentCount /
+  MAX_INSTALLMENTS (schemas/common.ts) — no Pluggy schema accepts
+  installmentCurrent/installmentTotal from a caller. importPluggyStagedItemSchema
+  (lib/api/schemas/pluggy.ts) has no such fields, so Zod's default "strip
+  unknown keys" behavior drops them before importStagedExpense ever runs;
+  the values actually used always come from the staged PluggyTransaction row
+  itself (row.installmentCurrent/installmentTotal), which in turn only ever
+  came from Pluggy's own creditCardMetadata. The MAX_INSTALLMENTS bound and
+  isPlausibleInstallment guard on that trusted data are exercised in
+  tests/pluggy-utils.test.ts (deriveInstallments), not here — there is no HTTP
+  boundary for a caller to smuggle an unbounded count through. This request
+  demonstrates the 999999 has zero effect: the outcome is identical to sending
+  no installment fields at all (unimported, skippedInvalid, because the
+  pluggyId does not exist), which is the pattern the Bills equivalent of this
+  test (Bills/03) cannot show since a bill row schema does accept the field.
+}

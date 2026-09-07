@@ -1,0 +1,46 @@
+meta {
+  name: Sync a real account
+  type: http
+  seq: 6
+  tags: [
+    external
+  ]
+}
+
+post {
+  url: {{baseUrl}}/pluggy/sync?accountId={{process.env.PLUGGY_TEST_ACCOUNT_ID}}&dryRun=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("the sync report names the account it fetched", function () {
+    expect(res.body.data.sync.accountId).to.equal(bru.getProcessEnv("PLUGGY_TEST_ACCOUNT_ID"));
+  });
+
+  test("fetched is a real count, not undefined", function () {
+    expect(res.body.data.sync.fetched).to.be.a("number");
+  });
+}
+
+docs {
+  Excluded from the default run (tag: external): it calls the real Pluggy API
+  against a live, already-registered and enabled account, which needs
+  PLUGGY_CLIENT_ID/PLUGGY_CLIENT_SECRET configured server-side and
+  PLUGGY_TEST_ACCOUNT_ID set in bruno/.env (see bruno/.env.example) pointing at
+  that account's Pluggy accountId.
+
+  dryRun=true is deliberate and different from every other external request in
+  this collection, which write real records and rely on Cleanup to sweep them
+  by name: a Pluggy row's description comes from the bank, never from this
+  suite, so nothing it creates could ever be named BRUNO_TEST_* and Cleanup
+  could never find it. Running dry keeps this request repeatable against a
+  real financial account without leaving staged rows or advancing
+  lastSyncedAt — see plan step 4's dry-run contract (counts only, writes
+  nothing) and the plan's own advice to reconcile a dry run by hand before
+  trusting a newly-enabled CREDIT account.
+}

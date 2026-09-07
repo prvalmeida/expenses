@@ -1,0 +1,41 @@
+meta {
+  name: Reject a malformed account link row
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{internalUrl}}/pluggy/accounts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "kind": "BANK",
+    "enabled": true
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+tests {
+  test("the response names the problem instead of a generic failure", function () {
+    expect(typeof res.body.error).to.equal("string");
+    expect(res.body.error.length).to.be.above(0);
+  });
+}
+
+docs {
+  Missing accountId — updateAccountLinkSchema (lib/api/schemas/pluggy.ts) rejects
+  it before updateAccountLink ever runs a query.
+
+  This route is internal (app/api/pluggy/accounts), not /api/v1: it is the
+  config screen's link-row editor, unauthenticated like the rest of
+  /api/pluggy/* per CLAUDE.md's "never point client code at /api/v1" rule. It
+  therefore answers with the plain `{ error: string }` envelope the rest of
+  /api/pluggy uses, not the v1 `{ error: { code, message } }` shape asserted
+  against elsewhere in this collection — there is no res.body.error.code here.
+}
