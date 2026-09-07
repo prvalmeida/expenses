@@ -8,7 +8,9 @@ export type ViewId =
   | 'cardConfig'
   | 'categoryConfig'
   | 'importReceipt'
-  | 'importBill';
+  | 'importBill'
+  | 'pluggySync'
+  | 'pluggyConfig';
 
 type NavItem = { id: Exclude<ViewId, 'dashboardDetails'>; label: string };
 
@@ -26,6 +28,10 @@ export const NAV_GROUPS: NavItem[][] = [
     { id: 'importReceipt', label: '📄 Importar NF' },
     { id: 'importBill', label: '💳 Importar Fatura' },
   ],
+  [
+    { id: 'pluggySync', label: '🔄 Sincronizar Pluggy' },
+    { id: 'pluggyConfig', label: '🔗 Conexões Pluggy' },
+  ],
 ];
 
 const VIEW_TITLES: Record<ViewId, string> = {
@@ -37,6 +43,8 @@ const VIEW_TITLES: Record<ViewId, string> = {
   categoryConfig: 'Categorias',
   importReceipt: 'Importar NF',
   importBill: 'Importar Fatura',
+  pluggySync: 'Sincronizar Pluggy',
+  pluggyConfig: 'Conexões Pluggy',
 };
 
 export function viewTitle(view: ViewId) {

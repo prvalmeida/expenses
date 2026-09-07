@@ -9,6 +9,8 @@ import CardConfigPage from './CardConfig';
 import ImportReceipt from './ImportReceipt';
 import ImportBill from './ImportBill';
 import CategoryConfig from './CategoryConfig';
+import PluggySync from './PluggySync';
+import PluggyConfig from './PluggyConfig';
 import NavMenu, { viewTitle, type ViewId } from '@/components/NavMenu';
 
 export default function MainPage() {
@@ -180,6 +182,14 @@ export default function MainPage() {
 
           {currentView === 'importBill' && (
             <ImportBill onDone={() => selectView('dashboard')} />
+          )}
+
+          {currentView === 'pluggySync' && (
+            <PluggySync onDone={() => selectView('dashboard')} />
+          )}
+
+          {currentView === 'pluggyConfig' && (
+            <PluggyConfig />
           )}
         </div>
       </div>
