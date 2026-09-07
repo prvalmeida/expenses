@@ -245,7 +245,19 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
       return { row, type, subtype, paymentReady };
     });
     const ready = resolved.filter(r => r.type !== null && r.paymentReady);
-    if (ready.length === 0) return;
+    if (ready.length === 0) {
+      // Silently doing nothing on a click is indistinguishable from a broken
+      // button: say which gate rejected the selection.
+      const noType = resolved.filter(r => r.type === null).length;
+      const noCard = resolved.filter(r => r.type !== null && !r.paymentReady).length;
+      setNotice(null);
+      setError(
+        noCard > 0 && noType === 0
+          ? 'Nenhum gasto importado: selecione a bandeira do cartão nas linhas de crédito.'
+          : 'Nenhum gasto importado: as linhas selecionadas precisam de uma categoria válida (e da bandeira, no crédito).'
+      );
+      return;
+    }
 
     // Compare against the *effective* suggested values from the staged row,
     // never the raw parsed state — an orphaned suggestion the user never
@@ -327,6 +339,12 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
   };
 
   const unclassifiedExpenses = expenseRows.filter(r => effectiveType(r.resolvedType) === null).length;
+  // A credit row with no cardBrand is dropped by the same confirm gate as an
+  // unclassified one, so it needs the same up-front warning — otherwise the
+  // row looks ready and simply fails to import.
+  const expensesMissingCardBrand = expenseRows.filter(
+    r => r.resolvedPaymentType === 'credit' && r.resolvedCardBrand === ''
+  ).length;
   const unclassifiedIncomes = incomeRows.filter(r => effectiveIncomeType(r.resolvedType) === null).length;
 
   const renderExpenseRow = (row: ExpenseRowState) => {
@@ -541,6 +559,12 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
             {unclassifiedExpenses > 0 && (
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-3">
                 ⚠ {unclassifiedExpenses} {unclassifiedExpenses === 1 ? 'gasto sem categoria válida' : 'gastos sem categoria válida'} — {unclassifiedExpenses === 1 ? 'não será importado' : 'não serão importados'}.
+              </p>
+            )}
+
+            {expensesMissingCardBrand > 0 && (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-3">
+                ⚠ {expensesMissingCardBrand} {expensesMissingCardBrand === 1 ? 'gasto no crédito sem bandeira' : 'gastos no crédito sem bandeira'} — {expensesMissingCardBrand === 1 ? 'não será importado' : 'não serão importados'} até você escolher o cartão.
               </p>
             )}
 

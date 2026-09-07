@@ -1,6 +1,6 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
-import Income from '../models/Income';
+import { createIncome } from './incomeService';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
@@ -338,8 +338,14 @@ async function upsertTransaction(
       if (staging.statusReason !== undefined) $set.statusReason = staging.statusReason;
       else $unset.statusReason = '';
 
+      // The filter re-asserts the `ignoreOverridden` value this derivation was
+      // computed from: a human un-ignoring the row (PATCH /transactions/[id])
+      // between the read above and this write would otherwise be silently
+      // stomped back to `ignored` by a derivation that predates their click.
+      // Matching zero rows is the correct outcome — the next sync re-derives
+      // from the new flag.
       await PluggyTransaction.updateOne(
-        { pluggyId: tx.id },
+        { pluggyId: tx.id, ignoreOverridden: existing.ignoreOverridden },
         Object.keys($unset).length ? { $set, $unset } : { $set }
       );
     }
@@ -776,7 +782,7 @@ async function autoImportIncomes(result: AutoImportResult): Promise<void> {
       continue;
     }
 
-    const income = await Income.create({
+    const income = await createIncome({
       name: row.description,
       value: Math.abs(row.amount),
       type: account.defaultIncomeType,
@@ -904,7 +910,7 @@ async function importStagedIncome(
     return;
   }
 
-  const income = await Income.create({
+  const income = await createIncome({
     name: row.description,
     value: Math.abs(row.amount),
     type: item.type,
