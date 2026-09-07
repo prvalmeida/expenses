@@ -26,7 +26,7 @@ const PluggyTransactionSchema = new mongoose.Schema(
     // derivation against what Pluggy actually sent.
     raw: { type: mongoose.Schema.Types.Mixed, required: true },
 
-    // --- derived by the payment-type/direction ladder (not implemented yet) ---
+    // --- derived by the payment-type/direction ladder (pluggyUtils.ts) ---
     direction: { type: String, enum: ['outflow', 'inflow'], required: false },
     paymentType: { type: String, required: false },
     cardBrand: { type: String, enum: Object.values(CardBrand), required: false },
