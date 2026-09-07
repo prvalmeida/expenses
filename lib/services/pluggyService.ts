@@ -3,6 +3,7 @@ import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
+import { mapPluggyTransaction } from '../utils/pluggyUtils';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -134,42 +135,71 @@ export interface SyncAccountResult {
   anomalies: number;
 }
 
-// Upserts one row by pluggyId. This is a placeholder for the full idempotency
-// rule (never touch an `imported` row's raw fields, flag drift as an anomaly)
-// — insert-or-refresh only, refined in the next step.
-async function upsertRawTransaction(
-  tx: PluggyTransactionApi,
-  account: { accountId: string; itemId: string }
-): Promise<'created' | 'updated'> {
-  const now = new Date();
-  const existing = await PluggyTransaction.findOne({ pluggyId: tx.id }).select('_id').lean();
+export type PluggyUpsertOutcome = 'created' | 'updated' | 'anomaly' | 'unchanged';
 
-  await PluggyTransaction.findOneAndUpdate(
-    { pluggyId: tx.id },
-    {
-      $set: {
+interface ExistingTransactionSnapshot {
+  status: string;
+  amount: number;
+  date: string;
+}
+
+// The idempotency rule, keyed on pluggyId:
+// - new                       -> insert as 'pending'.
+// - existing, pending/ignored -> refresh raw fields, bump lastSeenAt.
+// - existing, imported        -> raw fields are NEVER touched. If amount or
+//   date drifted since import, flag 'anomaly' and leave the Expense alone —
+//   editing an already-posted expense is a decision for a human, not a poller.
+// - existing, anything else (skipped_existing / already anomaly) -> a human or
+//   a later phase already decided this row's fate; a resync must not revisit it.
+async function upsertTransaction(
+  tx: PluggyTransactionApi,
+  account: { accountId: string; itemId: string },
+  { dryRun = false }: { dryRun?: boolean } = {}
+): Promise<PluggyUpsertOutcome> {
+  const fields = mapPluggyTransaction(tx);
+  const existing = await PluggyTransaction.findOne({ pluggyId: tx.id })
+    .select('status amount date')
+    .lean<ExistingTransactionSnapshot | null>();
+
+  if (!existing) {
+    if (!dryRun) {
+      const now = new Date();
+      await PluggyTransaction.create({
+        pluggyId: tx.id,
         accountId: account.accountId,
         itemId: account.itemId,
-        date: tx.date,
-        amount: tx.amount,
-        currencyCode: tx.currencyCode ?? 'BRL',
-        descriptionRaw: tx.description,
-        description: tx.description.trim().replace(/\s+/g, ' '),
-        merchantName: tx.merchant?.name ?? undefined,
-        pluggyCategory: tx.category ?? undefined,
-        pluggyStatus: tx.status ?? 'POSTED',
-        installmentCurrent: tx.creditCardMetadata?.installmentNumber ?? undefined,
-        installmentTotal: tx.creditCardMetadata?.totalInstallments ?? undefined,
-        paymentMethod: tx.paymentData?.paymentMethod ?? undefined,
-        raw: tx,
+        ...fields,
+        status: 'pending',
+        firstSeenAt: now,
         lastSeenAt: now,
-      },
-      $setOnInsert: { pluggyId: tx.id, status: 'pending', firstSeenAt: now },
-    },
-    { upsert: true }
-  );
+      });
+    }
+    return 'created';
+  }
 
-  return existing ? 'updated' : 'created';
+  if (existing.status === 'imported') {
+    const changed = existing.amount !== fields.amount || existing.date !== fields.date;
+    if (!changed) return 'unchanged';
+    if (!dryRun) {
+      await PluggyTransaction.updateOne(
+        { pluggyId: tx.id },
+        { $set: { status: 'anomaly', statusReason: 'Valor ou data mudaram após a importação.' } }
+      );
+    }
+    return 'anomaly';
+  }
+
+  if (existing.status === 'pending' || existing.status === 'ignored') {
+    if (!dryRun) {
+      await PluggyTransaction.updateOne(
+        { pluggyId: tx.id },
+        { $set: { ...fields, lastSeenAt: new Date() } }
+      );
+    }
+    return 'updated';
+  }
+
+  return 'unchanged';
 }
 
 // Fetches one enabled account's transactions into staging. `lastSyncedAt` only
@@ -196,14 +226,14 @@ export async function syncAccount(
     const { results: rows } = await listTransactions({ accountId, from, to, page, pageSize: PAGE_SIZE });
     result.fetched += rows.length;
 
-    // dryRun fetches and reports counts, writing nothing — the same contract
-    // a migration's dry run has.
-    if (!dryRun) {
-      for (const tx of rows) {
-        const outcome = await upsertRawTransaction(tx, account);
-        if (outcome === 'created') result.created++;
-        else result.updated++;
-      }
+    // dryRun still classifies each row (a DB read) so the report reflects what
+    // would happen, but upsertTransaction writes nothing when dryRun is set —
+    // the same contract a migration's dry run has.
+    for (const tx of rows) {
+      const outcome = await upsertTransaction(tx, account, { dryRun });
+      if (outcome === 'created') result.created++;
+      else if (outcome === 'updated') result.updated++;
+      else if (outcome === 'anomaly') result.anomalies++;
     }
 
     if (rows.length < PAGE_SIZE) break;
