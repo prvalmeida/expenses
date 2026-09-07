@@ -1,4 +1,6 @@
 import { PluggyTransactionApi } from '../pluggy/client';
+import { isPlausibleInstallment } from './billUtils';
+import { MAX_INSTALLMENTS } from '../api/schemas/common';
 
 // Collapses interior whitespace the way billMappingKey's normalizeDescription
 // does (billUtils.ts), so a merchant description stays stable across syncs
@@ -99,4 +101,26 @@ export function derivePaymentType(
   if (method === 'BOLETO') return { paymentType: 'debit' };
 
   return { paymentType: account.defaultPaymentType ?? 'debit' };
+}
+
+export interface DerivedInstallments {
+  current: number;
+  total: number;
+}
+
+// Pluggy's installment metadata is far more trustworthy than the Caixa bill
+// parser's regex guess, but it still goes through the exact same plausibility
+// guard (isPlausibleInstallment, exported from billUtils.ts — re-implementing
+// it here would be the duplication CLAUDE.md forbids) and the same
+// MAX_INSTALLMENTS bound: one bad row must not expand into thousands of
+// documents.
+export function deriveInstallments(fields: {
+  installmentCurrent?: number;
+  installmentTotal?: number;
+}): DerivedInstallments | undefined {
+  const { installmentCurrent: current, installmentTotal: total } = fields;
+  if (current === undefined || total === undefined) return undefined;
+  if (!isPlausibleInstallment(current, total)) return undefined;
+  if (total > MAX_INSTALLMENTS) return undefined;
+  return { current, total };
 }

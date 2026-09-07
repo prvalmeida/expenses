@@ -217,7 +217,10 @@ const C_INSTALL_TOKEN  = /\b(\d{2})\s+DE\s+(\d{2})\b/i;
 
 // A city or merchant name can contain a bare "NN DE NN" run ("POSTO 24 DE 05 CANOAS"), which
 // would otherwise be read as an installment and expanded into that many expense rows on import.
-function isPlausibleInstallment(current: number, total: number): boolean {
+// Exported so lib/utils/pluggyUtils.ts calls this exact symbol instead of re-implementing it —
+// Pluggy's installment metadata is more trustworthy than this regex guess, but a row can still
+// carry an implausible pair.
+export function isPlausibleInstallment(current: number, total: number): boolean {
   return total > 1 && current >= 1 && current <= total;
 }
 
