@@ -11,6 +11,7 @@ import {
   getItem,
   listAccounts,
   listTransactions,
+  patchItem,
   PluggyAccountApi,
   PluggyTransactionApi,
 } from '../pluggy/client';
@@ -139,6 +140,59 @@ export async function listItems() {
 // the value and nothing else.
 export async function mintConnectToken(): Promise<{ accessToken: string }> {
   return createConnectToken();
+}
+
+// The link rows across every item, for the config screen.
+export async function listAccountLinks() {
+  await connectToDatabase();
+  return PluggyAccount.find({}).sort({ itemId: 1, name: 1 }).lean();
+}
+
+export interface UpdateAccountLinkInput {
+  accountId: string;
+  kind: 'BANK' | 'CREDIT';
+  enabled: boolean;
+  cardBrand?: string;
+  defaultPaymentType?: string;
+  defaultIncomeType?: string;
+}
+
+// `kind` is immutable and read from Pluggy, never chosen by a caller — the
+// schema-level refine only checks the shape of what was claimed, so this
+// re-checks the claimed kind against the stored one before writing, the same
+// distrust-the-caller rule updateExpense applies to a merged PATCH payload.
+// The three optional fields are $unset when omitted, matching updateExpense's
+// PUT-is-a-full-replace rule: leaving one out means "clear it", not "keep it".
+export async function updateAccountLink(input: UpdateAccountLinkInput) {
+  await connectToDatabase();
+
+  const existing = await PluggyAccount.findOne({ accountId: input.accountId }).select('kind');
+  if (!existing) return null;
+
+  if (existing.kind !== input.kind) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      `kind não corresponde à conta: esperado ${existing.kind}, recebido ${input.kind}`
+    );
+  }
+
+  const $set: Record<string, unknown> = { enabled: input.enabled };
+  const $unset: Record<string, ''> = {};
+
+  if (input.cardBrand !== undefined) $set.cardBrand = input.cardBrand;
+  else $unset.cardBrand = '';
+
+  if (input.defaultPaymentType !== undefined) $set.defaultPaymentType = input.defaultPaymentType;
+  else $unset.defaultPaymentType = '';
+
+  if (input.defaultIncomeType !== undefined) $set.defaultIncomeType = input.defaultIncomeType;
+  else $unset.defaultIncomeType = '';
+
+  return PluggyAccount.findOneAndUpdate(
+    { accountId: input.accountId },
+    { $set, $unset },
+    { new: true }
+  );
 }
 
 // Card transactions post late and a PENDING row can still change, so the
@@ -483,6 +537,20 @@ export async function syncAll({ dryRun = false }: { dryRun?: boolean } = {}): Pr
   } finally {
     await releaseLock();
   }
+}
+
+// The manual "sincronizar agora" button — never the cron. PATCH /items/:id
+// forces Pluggy to refresh an item outside its normal update cadence; calling
+// it from every sync (including the 6h cron) would mostly re-request the same
+// data for no gain, so only this explicit, human-triggered path does it.
+// Best-effort per item: a refresh failure must not block the read that follows.
+export async function forceSyncAll(): Promise<SyncAllResult | null> {
+  await connectToDatabase();
+
+  const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
+  await Promise.all(items.map(({ itemId }) => patchItem(itemId).catch(() => undefined)));
+
+  return syncAll({ dryRun: false });
 }
 
 export interface AutoImportResult {
