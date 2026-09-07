@@ -592,3 +592,126 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
 
   return result;
 }
+
+// The manual path from the review screen: explicit rows a human classified,
+// rather than a BillMapping hit or an account default.
+export interface ImportStagedItem {
+  pluggyId: string;
+  kind: 'expense' | 'income';
+  type: string;
+  subtype?: string;
+  paymentType?: string;
+  cardBrand?: string;
+  // Upserts a BillMapping (expense rows only) so the next occurrence of this
+  // merchant auto-imports — the same envelope shape and the same rule that
+  // only skippedInvalid is actionable as the bill import.
+  newMapping?: boolean;
+}
+
+export interface ImportStagedResult {
+  imported: number;
+  skippedInvalid: number;
+  skippedExisting: number;
+}
+
+async function importStagedExpense(
+  row: InstanceType<typeof PluggyTransaction>,
+  item: ImportStagedItem,
+  result: ImportStagedResult
+): Promise<void> {
+  const valid = await validateExpensePair(item.type, item.subtype);
+  if (!valid) {
+    result.skippedInvalid++;
+    return;
+  }
+
+  const installments = deriveInstallments({
+    installmentCurrent: row.installmentCurrent ?? undefined,
+    installmentTotal: row.installmentTotal ?? undefined,
+  });
+  if (row.installmentTotal && row.installmentTotal > 1 && !installments) {
+    result.skippedInvalid++;
+    return;
+  }
+
+  const paymentType = item.paymentType ?? row.paymentType ?? 'debit';
+  const cardBrand = item.cardBrand ?? row.cardBrand ?? undefined;
+
+  const documents = await buildExpenseDocuments({
+    name: row.description,
+    value: Math.abs(row.amount),
+    type: item.type,
+    subtype: item.subtype,
+    paymentType,
+    cardBrand,
+    date: anchorPurchaseDate(row, installments),
+    installments: installments ? installments.total : 1,
+    valueIsTotal: false,
+  });
+
+  const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, !!installments);
+  result.skippedExisting += skippedExisting;
+
+  if (importedIds.length > 0) {
+    row.status = 'imported';
+    row.importedExpenseIds = importedIds;
+    result.imported++;
+  } else {
+    row.status = 'skipped_existing';
+  }
+  await row.save();
+
+  if (item.newMapping) {
+    await BillMapping.updateOne(
+      { description: billMappingKey(row.description) },
+      { $set: { type: item.type, subtype: item.subtype } },
+      { upsert: true }
+    );
+  }
+}
+
+async function importStagedIncome(
+  row: InstanceType<typeof PluggyTransaction>,
+  item: ImportStagedItem,
+  result: ImportStagedResult
+): Promise<void> {
+  const valid = await validateIncomeType(item.type);
+  if (!valid) {
+    result.skippedInvalid++;
+    return;
+  }
+
+  const income = await Income.create({
+    name: row.description,
+    value: Math.abs(row.amount),
+    type: item.type,
+    date: row.date,
+  });
+
+  row.status = 'imported';
+  row.importedIncomeId = String(income._id);
+  await row.save();
+  result.imported++;
+}
+
+export async function importStaged(items: ImportStagedItem[]): Promise<ImportStagedResult> {
+  await connectToDatabase();
+
+  const result: ImportStagedResult = { imported: 0, skippedInvalid: 0, skippedExisting: 0 };
+
+  for (const item of items) {
+    const row = await PluggyTransaction.findOne({ pluggyId: item.pluggyId });
+    if (!row) {
+      result.skippedInvalid++;
+      continue;
+    }
+
+    if (item.kind === 'expense') {
+      await importStagedExpense(row, item, result);
+    } else {
+      await importStagedIncome(row, item, result);
+    }
+  }
+
+  return result;
+}
