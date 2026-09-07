@@ -1,5 +1,6 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
+import Income from '../models/Income';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
@@ -15,7 +16,7 @@ import {
   PluggyAccountLike,
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
-import { validateExpensePair } from '../utils/categoryUtils';
+import { validateExpensePair, validateIncomeType } from '../utils/categoryUtils';
 import { buildExpenseDocuments, ExpenseDocument } from './expenseService';
 import { addMonthsClamped } from '../utils/dateUtils';
 import { ApiError } from '../api/respond';
@@ -534,6 +535,48 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
   }
 }
 
+// Over status: 'pending' inflows on BANK accounts: account.defaultIncomeType
+// set and validateIncomeType passing creates the Income and marks imported;
+// otherwise the row stays pending for review. There is deliberately no income
+// mapping table — inflows are low-volume and repetitive, and a per-account
+// default covers the recurring case (salary), leaving everything else as a
+// couple of manual clicks a month. Same POSTED-only rule as expenses: a
+// PENDING row can still vanish and must never be auto-imported.
+async function autoImportIncomes(result: AutoImportResult): Promise<void> {
+  const accounts = await PluggyAccount.find({ kind: 'BANK' }).lean<
+    { accountId: string; defaultIncomeType?: string | null }[]
+  >();
+  const accountsById = new Map(accounts.map(a => [a.accountId, a]));
+
+  const rows = await PluggyTransaction.find({ status: 'pending', direction: 'inflow', pluggyStatus: 'POSTED' });
+
+  for (const row of rows) {
+    const account = accountsById.get(row.accountId);
+    if (!account || !account.defaultIncomeType) {
+      result.stillPending++;
+      continue;
+    }
+
+    const valid = await validateIncomeType(account.defaultIncomeType);
+    if (!valid) {
+      result.stillPending++;
+      continue;
+    }
+
+    const income = await Income.create({
+      name: row.description,
+      value: Math.abs(row.amount),
+      type: account.defaultIncomeType,
+      date: row.date,
+    });
+
+    row.status = 'imported';
+    row.importedIncomeId = String(income._id);
+    await row.save();
+    result.incomesImported++;
+  }
+}
+
 export async function autoImportStaged(): Promise<AutoImportResult> {
   await connectToDatabase();
 
@@ -545,6 +588,7 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
   };
 
   await autoImportExpenses(result);
+  await autoImportIncomes(result);
 
   return result;
 }
