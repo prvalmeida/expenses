@@ -21,12 +21,12 @@ import {
   derivePaymentType,
   deriveInstallments,
   shouldIgnore,
+  anchorPurchaseDate,
   PluggyAccountLike,
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
 import { validateExpensePair, validateIncomeType } from '../utils/categoryUtils';
 import { buildExpenseDocuments, ExpenseDocument } from './expenseService';
-import { addMonthsClamped } from '../utils/dateUtils';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -571,16 +571,6 @@ export interface AutoImportResult {
   incomesImported: number;
   stillPending: number;
   skippedExisting: number;
-}
-
-// A Pluggy row's date is the POSTING date of the one installment it
-// represents, not the original purchase date — buildExpenseDocuments walks
-// forward from `date` treating it as installment 1, so a mid-series row must
-// be backed off by (installmentCurrent - 1) months before being passed in.
-// addMonthsClamped handles the negative offset correctly.
-function anchorPurchaseDate(row: { date: string }, installments?: { current: number }): string {
-  if (!installments) return row.date;
-  return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
 }
 
 // The skipped_existing check, within Pluggy only — reuses billService's guard

@@ -1,6 +1,7 @@
 import { PluggyTransactionApi } from '../pluggy/client';
 import { isPlausibleInstallment } from './billUtils';
 import { MAX_INSTALLMENTS } from '../api/schemas/common';
+import { addMonthsClamped } from './dateUtils';
 
 // Collapses interior whitespace the way billMappingKey's normalizeDescription
 // does (billUtils.ts), so a merchant description stays stable across syncs
@@ -208,6 +209,18 @@ export interface IgnoreOutcome {
   ignored: boolean;
   ruleId?: string;
   reason?: string;
+}
+
+// A Pluggy row's date is the POSTING date of the one installment it
+// represents, not the original purchase date — buildExpenseDocuments walks
+// forward from `date` treating it as installment 1, so a mid-series row must
+// be backed off by (installmentCurrent - 1) months before being passed in.
+// addMonthsClamped handles the negative offset correctly, and also clamps a
+// day-31 anchor to the target month's last valid day, so the reconstruction
+// is a purchase *month*, not a guaranteed exact calendar day.
+export function anchorPurchaseDate(row: { date: string }, installments?: { current: number }): string {
+  if (!installments) return row.date;
+  return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
 }
 
 export function shouldIgnore(
