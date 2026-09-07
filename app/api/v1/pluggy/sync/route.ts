@@ -3,15 +3,15 @@ import { requireApiKey } from '@/lib/api/auth';
 import { ok, failFrom } from '@/lib/api/respond';
 import { validateQuery, validationFailed } from '@/lib/api/validate';
 import { syncPluggyQuerySchema } from '@/lib/api/schemas/pluggy';
-import { autoImportStaged, syncAccount, syncAll } from '@/lib/services/pluggyService';
+import { runPluggySync } from '@/lib/services/pluggyService';
 
 // The cron target (Easypanel, every 6h). Never forces a Pluggy refresh —
 // PATCH /items/:id is reserved for the internal "sincronizar agora" button —
-// so this only re-reads what Pluggy already has. A non-dryRun sync is
-// immediately followed by autoImportStaged: this route is the only automated
-// trigger in the pipeline, so filling staging without also draining the
-// BillMapping-matched rows would leave every mapped merchant waiting on a
-// human forever.
+// so this only re-reads what Pluggy already has. runPluggySync holds the
+// advisory lock around fetch AND the autoImportStaged that follows: this
+// route is the only automated trigger in the pipeline, so filling staging
+// without also draining the BillMapping-matched rows would leave every
+// mapped merchant waiting on a human forever.
 export async function POST(request: NextRequest) {
   const unauthorized = requireApiKey(request);
   if (unauthorized) return unauthorized;
@@ -22,15 +22,13 @@ export async function POST(request: NextRequest) {
 
     const { dryRun, accountId } = query.data;
 
-    const sync = accountId ? await syncAccount(accountId, { dryRun }) : await syncAll({ dryRun });
+    const result = await runPluggySync({ dryRun, accountId });
 
-    // syncAll returns null when another run already holds the advisory lock —
-    // not an error, just nothing to report this time.
-    if (sync === null) return ok({ locked: true });
+    // runPluggySync returns null when another run already holds the advisory
+    // lock — not an error, just nothing to report this time.
+    if (result === null) return ok({ locked: true });
 
-    const autoImport = dryRun ? undefined : await autoImportStaged();
-
-    return ok({ sync, ...(autoImport && { autoImport }) });
+    return ok(result);
   } catch (error) {
     return failFrom(error);
   }

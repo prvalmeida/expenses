@@ -121,15 +121,15 @@ export async function registerItem({ itemId, label }: RegisterItemInput): Promis
 }
 
 // Polls Pluggy for an item's current status (UPDATED / LOGIN_ERROR / ...)
-// without touching its accounts. Used standalone (monitoring) and by syncAll,
-// which refreshes every item's status before paging any account.
+// without touching its accounts. Used standalone (monitoring) and by
+// syncAllAccounts, which refreshes every item's status before paging any account.
 export async function refreshItemStatus(itemId: string): Promise<{ status: string }> {
   await connectToDatabase();
   return upsertItemFromApi(itemId);
 }
 
 // Item health, for monitoring — the last status this app observed, not a
-// fresh Pluggy read (refreshItemStatus/syncAll already keep it current).
+// fresh Pluggy read (refreshItemStatus/syncAllAccounts already keep it current).
 export async function listItems() {
   await connectToDatabase();
   return PluggyItem.find({}).sort({ label: 1 }).lean();
@@ -413,13 +413,17 @@ export async function syncAccount(
 
 // The review screen's one-click "não ignorar": only a currently-ignored row
 // can move back to pending — imported/anomaly/skipped_existing status is not a
-// toggle a human flips from the review screen.
+// toggle a human flips from the review screen. Sets `ignoreOverridden` so the
+// next resync's re-derive (upsertTransaction) does not silently re-ignore the
+// row — the ignore signal is the description/counterparty, which never
+// changes, so without the flag this override would be reverted on the next
+// sync tick.
 export async function unignoreTransaction(pluggyId: string) {
   await connectToDatabase();
 
   return PluggyTransaction.findOneAndUpdate(
     { pluggyId, status: 'ignored' },
-    { $set: { status: 'pending' }, $unset: { statusReason: '' } },
+    { $set: { status: 'pending', ignoreOverridden: true }, $unset: { statusReason: '' } },
     { new: true }
   );
 }
@@ -512,6 +516,23 @@ async function releaseLock(): Promise<void> {
   await PluggySyncLock.deleteOne({ _id: LOCK_ID });
 }
 
+// Acquires the lock, runs `fn`, and always releases — returning null (rather
+// than calling `fn` at all) when another run already holds it. The lock now
+// covers fetch AND import: the cron and "sincronizar agora" both end with
+// autoImportStaged, and if that ran outside the lock two overlapping triggers
+// could import the same staged row twice — the double-count this integration
+// exists to prevent, just moved one phase later.
+async function withSyncLock<T>(fn: () => Promise<T>): Promise<T | null> {
+  const acquired = await tryAcquireLock();
+  if (!acquired) return null;
+
+  try {
+    return await fn();
+  } finally {
+    await releaseLock();
+  }
+}
+
 export interface SyncAllAccountResult extends SyncAccountResult {
   error?: string;
 }
@@ -521,67 +542,83 @@ export interface SyncAllResult {
   items: { itemId: string; status: string }[];
 }
 
-// The cron entry point. Refreshes every item's status first, then syncs every
-// enabled account — continuing past a single failing account (collecting its
-// error) so one LOGIN_ERROR bank does not stop the others. Returns null when
-// another run already holds the lock, so two overlapping cron firings can
-// never page the same account.
-export async function syncAll({ dryRun = false }: { dryRun?: boolean } = {}): Promise<SyncAllResult | null> {
-  await connectToDatabase();
-
-  const acquired = await tryAcquireLock();
-  if (!acquired) return null;
-
-  try {
-    const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
-    const itemResults: { itemId: string; status: string }[] = [];
-    for (const { itemId } of items) {
-      try {
-        const { status } = await refreshItemStatus(itemId);
-        itemResults.push({ itemId, status });
-      } catch (error) {
-        itemResults.push({
-          itemId,
-          status: `REFRESH_FAILED: ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
+// Lock-free: refreshes every item's status, then syncs every enabled account —
+// continuing past a single failing account (collecting its error) so one
+// LOGIN_ERROR bank does not stop the others. Must only be called from inside
+// withSyncLock (via runPluggySync).
+async function syncAllAccounts({ dryRun = false }: { dryRun?: boolean } = {}): Promise<SyncAllResult> {
+  const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
+  const itemResults: { itemId: string; status: string }[] = [];
+  for (const { itemId } of items) {
+    try {
+      const { status } = await refreshItemStatus(itemId);
+      itemResults.push({ itemId, status });
+    } catch (error) {
+      itemResults.push({
+        itemId,
+        status: `REFRESH_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+      });
     }
-
-    const accounts = await PluggyAccount.find({ enabled: true }).select('accountId').lean<{ accountId: string }[]>();
-    const accountResults: SyncAllAccountResult[] = [];
-    for (const { accountId } of accounts) {
-      try {
-        accountResults.push(await syncAccount(accountId, { dryRun }));
-      } catch (error) {
-        accountResults.push({
-          accountId,
-          fetched: 0,
-          created: 0,
-          updated: 0,
-          anomalies: 0,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    return { accounts: accountResults, items: itemResults };
-  } finally {
-    await releaseLock();
   }
+
+  const accounts = await PluggyAccount.find({ enabled: true }).select('accountId').lean<{ accountId: string }[]>();
+  const accountResults: SyncAllAccountResult[] = [];
+  for (const { accountId } of accounts) {
+    try {
+      accountResults.push(await syncAccount(accountId, { dryRun }));
+    } catch (error) {
+      accountResults.push({
+        accountId,
+        fetched: 0,
+        created: 0,
+        updated: 0,
+        anomalies: 0,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { accounts: accountResults, items: itemResults };
 }
 
-// The manual "sincronizar agora" button — never the cron. PATCH /items/:id
-// forces Pluggy to refresh an item outside its normal update cadence; calling
-// it from every sync (including the 6h cron) would mostly re-request the same
-// data for no gain, so only this explicit, human-triggered path does it.
-// Best-effort per item: a refresh failure must not block the read that follows.
-export async function forceSyncAll(): Promise<SyncAllResult | null> {
+export interface RunPluggySyncInput {
+  dryRun?: boolean;
+  accountId?: string;
+  // PATCH /items/:id forces Pluggy to refresh an item outside its normal
+  // update cadence — only the human-triggered "sincronizar agora" path wants
+  // this; the 6h cron just re-reads what Pluggy already has. Best-effort per
+  // item: a refresh failure must not block the read that follows.
+  forceRefresh?: boolean;
+}
+
+export interface RunPluggySyncResult {
+  sync: SyncAllResult | SyncAccountResult;
+  autoImport?: AutoImportResult;
+}
+
+// The single entry point both sync routes call. Acquires the advisory lock
+// ONCE around the whole pipeline — refresh (if forced), fetch, then import —
+// so the cron and "sincronizar agora" can never run autoImportStaged over the
+// same pending rows concurrently. Returns null when another run already holds
+// the lock.
+export async function runPluggySync({
+  dryRun = false,
+  accountId,
+  forceRefresh = false,
+}: RunPluggySyncInput = {}): Promise<RunPluggySyncResult | null> {
   await connectToDatabase();
 
-  const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
-  await Promise.all(items.map(({ itemId }) => patchItem(itemId).catch(() => undefined)));
+  return withSyncLock(async () => {
+    if (forceRefresh) {
+      const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
+      await Promise.all(items.map(({ itemId }) => patchItem(itemId).catch(() => undefined)));
+    }
 
-  return syncAll({ dryRun: false });
+    const sync = accountId ? await syncAccount(accountId, { dryRun }) : await syncAllAccounts({ dryRun });
+    const autoImport = dryRun ? undefined : await autoImportStaged();
+
+    return { sync, ...(autoImport && { autoImport }) };
+  });
 }
 
 export interface AutoImportResult {

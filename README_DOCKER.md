@@ -118,9 +118,11 @@ Cron: `0 */6 * * *`.
 - `-f` makes `curl` exit non-zero on a non-2xx response, so a failing sync
   shows up as a **failed task**, not a green run with an error body silently
   ignored.
-- `syncAll` holds an advisory lock (`PluggySyncLock`), so an overlapping
-  scheduled run exits quietly rather than double-paging an account — no
-  extra guard is needed on the Easypanel side.
+- `runPluggySync` holds an advisory lock (`PluggySyncLock`) around fetch AND
+  the auto-import that follows, so an overlapping scheduled run — or the
+  "sincronizar agora" button firing at the same time — exits quietly rather
+  than double-paging an account or double-importing a staged row. No extra
+  guard is needed on the Easypanel side.
 
 **Fallback if the installed Easypanel version has no scheduled-task feature:**
 a second, tiny Compose service running a sleep/curl loop on the same network,
