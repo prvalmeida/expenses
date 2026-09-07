@@ -6,7 +6,14 @@ import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
 import { BillMapping } from '../models/BillMapping';
-import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
+import {
+  createConnectToken,
+  getItem,
+  listAccounts,
+  listTransactions,
+  PluggyAccountApi,
+  PluggyTransactionApi,
+} from '../pluggy/client';
 import {
   mapPluggyTransaction,
   deriveDirection,
@@ -118,6 +125,20 @@ export async function registerItem({ itemId, label }: RegisterItemInput): Promis
 export async function refreshItemStatus(itemId: string): Promise<{ status: string }> {
   await connectToDatabase();
   return upsertItemFromApi(itemId);
+}
+
+// Item health, for monitoring — the last status this app observed, not a
+// fresh Pluggy read (refreshItemStatus/syncAll already keep it current).
+export async function listItems() {
+  await connectToDatabase();
+  return PluggyItem.find({}).sort({ label: 1 }).lean();
+}
+
+// Mints the short-lived widget token Pluggy Connect uses to create an item in
+// the browser, so a bank credential never transits this app. Returned as-is —
+// the value and nothing else.
+export async function mintConnectToken(): Promise<{ accessToken: string }> {
+  return createConnectToken();
 }
 
 // Card transactions post late and a PENDING row can still change, so the
@@ -316,6 +337,56 @@ export async function syncAccount(
   }
 
   return result;
+}
+
+export interface ListPluggyTransactionsFilter {
+  status?: string;
+  accountId?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface ListPluggyTransactionsResult {
+  items: unknown[];
+  nextCursor: string | null;
+}
+
+// Keyset pagination on `date`, mirroring listExpenses in expenseService.ts —
+// not skip/limit, so a review-screen page walk is stable under concurrent
+// syncs. The cursor is the last returned _id.
+export async function listPluggyTransactions(
+  filter: ListPluggyTransactionsFilter = {}
+): Promise<ListPluggyTransactionsResult> {
+  await connectToDatabase();
+
+  const limit = filter.limit ?? 100;
+  const query: Record<string, unknown> = {};
+  if (filter.status) query.status = filter.status;
+  if (filter.accountId) query.accountId = filter.accountId;
+
+  if (filter.cursor) {
+    const anchor = await PluggyTransaction.findById(filter.cursor)
+      .select('date')
+      .lean<{ date: string } | null>();
+    // A cursor pointing at a deleted row yields no page rather than silently
+    // restarting from the top.
+    if (!anchor) return { items: [], nextCursor: null };
+    query.$or = [{ date: { $lt: anchor.date } }, { date: anchor.date, _id: { $lt: filter.cursor } }];
+  }
+
+  // One extra row is fetched to tell "page is full" from "there is more".
+  const docs = await PluggyTransaction.find(query)
+    .sort({ date: -1, _id: -1 })
+    .limit(limit + 1)
+    .lean();
+
+  const hasMore = docs.length > limit;
+  const items = hasMore ? docs.slice(0, limit) : docs;
+
+  return {
+    items,
+    nextCursor: hasMore ? String((items[items.length - 1] as { _id: unknown })._id) : null,
+  };
 }
 
 const LOCK_ID = 'singleton';
