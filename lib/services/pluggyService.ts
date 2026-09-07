@@ -2,6 +2,7 @@ import connectToDatabase from '../mongodb';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
+import { PluggySyncLock } from '../models/PluggySyncLock';
 import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
 import { mapPluggyTransaction } from '../utils/pluggyUtils';
 import { ApiError } from '../api/respond';
@@ -245,4 +246,100 @@ export async function syncAccount(
   }
 
   return result;
+}
+
+const LOCK_ID = 'singleton';
+// Long enough to cover a full run across every enabled account (each capped at
+// MAX_SYNC_PAGES pages); short enough that a crashed run does not block the
+// next cron tick indefinitely.
+const LOCK_STALE_MS = 15 * 60 * 1000;
+
+// Mongo signals a unique-index violation with code 11000 — the migration
+// ledger (migrationService.ts) uses the same check for the same reason.
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: number }).code === 11000;
+}
+
+// Acquires the singleton lock document, taking over a stale one by timestamp.
+// The insert-vs-duplicate-key outcome *is* the answer to "did I get it" — see
+// migrationService.ts's ledger claim for the same pattern.
+async function tryAcquireLock(): Promise<boolean> {
+  const threshold = new Date(Date.now() - LOCK_STALE_MS);
+  try {
+    await PluggySyncLock.findOneAndUpdate(
+      { _id: LOCK_ID, acquiredAt: { $lt: threshold } },
+      { $set: { acquiredAt: new Date() } },
+      { upsert: true }
+    );
+    return true;
+  } catch (error) {
+    if (isDuplicateKeyError(error)) return false;
+    throw error;
+  }
+}
+
+// Explicit release rather than waiting out the staleness threshold: this run
+// just stamped the lock with `now`, so no concurrent acquire could have slipped
+// in while it worked, and releasing lets the next legitimate run proceed right
+// away instead of blocking for LOCK_STALE_MS.
+async function releaseLock(): Promise<void> {
+  await PluggySyncLock.deleteOne({ _id: LOCK_ID });
+}
+
+export interface SyncAllAccountResult extends SyncAccountResult {
+  error?: string;
+}
+
+export interface SyncAllResult {
+  accounts: SyncAllAccountResult[];
+  items: { itemId: string; status: string }[];
+}
+
+// The cron entry point. Refreshes every item's status first, then syncs every
+// enabled account — continuing past a single failing account (collecting its
+// error) so one LOGIN_ERROR bank does not stop the others. Returns null when
+// another run already holds the lock, so two overlapping cron firings can
+// never page the same account.
+export async function syncAll({ dryRun = false }: { dryRun?: boolean } = {}): Promise<SyncAllResult | null> {
+  await connectToDatabase();
+
+  const acquired = await tryAcquireLock();
+  if (!acquired) return null;
+
+  try {
+    const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
+    const itemResults: { itemId: string; status: string }[] = [];
+    for (const { itemId } of items) {
+      try {
+        const { status } = await refreshItemStatus(itemId);
+        itemResults.push({ itemId, status });
+      } catch (error) {
+        itemResults.push({
+          itemId,
+          status: `REFRESH_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    }
+
+    const accounts = await PluggyAccount.find({ enabled: true }).select('accountId').lean<{ accountId: string }[]>();
+    const accountResults: SyncAllAccountResult[] = [];
+    for (const { accountId } of accounts) {
+      try {
+        accountResults.push(await syncAccount(accountId, { dryRun }));
+      } catch (error) {
+        accountResults.push({
+          accountId,
+          fetched: 0,
+          created: 0,
+          updated: 0,
+          anomalies: 0,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { accounts: accountResults, items: itemResults };
+  } finally {
+    await releaseLock();
+  }
 }
