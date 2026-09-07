@@ -1,10 +1,16 @@
 import connectToDatabase from '../mongodb';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
-import { getItem, listAccounts, PluggyAccountApi } from '../pluggy/client';
+import { PluggyTransaction } from '../models/PluggyTransaction';
+import { getItem, listAccounts, listTransactions, PluggyAccountApi, PluggyTransactionApi } from '../pluggy/client';
+import { ApiError } from '../api/respond';
 
 function today(): string {
   return new Date().toISOString().split('T')[0];
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().split('T')[0];
 }
 
 // Upserts PluggyItem from a fresh /items/:id read. `label` is only supplied by
@@ -96,4 +102,117 @@ export async function registerItem({ itemId, label }: RegisterItemInput): Promis
 export async function refreshItemStatus(itemId: string): Promise<{ status: string }> {
   await connectToDatabase();
   return upsertItemFromApi(itemId);
+}
+
+// Card transactions post late and a PENDING row can still change, so the
+// window always re-covers the last few days rather than starting exactly
+// where the previous sync left off.
+const DEFAULT_OVERLAP_DAYS = 5;
+// A pagination bug (or a page that never shrinks) must not loop forever.
+const MAX_SYNC_PAGES = 50;
+const PAGE_SIZE = 100;
+
+function computeSyncWindow(
+  account: { connectedAt: string; lastSyncedAt?: Date | null },
+  overlapDays: number
+): { from: string; to: string } {
+  const to = toIsoDate(new Date());
+  if (!account.lastSyncedAt) return { from: account.connectedAt, to };
+
+  const overlapMs = overlapDays * 24 * 60 * 60 * 1000;
+  const overlapFrom = toIsoDate(new Date(account.lastSyncedAt.getTime() - overlapMs));
+  // ISO YYYY-MM-DD strings compare correctly lexically, so this is just `max`.
+  const from = overlapFrom > account.connectedAt ? overlapFrom : account.connectedAt;
+  return { from, to };
+}
+
+export interface SyncAccountResult {
+  accountId: string;
+  fetched: number;
+  created: number;
+  updated: number;
+  anomalies: number;
+}
+
+// Upserts one row by pluggyId. This is a placeholder for the full idempotency
+// rule (never touch an `imported` row's raw fields, flag drift as an anomaly)
+// — insert-or-refresh only, refined in the next step.
+async function upsertRawTransaction(
+  tx: PluggyTransactionApi,
+  account: { accountId: string; itemId: string }
+): Promise<'created' | 'updated'> {
+  const now = new Date();
+  const existing = await PluggyTransaction.findOne({ pluggyId: tx.id }).select('_id').lean();
+
+  await PluggyTransaction.findOneAndUpdate(
+    { pluggyId: tx.id },
+    {
+      $set: {
+        accountId: account.accountId,
+        itemId: account.itemId,
+        date: tx.date,
+        amount: tx.amount,
+        currencyCode: tx.currencyCode ?? 'BRL',
+        descriptionRaw: tx.description,
+        description: tx.description.trim().replace(/\s+/g, ' '),
+        merchantName: tx.merchant?.name ?? undefined,
+        pluggyCategory: tx.category ?? undefined,
+        pluggyStatus: tx.status ?? 'POSTED',
+        installmentCurrent: tx.creditCardMetadata?.installmentNumber ?? undefined,
+        installmentTotal: tx.creditCardMetadata?.totalInstallments ?? undefined,
+        paymentMethod: tx.paymentData?.paymentMethod ?? undefined,
+        raw: tx,
+        lastSeenAt: now,
+      },
+      $setOnInsert: { pluggyId: tx.id, status: 'pending', firstSeenAt: now },
+    },
+    { upsert: true }
+  );
+
+  return existing ? 'updated' : 'created';
+}
+
+// Fetches one enabled account's transactions into staging. `lastSyncedAt` only
+// advances once the whole account has succeeded — a page that fails partway
+// through must be re-fetched next run, and the overlap window alone is not a
+// guarantee if the failure outlasted it.
+export async function syncAccount(
+  accountId: string,
+  { dryRun = false }: { dryRun?: boolean } = {}
+): Promise<SyncAccountResult> {
+  await connectToDatabase();
+
+  const account = await PluggyAccount.findOne({ accountId });
+  if (!account) throw new ApiError('VALIDATION_FAILED', `Conta Pluggy desconhecida: ${accountId}`);
+  if (!account.enabled) throw new ApiError('VALIDATION_FAILED', `Conta Pluggy desabilitada: ${accountId}`);
+
+  // Read inside the function, never at module scope — see client.ts.
+  const overlapDays = Number(process.env.PLUGGY_SYNC_OVERLAP_DAYS ?? DEFAULT_OVERLAP_DAYS);
+  const { from, to } = computeSyncWindow(account, overlapDays);
+
+  const result: SyncAccountResult = { accountId, fetched: 0, created: 0, updated: 0, anomalies: 0 };
+
+  for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
+    const { results: rows } = await listTransactions({ accountId, from, to, page, pageSize: PAGE_SIZE });
+    result.fetched += rows.length;
+
+    // dryRun fetches and reports counts, writing nothing — the same contract
+    // a migration's dry run has.
+    if (!dryRun) {
+      for (const tx of rows) {
+        const outcome = await upsertRawTransaction(tx, account);
+        if (outcome === 'created') result.created++;
+        else result.updated++;
+      }
+    }
+
+    if (rows.length < PAGE_SIZE) break;
+  }
+
+  if (!dryRun) {
+    account.lastSyncedAt = new Date();
+    await account.save();
+  }
+
+  return result;
 }
