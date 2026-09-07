@@ -258,74 +258,89 @@ test('shouldIgnore: card-bill-payment does not fire on an inflow (only checks ou
   assert.equal(outcome.ignored, false);
 });
 
-test('shouldIgnore: own-transfer — payer document in PLUGGY_OWN_DOCUMENTS', () => {
-  const previous = process.env.PLUGGY_OWN_DOCUMENTS;
-  process.env.PLUGGY_OWN_DOCUMENTS = '11122233344,55566677788';
-  try {
-    const outcome = shouldIgnore(
-      { ...baseTx, paymentData: { payer: { documentNumber: '11122233344' } } },
-      { kind: 'BANK' },
-      'outflow',
-      { linkedAccountIds: new Set() }
-    );
-    assert.equal(outcome.ignored, true);
-    assert.equal(outcome.ruleId, 'own-transfer');
-  } finally {
-    if (previous === undefined) delete process.env.PLUGGY_OWN_DOCUMENTS;
-    else process.env.PLUGGY_OWN_DOCUMENTS = previous;
-  }
-});
+test('shouldIgnore: own-transfer — only the counterparty side is checked, never the holder\'s own side', () => {
+  const cases: Array<{
+    name: string;
+    ownDocuments?: string;
+    tx: Parameters<typeof shouldIgnore>[0];
+    direction: Parameters<typeof shouldIgnore>[2];
+    linkedAccountIds: Set<string>;
+    expectedIgnored: boolean;
+  }> = [
+    {
+      name: 'outflow whose counterparty (receiver) document is in PLUGGY_OWN_DOCUMENTS: ignored',
+      ownDocuments: '11122233344,55566677788',
+      tx: { ...baseTx, paymentData: { receiver: { documentNumber: '11122233344' } } },
+      direction: 'outflow',
+      linkedAccountIds: new Set(),
+      expectedIgnored: true,
+    },
+    {
+      name: 'inflow whose counterparty (payer) document is in PLUGGY_OWN_DOCUMENTS: ignored',
+      ownDocuments: '11122233344,55566677788',
+      tx: { ...baseTx, paymentData: { payer: { documentNumber: '11122233344' } } },
+      direction: 'inflow',
+      linkedAccountIds: new Set(),
+      expectedIgnored: true,
+    },
+    {
+      name: 'salary shape: inflow whose RECEIVER (the holder) is in PLUGGY_OWN_DOCUMENTS but whose payer is not — must NOT be ignored',
+      ownDocuments: '99988877766',
+      tx: { ...baseTx, paymentData: { receiver: { documentNumber: '99988877766' }, payer: { documentNumber: '00000000000' } } },
+      direction: 'inflow',
+      linkedAccountIds: new Set(),
+      expectedIgnored: false,
+    },
+    {
+      name: 'ordinary purchase shape: outflow whose PAYER (the holder) is in PLUGGY_OWN_DOCUMENTS but whose receiver is not — must NOT be ignored',
+      ownDocuments: '11122233344',
+      tx: { ...baseTx, paymentData: { payer: { documentNumber: '11122233344' }, receiver: { documentNumber: '00000000000' } } },
+      direction: 'outflow',
+      linkedAccountIds: new Set(),
+      expectedIgnored: false,
+    },
+    {
+      name: 'outflow whose counterparty (receiver) accountId is another linked PluggyAccount: ignored',
+      tx: { ...baseTx, paymentData: { receiver: { accountId: 'acc-2' } } },
+      direction: 'outflow',
+      linkedAccountIds: new Set(['acc-1', 'acc-2']),
+      expectedIgnored: true,
+    },
+    {
+      name: 'inflow whose counterparty (payer) accountId is another linked PluggyAccount: ignored',
+      tx: { ...baseTx, paymentData: { payer: { accountId: 'acc-2' } } },
+      direction: 'inflow',
+      linkedAccountIds: new Set(['acc-1', 'acc-2']),
+      expectedIgnored: true,
+    },
+    {
+      name: 'salary shape via accountId: inflow whose RECEIVER (the holder) accountId is linked but whose payer is not — must NOT be ignored',
+      tx: { ...baseTx, paymentData: { receiver: { accountId: 'acc-1' }, payer: { accountId: 'someone-elses-account' } } },
+      direction: 'inflow',
+      linkedAccountIds: new Set(['acc-1']),
+      expectedIgnored: false,
+    },
+    {
+      name: 'does not fire on an unrelated counterparty',
+      tx: { ...baseTx, paymentData: { receiver: { accountId: 'someone-elses-account', documentNumber: '00000000000' } } },
+      direction: 'outflow',
+      linkedAccountIds: new Set(['acc-1']),
+      expectedIgnored: false,
+    },
+  ];
 
-test('shouldIgnore: own-transfer — receiver document in PLUGGY_OWN_DOCUMENTS', () => {
-  const previous = process.env.PLUGGY_OWN_DOCUMENTS;
-  process.env.PLUGGY_OWN_DOCUMENTS = '99988877766';
-  try {
-    const outcome = shouldIgnore(
-      { ...baseTx, paymentData: { receiver: { documentNumber: '99988877766' } } },
-      { kind: 'BANK' },
-      'inflow',
-      { linkedAccountIds: new Set() }
-    );
-    assert.equal(outcome.ignored, true);
-    assert.equal(outcome.ruleId, 'own-transfer');
-  } finally {
-    if (previous === undefined) delete process.env.PLUGGY_OWN_DOCUMENTS;
-    else process.env.PLUGGY_OWN_DOCUMENTS = previous;
-  }
-});
-
-test('shouldIgnore: own-transfer — counterparty accountId is another linked PluggyAccount', () => {
-  const previous = process.env.PLUGGY_OWN_DOCUMENTS;
-  delete process.env.PLUGGY_OWN_DOCUMENTS;
-  try {
-    const outcome = shouldIgnore(
-      { ...baseTx, paymentData: { receiver: { accountId: 'acc-2' } } },
-      { kind: 'BANK' },
-      'outflow',
-      { linkedAccountIds: new Set(['acc-1', 'acc-2']) }
-    );
-    assert.equal(outcome.ignored, true);
-    assert.equal(outcome.ruleId, 'own-transfer');
-  } finally {
-    if (previous === undefined) delete process.env.PLUGGY_OWN_DOCUMENTS;
-    else process.env.PLUGGY_OWN_DOCUMENTS = previous;
-  }
-});
-
-test('shouldIgnore: own-transfer does not fire on an unrelated counterparty', () => {
-  const previous = process.env.PLUGGY_OWN_DOCUMENTS;
-  delete process.env.PLUGGY_OWN_DOCUMENTS;
-  try {
-    const outcome = shouldIgnore(
-      { ...baseTx, paymentData: { receiver: { accountId: 'someone-elses-account', documentNumber: '00000000000' } } },
-      { kind: 'BANK' },
-      'outflow',
-      { linkedAccountIds: new Set(['acc-1']) }
-    );
-    assert.equal(outcome.ignored, false);
-  } finally {
-    if (previous === undefined) delete process.env.PLUGGY_OWN_DOCUMENTS;
-    else process.env.PLUGGY_OWN_DOCUMENTS = previous;
+  for (const { name, ownDocuments, tx, direction, linkedAccountIds, expectedIgnored } of cases) {
+    const previous = process.env.PLUGGY_OWN_DOCUMENTS;
+    if (ownDocuments === undefined) delete process.env.PLUGGY_OWN_DOCUMENTS;
+    else process.env.PLUGGY_OWN_DOCUMENTS = ownDocuments;
+    try {
+      const outcome = shouldIgnore(tx, { kind: 'BANK' }, direction, { linkedAccountIds });
+      assert.equal(outcome.ignored, expectedIgnored, name);
+      if (expectedIgnored) assert.equal(outcome.ruleId, 'own-transfer', name);
+    } finally {
+      if (previous === undefined) delete process.env.PLUGGY_OWN_DOCUMENTS;
+      else process.env.PLUGGY_OWN_DOCUMENTS = previous;
+    }
   }
 });
 

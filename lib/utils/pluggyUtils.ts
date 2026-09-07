@@ -187,20 +187,28 @@ export const PLUGGY_IGNORE_RULES: IgnoreRule[] = [
   {
     id: 'own-transfer',
     reason: 'Transferência entre contas da própria família.',
-    test: ({ tx, context }) => {
+    // Only the COUNTERPARTY side is checked, never both: the account holder's
+    // own document is one leg of virtually every transaction (receiver on an
+    // inflow, payer on an outflow) and is exactly what PLUGGY_OWN_DOCUMENTS
+    // contains, so checking both legs would ignore a plain salary/PIX-in as
+    // if it were a transfer. The transfer itself is still caught because it
+    // posts as an outflow row on one linked account and an inflow row on the
+    // other, each of which has the *other* household account as counterparty.
+    test: ({ tx, direction, context }) => {
       const ownDocuments = ownDocumentsFromEnv();
-      const payerDoc = tx.paymentData?.payer?.documentNumber ?? undefined;
-      const receiverDoc = tx.paymentData?.receiver?.documentNumber ?? undefined;
-      if ((payerDoc && ownDocuments.has(payerDoc)) || (receiverDoc && ownDocuments.has(receiverDoc))) {
+      const counterpartyDoc =
+        direction === 'outflow'
+          ? (tx.paymentData?.receiver?.documentNumber ?? undefined)
+          : (tx.paymentData?.payer?.documentNumber ?? undefined);
+      if (counterpartyDoc && ownDocuments.has(counterpartyDoc)) {
         return true;
       }
 
-      const payerAccountId = tx.paymentData?.payer?.accountId ?? undefined;
-      const receiverAccountId = tx.paymentData?.receiver?.accountId ?? undefined;
-      return (
-        (!!payerAccountId && context.linkedAccountIds.has(payerAccountId)) ||
-        (!!receiverAccountId && context.linkedAccountIds.has(receiverAccountId))
-      );
+      const counterpartyAccountId =
+        direction === 'outflow'
+          ? (tx.paymentData?.receiver?.accountId ?? undefined)
+          : (tx.paymentData?.payer?.accountId ?? undefined);
+      return !!counterpartyAccountId && context.linkedAccountIds.has(counterpartyAccountId);
     },
   },
 ];
