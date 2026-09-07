@@ -3,8 +3,13 @@
  * Runs a Pluggy sync from a checkout — the development convenience. The
  * `runner` image ships only `.next/standalone` and cannot run a tsx script,
  * so production hits POST /api/v1/pluggy/sync (the Easypanel cron target)
- * instead; this and the route call the same service (pluggyService.syncAll /
- * syncAccount), so nothing here duplicates that logic.
+ * directly.
+ *
+ * Unlike scripts/migrate.ts — which imports migrationService and talks to
+ * Mongo in-process — this is an HTTP client against a running server, the
+ * same shape as the Telegram bridge scripts (scripts/lib/cliEnv.ts). It
+ * therefore needs a reachable base URL and API_KEY, not MONGODB_URI, and the
+ * sync logic still lives in exactly one place: the route's pluggyService call.
  *
  *   npm run pluggy:sync                    # sync every enabled account
  *   npm run pluggy:sync -- --dry-run       # counts only, writes nothing

@@ -356,8 +356,16 @@ export async function syncAccount(
   if (!account) throw new ApiError('VALIDATION_FAILED', `Conta Pluggy desconhecida: ${accountId}`);
   if (!account.enabled) throw new ApiError('VALIDATION_FAILED', `Conta Pluggy desabilitada: ${accountId}`);
 
-  // Read inside the function, never at module scope — see client.ts.
-  const overlapDays = Number(process.env.PLUGGY_SYNC_OVERLAP_DAYS ?? DEFAULT_OVERLAP_DAYS);
+  // Read inside the function, never at module scope — see client.ts. A bad
+  // value falls back rather than propagating: `Number('')` is 0, which would
+  // silently disable the overlap window the late-posting guarantee rests on,
+  // and a non-numeric one is NaN, which surfaces much later as an opaque
+  // RangeError from `new Date(NaN).toISOString()` inside computeSyncWindow.
+  const configuredOverlap = Number(process.env.PLUGGY_SYNC_OVERLAP_DAYS);
+  const overlapDays =
+    Number.isFinite(configuredOverlap) && configuredOverlap >= 0
+      ? configuredOverlap
+      : DEFAULT_OVERLAP_DAYS;
   const { from, to } = computeSyncWindow(account, overlapDays);
 
   // Every currently-linked account, for the own-transfer ignore rule — a
@@ -820,9 +828,19 @@ async function importStagedExpense(
   await row.save();
 
   if (item.newMapping) {
+    // A reclassification to a type with no subtype must CLEAR the stored one,
+    // not leave it. Mongoose drops `undefined` keys from an update, so
+    // `$set: { subtype: undefined }` is a silent no-op that keeps a stale
+    // subtype alive — and the next sync's autoImportStaged reads that mapping,
+    // finds the stale pair still valid, and auto-imports under the very
+    // subtype the reviewer just removed, with no human in the loop.
+    // billService avoids this by making its wire type `.nullable()`; here the
+    // field is `.optional()`, so the clear has to be an explicit $unset.
     await BillMapping.updateOne(
       { description: billMappingKey(row.description) },
-      { $set: { type: item.type, subtype: item.subtype } },
+      item.subtype !== undefined
+        ? { $set: { type: item.type, subtype: item.subtype } }
+        : { $set: { type: item.type }, $unset: { subtype: '' } },
       { upsert: true }
     );
   }

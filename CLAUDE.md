@@ -207,7 +207,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 - `lib/services/` — `expenseService` (build/create/list/update/delete), `incomeService`, `billService` (parse + import), `receiptService` (single source of truth — do not re-inline into routes), `pluggyService` (register/sync/auto-import/import — the only writer of the Pluggy staging collections)
 - `scripts/gen-openapi.ts` — generates `public/openapi.yaml` from the Zod schemas
 - `scripts/telegram-record-expense.ts` (`npm run telegram:record`) and `scripts/telegram-categories.ts` (`npm run telegram:categories`) — the Hermes/Telegram CLI bridge; `scripts/lib/cliEnv.ts` holds their shared dotenv reading, flag parsing and error formatting (single source of truth — do not re-inline)
-- `scripts/pluggy-sync.ts` (`npm run pluggy:sync`) — checkout convenience sharing `pluggyService.syncAll` with the v1 sync route (`--dry-run`, `--account`); the `runner` image cannot run tsx scripts, so production uses the route
+- `scripts/pluggy-sync.ts` (`npm run pluggy:sync`) — checkout convenience that POSTs to `/api/v1/pluggy/sync` on a running server (`--dry-run`, `--account`), so it needs a base URL + `API_KEY` like the Telegram bridge, not `MONGODB_URI` like `migrate.ts`; the `runner` image cannot run tsx scripts, so production uses the route directly
 - `bruno/` — the API test collection (`npm run test:api`); `bruno/.env` and `bruno/fixtures/` are gitignored
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
