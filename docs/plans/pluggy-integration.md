@@ -1,8 +1,13 @@
 # Plan — Pluggy (Open Finance) ingestion
 
-Status: **proposed**
+Status: **implemented**
 Created: 2026-09-06
 Revised: 2026-09-06 — reviewed against the codebase; see the changelog at the end.
+Revised: 2026-09-07 — steps 2–24 implemented and committed. Step 1 (the live-account spike)
+is still pending — no live Pluggy credentials were available during implementation — but every
+raw-field read is centralized in `lib/utils/pluggyUtils.ts` (`mapPluggyTransaction` and friends),
+so a correction from a future spike stays localized to that file rather than spreading through
+the service and route layers.
 
 Pulls bank and credit-card transactions from Pluggy on a schedule, stages them, auto-imports
 the ones whose merchant is already classified, and queues the rest for review. Replaces the

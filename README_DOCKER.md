@@ -98,6 +98,77 @@ Notes for cloud hosts:
 - The image exposes a `HEALTHCHECK` on `/`; wire it to the platform's liveness/
   readiness probe if desired.
 
+## Pluggy sync (Easypanel scheduled task)
+
+`POST /api/v1/pluggy/sync` is the cron target for the Pluggy (Open Finance)
+ingestion — see `docs/plans/pluggy-integration.md` for the full design. Nothing
+in the app schedules it; an external trigger must call it every few hours.
+
+On Easypanel, add a **scheduled task** on the existing service:
+
+```sh
+curl -fsS -X POST -H "x-api-key: $API_KEY" http://<service>:3000/api/v1/pluggy/sync
+```
+
+Cron: `0 */6 * * *`.
+
+- It targets the service's **internal** name over the Docker network (the
+  same network the app and MongoDB already share), so the route needs no
+  public exposure and `API_KEY` never leaves the VPS.
+- `-f` makes `curl` exit non-zero on a non-2xx response, so a failing sync
+  shows up as a **failed task**, not a green run with an error body silently
+  ignored.
+- `syncAll` holds an advisory lock (`PluggySyncLock`), so an overlapping
+  scheduled run exits quietly rather than double-paging an account — no
+  extra guard is needed on the Easypanel side.
+
+**Fallback if the installed Easypanel version has no scheduled-task feature:**
+a second, tiny Compose service running a sleep/curl loop on the same network,
+e.g.:
+
+```yaml
+services:
+  pluggy-cron:
+    image: curlimages/curl:latest
+    network_mode: service:app   # or the app's compose network
+    entrypoint: >
+      sh -c 'while true; do
+        curl -fsS -X POST -H "x-api-key: $$API_KEY" http://app:3000/api/v1/pluggy/sync;
+        sleep 21600;
+      done'
+    environment:
+      - API_KEY=${API_KEY}
+```
+
+Do **not** implement this as a timer inside the Next.js process itself — it
+would multiply with replicas and re-introduce the exact mistake CLAUDE.md
+already forbids for data migrations (an in-process scheduler that fires once
+per running instance instead of once per deployment).
+
+### The cutover rule — Pluggy vs. fatura-PDF import
+
+Once a **CREDIT** `PluggyAccount` is enabled, **stop importing that card's
+fatura PDFs** for statement periods on or after its `connectedAt` date.
+
+Nothing in the code enforces this: the PDF import route (`/api/bills/import`)
+has no knowledge of `PluggyAccount.connectedAt`, and the cross-source dedupe
+guard deliberately does not attempt a fuzzy match between a Pluggy
+description and a PDF-parsed one (see `docs/plans/pluggy-integration.md` §12
+— a `value` + `date ±3d` match would silently suppress genuinely distinct
+same-price purchases, which is worse than a duplicate). The **only** thing
+that prevents double-counting a card's purchases across both sources is this
+operational rule.
+
+Before relying on a newly-enabled CREDIT account:
+
+1. Run `npm run pluggy:sync -- --dry-run --account <accountId>` (or
+   `POST /api/v1/pluggy/sync?dryRun=true&accountId=...`) and inspect the
+   counts.
+2. Reconcile **one closed month** by hand against the equivalent fatura PDF
+   before trusting the feed unattended.
+3. From that point on, do not upload a fatura PDF for that card covering any
+   period on or after `connectedAt`.
+
 ## Releasing
 
 Released images are published to `ghcr.io/prvalmeida/expenses` by
