@@ -114,11 +114,6 @@ test('deriveDirection: tx.type is primary, amount sign is a kind-aware cross-che
     { name: 'BANK no type: positive -> inflow', tx: { type: undefined, amount: 1 }, account: { kind: 'BANK' }, expectAnomaly: false, expectedDirection: 'inflow' },
     { name: 'CREDIT no type: positive -> outflow', tx: { type: undefined, amount: 1 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'outflow' },
     { name: 'CREDIT no type: negative -> inflow', tx: { type: undefined, amount: -1 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'inflow' },
-
-    // Without an account the sign carries no meaning, so tx.type is trusted
-    // alone rather than manufacturing an anomaly from the wrong convention.
-    { name: 'no account: DEBIT trusted despite positive amount', tx: { type: 'DEBIT', amount: 44.9 }, account: undefined, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'no account: CREDIT trusted despite negative amount', tx: { type: 'CREDIT', amount: -0.05 }, account: undefined, expectAnomaly: false, expectedDirection: 'inflow' },
   ];
 
   for (const { name, tx, account, expectAnomaly, expectedDirection } of cases) {
@@ -126,6 +121,9 @@ test('deriveDirection: tx.type is primary, amount sign is a kind-aware cross-che
     if (expectAnomaly) {
       assert.equal(result.direction, undefined, name);
       assert.ok(result.anomalyReason, `${name}: expected an anomalyReason`);
+      // The reason must name the account kind: with the convention now
+      // depending on it, "the sign disagrees" is not diagnosable on its own.
+      assert.match(result.anomalyReason!, new RegExp(account.kind), name);
     } else {
       assert.equal(result.direction, expectedDirection, name);
       assert.equal(result.anomalyReason, undefined, name);

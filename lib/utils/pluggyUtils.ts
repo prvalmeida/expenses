@@ -72,22 +72,23 @@ export interface DirectionResult {
 // so an outflow reads positive; on an account it is the effect on the balance.
 // Treating BANK's convention as universal made every single card purchase an
 // anomaly — 71 of 86 rows in production — so no card expense could ever be
-// imported. When the account kind is unknown the sign is not a usable
-// cross-check at all, so tx.type is trusted on its own.
+// imported.
+//
+// The account is REQUIRED: without it the sign carries no meaning, and an
+// optional parameter would let a future caller silently apply the BANK
+// convention to a card — re-arming the exact bug this fixes.
 export function deriveDirection(
   tx: Pick<PluggyTransactionApi, 'type' | 'amount'>,
-  account?: Pick<PluggyAccountLike, 'kind'>
+  account: Pick<PluggyAccountLike, 'kind'>
 ): DirectionResult {
   const byType: PluggyDirection | undefined =
     tx.type === 'DEBIT' ? 'outflow' : tx.type === 'CREDIT' ? 'inflow' : undefined;
 
   // A card outflow is positive; an account outflow is negative.
-  const outflowIsPositive = account?.kind === 'CREDIT';
+  const outflowIsPositive = account.kind === 'CREDIT';
   const bySign: PluggyDirection = outflowIsPositive
     ? tx.amount > 0 ? 'outflow' : 'inflow'
     : tx.amount < 0 ? 'outflow' : 'inflow';
-
-  if (!account) return { direction: byType ?? bySign };
 
   if (byType && byType !== bySign) {
     return {
@@ -100,7 +101,10 @@ export function deriveDirection(
 }
 
 export interface PluggyAccountLike {
-  kind: string;
+  // Narrowed to the PluggyAccount schema's own enum: the sign convention in
+  // deriveDirection branches on this, and a plain `string` would let anything
+  // that is not 'CREDIT' silently take the BANK branch.
+  kind: 'BANK' | 'CREDIT';
   cardBrand?: string | null;
   defaultPaymentType?: string | null;
 }
