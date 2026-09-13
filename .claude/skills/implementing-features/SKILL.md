@@ -14,8 +14,8 @@ existing patterns, verified before it is reported as done.
 - Fixing a bug or regression
 - Refactoring existing code
 
-Do not use for: producing a plan without code (`planning-features`), reviewing someone
-else's diff (`reviewing-code`), or choosing a library/technology (`researching-tech-stack`).
+Do not use for: scoping a change or choosing a technology before implementation
+(`planning-and-architecture`), or reviewing a finished diff (`reviewing-code`).
 
 ## Before writing any code
 

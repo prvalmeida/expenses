@@ -14,7 +14,7 @@ Find real problems. Do not praise the work, do not pad the report, do not restat
 - Assessing whether a change is safe to release
 
 Do not use for: writing the fix (`implementing-features`) — review first, then hand the
-findings over.
+findings over. For a change that does not exist yet, use `planning-and-architecture`.
 
 ## Process
 

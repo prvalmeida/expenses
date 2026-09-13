@@ -88,9 +88,8 @@ Task-specific instructions live in `.claude/skills/` and are loaded on demand:
 |---|---|
 | `implementing-features` | writing, changing or fixing application code |
 | `reviewing-code` | reviewing a diff, branch or PR |
-| `planning-features` | producing an implementation plan, no code |
+| `planning-and-architecture` | scoping a change or deciding a technical tradeoff, no code |
 | `writing-documentation` | writing or correcting docs, including `CLAUDE.md` |
-| `researching-tech-stack` | evaluating a library or architectural tradeoff |
 
 ## Ground rules for agents
 
