@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Start with `AGENTS.md` for the minimal working agreement (commands, layout, hard rules). This file is the deep reference: every load-bearing decision and the failure it prevents. Task-specific instructions live in `.claude/skills/` (`implementing-features`, `reviewing-code`, `planning-and-architecture`, `writing-documentation`) and are loaded on demand.
+
 ## Commands
 
 ```bash

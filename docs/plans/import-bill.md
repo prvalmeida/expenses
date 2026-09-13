@@ -1,4 +1,14 @@
-# IMPORT-BILL Plan
+# Plan — Import bill (fatura PDF)
+
+Status: **superseded**
+Created: 2026-05-22 (implemented in commit 4367799)
+
+> This plan describes the original implementation, where GPT extracted the transactions
+> from the bill text. The shipped design has since changed: Santander and Caixa now have
+> deterministic per-bank parsers, and GPT is used only to *classify* the rows they extract
+> (and as a fallback for other banks, or when a deterministic parser returns nothing).
+> `types/index.ts` is also no longer the source of truth for categories — the `Category`
+> collection is. See `CLAUDE.md` for the current design. Kept as historical record.
 
 ## Goal
 Add an "Importar Fatura" view that parses a password-protected credit card bill PDF (Santander or Caixa) via GPT and renders an editable review table of transactions (no import/save step yet).
