@@ -8,10 +8,10 @@ import { PluggySyncLock } from '../models/PluggySyncLock';
 import { BillMapping } from '../models/BillMapping';
 import {
   createConnectToken,
+  drainCursor,
   getItem,
   listAccounts,
   listTransactions,
-  parseAfterCursor,
   patchItem,
   PluggyAccountApi,
   PluggyTransactionApi,
@@ -395,27 +395,37 @@ export async function syncAccount(
 
   const result: SyncAccountResult = { accountId, fetched: 0, created: 0, updated: 0, anomalies: 0 };
 
-  let after: string | undefined;
-  for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
-    const { results: rows, next } = await listTransactions({ accountId, from, to, after });
-    result.fetched += rows.length;
+  const { truncated } = await drainCursor(
+    after => listTransactions({ accountId, from, to, after }),
+    async rows => {
+      result.fetched += rows.length;
 
-    // dryRun still classifies each row (a DB read) so the report reflects what
-    // would happen, but upsertTransaction writes nothing when dryRun is set —
-    // the same contract a migration's dry run has.
-    for (const tx of rows) {
-      const outcome = await upsertTransaction(tx, account, linkedAccountIds, { dryRun });
-      if (outcome === 'created') result.created++;
-      else if (outcome === 'updated') result.updated++;
-      else if (outcome === 'anomaly') result.anomalies++;
-    }
+      // dryRun still classifies each row (a DB read) so the report reflects
+      // what would happen, but upsertTransaction writes nothing when dryRun is
+      // set — the same contract a migration's dry run has.
+      for (const tx of rows) {
+        const outcome = await upsertTransaction(tx, account, linkedAccountIds, { dryRun });
+        if (outcome === 'created') result.created++;
+        else if (outcome === 'updated') result.updated++;
+        else if (outcome === 'anomaly') result.anomalies++;
+      }
+    },
+    MAX_SYNC_PAGES
+  );
 
-    // v2 reports the end of the list with `next: null` — a short page is NOT
-    // the signal it was under the old page/pageSize contract, and Pluggy is
-    // free to return fewer rows than the cap on a page that still has a
-    // successor.
-    after = parseAfterCursor(next);
-    if (!after) break;
+  // Hitting the page cap means Pluggy still had a cursor: the account was NOT
+  // fully read. Falling through to the lastSyncedAt write below would move the
+  // high-water mark past rows that were never fetched, and since the next
+  // window starts at lastSyncedAt − OVERLAP_DAYS, anything older than that
+  // overlap becomes unreachable forever — silent, permanent loss with a
+  // healthy-looking `fetched`. Throw instead: the caller records the account's
+  // error and the next run retries the same window.
+  if (truncated) {
+    throw new ApiError(
+      'UPSTREAM_FAILED',
+      `Sincronização truncada: a conta ${accountId} ainda tinha páginas após o limite de ` +
+        `${MAX_SYNC_PAGES}. lastSyncedAt não foi avançado para não pular transações.`
+    );
   }
 
   if (!dryRun) {
@@ -494,10 +504,19 @@ export async function listPluggyTransactions(
 }
 
 const LOCK_ID = 'singleton';
-// Long enough to cover a full run across every enabled account (each capped at
-// MAX_SYNC_PAGES pages); short enough that a crashed run does not block the
-// next cron tick indefinitely.
-const LOCK_STALE_MS = 15 * 60 * 1000;
+// Long enough to cover a full run across every enabled account, short enough
+// that a crashed run does not block the next cron tick indefinitely.
+//
+// The ceiling this is sized against grew with the move to /v2/transactions:
+// v2 fixes the page at 500 rows (the old page-based call used 100), so
+// MAX_SYNC_PAGES now bounds an account at 25k rows rather than 5k, and each
+// row costs a sequential findOne + write in upsertTransaction, with
+// autoImportStaged running inside the same hold. A run that outlives this TTL
+// lets the next tick acquire the lock and drain the same pending rows
+// concurrently — the double-import the lock exists to prevent — so the TTL is
+// raised in step with the ceiling rather than left at the value the 100-row
+// page implied.
+const LOCK_STALE_MS = 45 * 60 * 1000;
 
 // Mongo signals a unique-index violation with code 11000 — the migration
 // ledger (migrationService.ts) uses the same check for the same reason.
@@ -582,13 +601,20 @@ async function syncAllAccounts({ dryRun = false }: { dryRun?: boolean } = {}): P
     try {
       accountResults.push(await syncAccount(accountId, { dryRun }));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Collected per account so one failing bank cannot stop the others — but
+      // LOG it too. This error travels back inside a 200 body, which is how a
+      // Pluggy endpoint deprecation (410 on every account) went unnoticed in
+      // production: the cron saw HTTP 200 and the review screen only renders an
+      // error for a non-OK response, so a total outage read as a clean sync.
+      console.error(`[pluggy] sync falhou para a conta ${accountId}: ${message}`);
       accountResults.push({
         accountId,
         fetched: 0,
         created: 0,
         updated: 0,
         anomalies: 0,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
     }
   }

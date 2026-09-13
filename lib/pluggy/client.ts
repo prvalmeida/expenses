@@ -254,6 +254,47 @@ export function parseAfterCursor(next: string | null | undefined): string | unde
   return new URLSearchParams(query).get('after') || undefined;
 }
 
+export interface CursorPage<T> {
+  results: T[];
+  next: string | null;
+}
+
+export interface CursorDrainResult {
+  pages: number;
+  // True when the page cap was reached while Pluggy was still handing back a
+  // cursor — i.e. the list was NOT exhausted. The caller must treat this as a
+  // failed read: advancing a high-water mark after a truncated drain makes the
+  // unread rows unreachable on every future run.
+  truncated: boolean;
+}
+
+// Walks a cursor-paginated Pluggy list, handing each page to `onPage` as it
+// arrives (so the caller can stream rows instead of buffering an account's
+// whole history). Injecting `fetchPage` keeps this testable without a database
+// or a network, which is what lets the truncation case below be covered at all.
+//
+// Termination is `next === null` ONLY. A short page is not the end of the list
+// under v2 — Pluggy may return fewer rows than the cap on a page that still has
+// a successor — so the old `rows.length < PAGE_SIZE` test would silently drop
+// every row after it.
+export async function drainCursor<T>(
+  fetchPage: (after: string | undefined) => Promise<CursorPage<T>>,
+  onPage: (results: T[]) => Promise<void> | void,
+  maxPages: number
+): Promise<CursorDrainResult> {
+  let after: string | undefined;
+
+  for (let page = 1; page <= maxPages; page++) {
+    const { results, next } = await fetchPage(after);
+    await onPage(results);
+
+    after = parseAfterCursor(next);
+    if (!after) return { pages: page, truncated: false };
+  }
+
+  return { pages: maxPages, truncated: true };
+}
+
 export function createConnectToken(): Promise<PluggyConnectToken> {
   return pluggyFetch('/connect_token', { method: 'POST', body: {} });
 }
