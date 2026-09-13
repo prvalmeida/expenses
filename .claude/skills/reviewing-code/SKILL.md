@@ -21,9 +21,12 @@ findings over. For a change that does not exist yet, use `planning-and-architect
 1. Establish the change set for real:
    ```bash
    git status --porcelain
-   git diff main...HEAD --stat
-   git diff main...HEAD
+   git fetch origin main
+   git diff origin/main...HEAD --stat
+   git diff origin/main...HEAD
    ```
+   Diff against `origin/main`, never a local `main` — a stale local branch silently yields
+   the wrong change set, with no error to tell you the review missed commits.
 2. Read every changed file **in full**, not just the hunks. Most blocking findings in this
    repo come from what the diff did *not* touch (a sibling route left inconsistent, a
    cascade not extended, a stale generated file).
@@ -69,7 +72,15 @@ Project-specific — the recurring failure classes in this codebase:
 - **A category rename/delete path that misses one of the cascades** in `categoryUtils.ts`.
 - **An edited or renamed migration** under `lib/migrations/` that has already run, or a
   data rewrite added outside the migration registry.
-- **A new test-free bug fix**, or new logic with no `tests/*.test.ts` coverage.
+- **A broken v1 response contract.** Every v1 handler answers `{ data }` or
+  `{ error: { code, message, details } }`, with the `ApiErrorCode` → status map in
+  `lib/api/respond.ts` as the only mapping. A bare object, an ad-hoc status, or a
+  well-formed payload naming an unknown category mapped to `VALIDATION_FAILED` instead of
+  `INVALID_CATEGORY`, are each findings — that distinction is deliberate.
+- **Pure logic with no unit test.** New or fixed behaviour in `lib/utils/`, `lib/services/`
+  or `scripts/lib/` should come with a `tests/*.test.ts` case; a bug fix there without one
+  is a finding. Do not raise this for code a `node:test` run cannot reach (React components,
+  route wiring, styling) — the repo has no test runner for those.
 - **A new `scripts/telegram-*` command not documented in `docs/telegram-hermes-bridge.md`** —
   undocumented means never invoked.
 

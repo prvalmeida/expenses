@@ -46,6 +46,9 @@ Do not use for: scoping a change or choosing a technology before implementation
 - Validate at system boundaries only — API route handlers and form submissions. Internal
   code trusts its types.
 - Match the naming conventions of the file you are editing.
+- **Every user-facing string is Brazilian Portuguese** — labels, buttons, placeholders,
+  empty states, error messages the UI renders. Code, comments and internal docs stay in
+  English.
 
 ## Boundary rules that are easy to violate
 
@@ -71,10 +74,12 @@ The full list is in `CLAUDE.md`; these are the ones most code changes brush agai
 
 ## Tests
 
-Write unit tests for new logic and for every bug fix, following the existing patterns in
-`tests/*.test.ts` (`node:test` + `tsx`, no database, no network). Pure helpers under
-`lib/utils/` and `scripts/lib/` are the natural home for testable logic — if a behaviour is
-hard to unit test, that usually means it belongs in a helper rather than inline in a route.
+Write unit tests for new logic and for every bug fix in code `node:test` can reach — pure
+helpers under `lib/utils/`, `lib/services/` and `scripts/lib/` — following the existing
+patterns in `tests/*.test.ts` (`node:test` + `tsx`, no database, no network). If a behaviour
+is hard to unit test, that usually means it belongs in a helper rather than inline in a
+route. There is no runner for React components or route wiring; do not fake coverage for
+them.
 
 Behaviour that spans requests (installment expansion, `$unset` on a credit → non-credit
 edit, `VALIDATION_FAILED` vs `INVALID_CATEGORY`) belongs in the Bruno collection under
@@ -104,4 +109,5 @@ be run, say so explicitly instead of implying it passed.
   verification commands you ran and their result, and any follow-up the user must handle
   (migration to apply, new env var, index sync, Easypanel redeploy).
 - If you established a new pattern or discovered a new failure mode, add it to `CLAUDE.md`
-  in the same change — that file is how the next session inherits it.
+  in the same change — that file is how the next session inherits it. Follow the voice rule
+  in `writing-documentation`: state the rule *and* the failure it prevents.

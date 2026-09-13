@@ -43,4 +43,5 @@ npm run lint     # ESLint
 
 ## Architecture
 
-See [CLAUDE.md](./CLAUDE.md) for the full architecture reference, directory structure, and data model details.
+Start with [AGENTS.md](./AGENTS.md) for the commands, layout and hard rules; see
+[CLAUDE.md](./CLAUDE.md) for the full architecture reference, directory structure, and data model details.

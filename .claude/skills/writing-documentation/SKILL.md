@@ -71,11 +71,11 @@ Markdown. Headers, tables and code blocks where they aid clarity. No emojis, no 
 elements. The UI language of the app is Brazilian Portuguese; internal documentation is in
 English unless the file you are editing is already in Portuguese — match the file.
 
-When updating an existing doc, edit in place with `patch` rather than rewriting the file,
-and report which sections changed.
+When updating an existing doc, edit in place rather than rewriting the file, and report
+which sections changed.
 
 ## Verification
 
-- Every name, path and value in the doc appears in the source (`search_files` each one you
-  did not copy directly).
+- Every name, path and value in the doc appears in the source (grep each one you did not
+  copy directly).
 - If a Zod schema changed alongside the doc, `npm run gen:openapi -- --check` passes.

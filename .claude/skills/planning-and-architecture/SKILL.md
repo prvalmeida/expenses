@@ -38,8 +38,8 @@ When the approach is already settled, skip straight to B and say so in one line.
 2. **Check what already exists before proposing anything new.** This codebase repeatedly
    chose reuse over a parallel mechanism — `BillMapping` serves both bill and Pluggy
    ingestion, the service layer is shared between `/api/*` and `/api/v1/*`, OpenAPI is
-   generated from the existing Zod schemas instead of a second annotation layer. Verify with
-   `search_files` and `package.json` that the proposal is not a copy of something already
+   generated from the existing Zod schemas instead of a second annotation layer. Grep the
+   codebase and `package.json` to confirm the proposal is not a copy of something already
    maintained.
 3. **Verify every claim about the current code.** Versions come from `package.json`, not
    memory; behaviour comes from the source. Never cite a capability you have not confirmed
@@ -104,8 +104,9 @@ one person has to operate.
   `npm run gen:openapi` (CI fails on a stale spec).
 - **Both API surfaces** — decide deliberately whether the change lands on internal `/api/*`,
   public `/api/v1/*`, or the shared service both call. Client code must never call `/api/v1/*`.
-- **Navigation** — a new view is registered in *two* places: the `ViewId` union and the nav
-  entries, both in `components/NavMenu.tsx`, plus the switch in `app/page.tsx`.
+- **Navigation** — a new view is registered in *four* places: the `ViewId` union,
+  `NAV_GROUPS` and `VIEW_TITLES` (all three in `components/NavMenu.tsx`), plus its
+  `{currentView === '…' && …}` branch in `app/page.tsx`.
 - **Tests** — which `tests/*.test.ts` unit tests, and which Bruno requests under `bruno/`
   for cross-request behaviour.
 - **Docs** — `CLAUDE.md` for a new invariant, `docs/API.md` for a contract change,
