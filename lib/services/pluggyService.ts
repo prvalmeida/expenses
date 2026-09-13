@@ -258,7 +258,7 @@ function deriveStaging(
   linkedAccountIds: ReadonlySet<string>,
   { skipIgnore = false }: { skipIgnore?: boolean } = {}
 ): StagingDerivation {
-  const { direction, anomalyReason } = deriveDirection(tx);
+  const { direction, anomalyReason } = deriveDirection(tx, account);
   if (!direction) {
     return { status: 'anomaly', statusReason: anomalyReason };
   }
