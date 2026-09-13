@@ -17,15 +17,19 @@ export default function QrScannerModal({
   onClose: () => void;
 }) {
   const { state, error, videoRef, start, stop } = useQrScanner();
-  const startedRef = useRef(false);
+
+  // StrictMode double-invokes effects in dev: first mount starts the camera
+  // and its cleanup stops it, the second mount must start it again — a
+  // "run once" ref here would leave the modal with a dead stream.
+  const onScannedRef = useRef(onScanned);
+  useEffect(() => {
+    onScannedRef.current = onScanned;
+  }, [onScanned]);
 
   useEffect(() => {
-    if (startedRef.current) return; // StrictMode double-invocation guard
-    startedRef.current = true;
-    void start(onScanned);
+    void start((text: string) => onScannedRef.current(text));
     return () => stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [start, stop]);
 
   return (
     <div
