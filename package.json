@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@types/pdf-parse": "^1.1.5",
+    "jsqr": "^1.4.0",
     "mongodb": "^7.0.0",
     "mongoose": "^9.0.2",
     "next": "16.1.1",

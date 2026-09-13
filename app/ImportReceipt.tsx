@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { CardBrand, ConfirmedReceiptItem, ParsedReceiptItem } from '@/types';
 import { useCategories } from '@/hooks/useCategories';
+import { isAllowedSefazUrl } from '@/lib/utils/sefazUrl';
+import QrScannerModal from '@/components/QrScannerModal';
 
 type ParseResponse = {
   store: { cnpj: string; name: string; address: string | null };
@@ -55,6 +57,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
   const [importedCount, setImportedCount] = useState(0);
   const [storeType, setStoreType] = useState<string | undefined>(undefined);
   const [installments, setInstallments] = useState(1);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const switchMode = (mode: 'pdf' | 'url') => {
     setInputMode(mode);
@@ -71,51 +74,91 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
-  const handleParse = async () => {
-    const canSubmit = inputMode === 'pdf' ? !!file : receiptUrl.trim().length > 0;
-    if (!canSubmit) return;
+  const applyParsedResponse = (data: ParseResponse) => {
+    setParsed(data);
+    setPaymentType(data.paymentType ?? '');
+    setCardBrand(undefined);
+    setStoreType(data.storeDefaultType);
+    setItems(
+      (data.items as ParsedReceiptItem[]).map(item => ({
+        ...item,
+        resolvedValue: round2(item.value),
+        resolvedType: item.type ?? data.storeDefaultType,
+        resolvedSubtype: item.recognized ? (item.subtype ?? '') : undefined,
+        ...(item.qty !== undefined && { resolvedQty: item.qty }),
+        ...(item.qty !== undefined && item.qty > 0 && { resolvedUnitPrice: round2(item.unitPrice ?? item.value / item.qty) }),
+      }))
+    );
+    setStep(2);
+  };
 
+  // Takes the URL as an argument (not from state) so the QR scan callback can
+  // fire the parse in the same tick it fills the field — state updates are
+  // not visible synchronously inside the callback.
+  const parseFromUrl = async (url: string) => {
     setLoading(true);
     setError(null);
     try {
-      let res: Response;
-
-      if (inputMode === 'pdf') {
-        const formData = new FormData();
-        formData.append('file', file!);
-        res = await fetch('/api/receipts/parse', { method: 'POST', body: formData });
-      } else {
-        res = await fetch('/api/receipts/parse-url', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: receiptUrl.trim() }),
-        });
-      }
+      const res = await fetch('/api/receipts/parse-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
 
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? 'Erro ao processar nota fiscal');
         return;
       }
-      setParsed(data);
-      setPaymentType(data.paymentType ?? '');
-      setCardBrand(undefined);
-      setStoreType(data.storeDefaultType);
-      setItems(
-        (data.items as ParsedReceiptItem[]).map(item => ({
-          ...item,
-          resolvedValue: round2(item.value),
-          resolvedType: item.type ?? data.storeDefaultType,
-          resolvedSubtype: item.recognized ? (item.subtype ?? '') : undefined,
-          ...(item.qty !== undefined && { resolvedQty: item.qty }),
-          ...(item.qty !== undefined && item.qty > 0 && { resolvedUnitPrice: round2(item.unitPrice ?? item.value / item.qty) }),
-        }))
-      );
-      setStep(2);
+      applyParsedResponse(data);
     } catch {
       setError('Erro de rede ao processar a nota');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const parseFromPdf = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file!);
+      const res = await fetch('/api/receipts/parse', { method: 'POST', body: formData });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? 'Erro ao processar nota fiscal');
+        return;
+      }
+      applyParsedResponse(data);
+    } catch {
+      setError('Erro de rede ao processar a nota');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleParse = async () => {
+    const canSubmit = inputMode === 'pdf' ? !!file : receiptUrl.trim().length > 0;
+    if (!canSubmit) return;
+
+    if (inputMode === 'pdf') {
+      await parseFromPdf();
+    } else {
+      await parseFromUrl(receiptUrl.trim());
+    }
+  };
+
+  // Scan → fill → parse. A QR that carries a non-SEFAZ value still lands in
+  // the field (manual correction) but never fires the request.
+  const handleScanned = async (text: string) => {
+    setScannerOpen(false);
+    setReceiptUrl(text);
+    if (isAllowedSefazUrl(text.trim())) {
+      await parseFromUrl(text.trim());
+    } else {
+      setError('O QR code não contém um link de nota fiscal (portal SEFAZ). Confira o link no campo acima.');
     }
   };
 
@@ -299,17 +342,34 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           ) : (
             <div key="url">
               <label className="block text-sm font-medium mb-1">Link do QR Code da Nota</label>
-              <input
-                type="url"
-                value={receiptUrl}
-                onChange={e => { setReceiptUrl(e.target.value); setError(null); }}
-                placeholder="https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=..."
-                className="w-full p-2 border rounded text-sm"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={receiptUrl}
+                  onChange={e => { setReceiptUrl(e.target.value); setError(null); }}
+                  placeholder="https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=..."
+                  className="flex-1 min-w-0 p-2 border rounded text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => { setError(null); setScannerOpen(true); }}
+                  title="Escanear QR code com a câmera"
+                  className="shrink-0 px-3 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm font-bold"
+                >
+                  📷
+                </button>
+              </div>
               <p className="text-[11px] text-gray-400 mt-1">
-                Cole o link gerado pelo QR Code da NFC-e (portais *.gov.br).
+                Cole o link gerado pelo QR Code da NFC-e (portais *.gov.br) ou escaneie com a câmera.
               </p>
             </div>
+          )}
+
+          {scannerOpen && (
+            <QrScannerModal
+              onScanned={handleScanned}
+              onClose={() => setScannerOpen(false)}
+            />
           )}
 
           {error && (

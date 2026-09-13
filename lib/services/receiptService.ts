@@ -8,13 +8,13 @@ import { computeEffectiveDate } from '../utils/cycleUtils';
 import { addMonthsClamped } from '../utils/dateUtils';
 import { getExpenseCategories } from '../utils/categoryUtils';
 import { interpretAndCrossReference, ParseResponse } from '../utils/receiptUtils';
+import { isAllowedSefazUrl } from '../utils/sefazUrl';
 import { ApiError } from '../api/respond';
 
 const require = createRequire(import.meta.url);
 type PdfData = { text: string; numpages: number };
 const pdfParse: (buffer: Buffer) => Promise<PdfData> = require('pdf-parse');
 
-const ALLOWED_KEYWORDS = ['sefaz', 'nfce', 'nfe', 'dfe'];
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1500;
 const MIN_RECEIPT_TEXT_LENGTH = 200;
@@ -33,18 +33,8 @@ export interface ImportReceiptInput {
 
 // SSRF guard: this runs on a path an authenticated external caller can reach,
 // so the allowlist must stay on the service, not be re-approximated per route.
-export function isAllowedSefazUrl(urlStr: string): boolean {
-  try {
-    const url = new URL(urlStr);
-    return (
-      url.protocol === 'https:' &&
-      url.hostname.endsWith('.gov.br') &&
-      ALLOWED_KEYWORDS.some(kw => url.hostname.includes(kw))
-    );
-  } catch {
-    return false;
-  }
-}
+// The list itself lives in lib/utils/sefazUrl.ts (see the QR scanner wiring).
+export { isAllowedSefazUrl };
 
 function htmlToText(html: string): string {
   return html
