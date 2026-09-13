@@ -20,7 +20,8 @@ npm run lint                # ESLint (CI runs `npx eslint --max-warnings=0`)
 npm run test:unit           # node:test unit tests, no DB, seconds
 npm run gen:openapi -- --check   # fail if public/openapi.yaml is stale (CI does this)
 npm run gen:openapi         # regenerate public/openapi.yaml from the Zod schemas
-npm run test:api            # Bruno API collection against localhost:3000 — WRITES to the DB it targets
+npm run test:api            # Bruno collection vs localhost:3000 — WRITES to that server's DB
+npm run test:api:prod       # same collection against the `prod` Bruno environment
 npm run migrate             # apply pending data migrations (-- --dry-run / -- --status)
 ```
 
@@ -37,9 +38,9 @@ reporting the real output.
 | `app/api/*` | internal, unauthenticated API — what the UI calls |
 | `app/api/v1/*` | public, `API_KEY`-authenticated API for external callers |
 | `lib/api/` | boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/` (Zod) |
-| `lib/services/` | pipelines shared by both API surfaces; the only place business logic lives |
+| `lib/services/` | pipelines shared by both API surfaces — `expenseService`, `incomeService`, `billService`, `receiptService`, `pluggyService` |
 | `lib/models/` | Mongoose schemas |
-| `lib/utils/` | pure helpers, each a single source of truth (`cycleUtils`, `categoryUtils`, `pluggyUtils`, `billUtils`, `receiptUtils`) |
+| `lib/utils/` | domain helpers, each a single source of truth. `cycleUtils`, `dateUtils`, `pluggyUtils` and `billUtils` are pure; `categoryUtils` reads the DB (it calls `connectToDatabase()` itself) and `receiptUtils` calls GPT and upserts `Store` |
 | `lib/migrations/` | append-only, ordered data migrations |
 | `components/`, `hooks/` | shared React components and hooks |
 | `scripts/` | tsx CLI helpers (openapi generation, migrations, Telegram bridge, Pluggy sync) |
@@ -62,17 +63,21 @@ reporting the real output.
    `lint`/`build` run with no secrets on purpose; an unset `API_KEY` fails closed.
 5. **Never hand-edit `public/openapi.yaml`.** It is generated; a stale spec fails CI.
 6. **Never duplicate a single source of truth** — `computeEffectiveDate`,
-   `buildExpenseDocuments`, `categoryUtils`, `pluggyUtils`, `receiptService`,
-   `scripts/lib/cliEnv.ts`.
+   `buildExpenseDocuments`, `addMonthsClamped` (`dateUtils`), `categoryUtils`,
+   `pluggyUtils`, `receiptService`, `scripts/lib/cliEnv.ts`.
 7. **Migrations are append-only history.** Never edit, rename or reorder one that has run;
    corrections are new migrations. Production applies them via
    `POST /api/admin/migrations`, never a script in the image.
 8. **`$unset` to clear a Mongoose field.** Assigning `undefined` is dropped from the update.
-9. **New logic and every bug fix get a unit test** in `tests/`, following the existing
-   patterns.
+9. **Pure logic gets a unit test.** New behaviour and bug fixes in `lib/utils/`,
+   `lib/services/` and `scripts/lib/` belong in `tests/`, following the existing patterns.
+   There is no runner for React components or route wiring.
 10. **Releases are tagged on `main` only** (`vX.Y.Z`); CI's `verify-tag` rejects anything else.
-11. **`npm run test:api` writes to whatever database it targets.** Check `bruno/.env` before
-    running it; all records it creates are prefixed `BRUNO_TEST_*`.
+11. **`npm run test:api` writes to the database of whatever server it hits.** It targets
+    `localhost:3000`, so the database is the `MONGODB_URI` that server was started with —
+    during development, your real personal-finance data. `bruno/.env` holds only `API_KEY`
+    and tells you nothing about this. Every record the collection writes is prefixed
+    `BRUNO_TEST_*` so an aborted run can be swept.
 
 ## Environment
 
