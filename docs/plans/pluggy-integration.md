@@ -37,7 +37,7 @@ every field name below is a hypothesis until it passes:
 | `transaction.paymentData.paymentMethod` carries `'PIX'` | Step 8 — the `pix` payment type |
 | `transaction.creditCardMetadata.{installmentNumber,totalInstallments}` exists on card rows | Step 9 — installment expansion |
 | `transaction.id` is stable across syncs and across a `PENDING → POSTED` transition | Step 5 — the entire idempotency story |
-| `GET /transactions` accepts `accountId`, `from`, `to`, `page`, `pageSize` | Step 4 — the fetch loop |
+| `GET /v2/transactions` accepts `accountId`, `dateFrom`, `dateTo`, `after` (cursor) | Step 4 — the fetch loop. **Corrected:** the original `GET /transactions` with `page`/`pageSize` was retired by Pluggy and answers `410 ENDPOINT_DEPRECATED`; v2 rejects `pageSize` outright and fixes the page at 500 |
 | A card installment row's `date` is the **posting** date of that installment, not the original purchase date | Step 11 — the anchor date of the expanded group |
 | `transaction.status` distinguishes `PENDING` from `POSTED`, and a `PENDING` row can change amount or disappear | Steps 5 and 11 — what may be auto-imported |
 | An item can be created from a Connect token in the browser, so raw Meu Pluggy credentials never reach our server | Steps 2 and 3 — how a connection is established |
@@ -214,7 +214,7 @@ in §0. **Do not proceed on an unverified field name.**
   scope — the CI `lint`/`build` jobs run with no secrets, and a module-scope read makes the
   build depend on one (the same rule as `requireApiKey` and `connectToDatabase`).
 - Thin typed wrappers: `listAccounts(itemId)`, `getItem(itemId)`, `listTransactions({ accountId,
-  from, to, page, pageSize })`, `createConnectToken()`, `patchItem(itemId)` (the manual refresh of
+  from, to, after })`, `createConnectToken()`, `patchItem(itemId)` (the manual refresh of
   §5). **No `createItem(connectorId, credentials)`** — see step 3.
 - Hand-rolled over `fetch`, **no `pluggy-sdk` dependency**. Everything needed is four endpoints, and
   a new runtime dependency has to be reasoned about against `serverExternalPackages` and the
@@ -246,8 +246,11 @@ no `cardBrand` — a document `CreditExpense` says cannot exist.
 - Window: `from = max(connectedAt, lastSyncedAt − OVERLAP_DAYS)`, `to = today`.
   `PLUGGY_SYNC_OVERLAP_DAYS` defaults to **5**. The overlap is not optional: card transactions
   post late, and `PENDING` rows change after we first see them.
-- Page through `listTransactions` until a short page. Hard-cap the page count (say 50) so a
-  pagination bug cannot loop forever.
+- Drain the cursor: follow the response's `next` until it is `null`. **Never stop on a short
+  page** — under `/v2/transactions` Pluggy may return fewer rows than the 500-row cap on a page
+  that still has a successor, so the original "page until a short page" rule silently dropped
+  every row after it. Hard-cap the request count (50) so a stuck cursor cannot loop forever, and
+  treat hitting that cap as a **failed read**, not a completed one.
 - Upsert each row by `pluggyId` (step 5), then set `lastSyncedAt = now` **only after** the whole
   account succeeded — a partial page must be re-fetched, and the overlap alone is not a
   guarantee if the failure outlasted it.
