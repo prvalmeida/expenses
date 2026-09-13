@@ -152,6 +152,36 @@ Todo write valida `type` contra as categorias de receita.
    `INVALID_CATEGORY`: uma nota é uma compra só, e uma importação parcial deixaria o chamador
    reconciliando à mão.
 
+## Pluggy (Open Finance)
+
+Puxa transações bancárias e de cartão da Pluggy para uma coleção de staging
+(`PluggyTransaction`), auto-importa as que batem com um `BillMapping` já classificado e deixa o
+resto para revisão manual. `docs/plans/pluggy-integration.md` tem a arquitetura completa; aqui vai
+só o contrato de rede.
+
+- `POST /api/v1/pluggy/connect-token` — emite o token de curta duração que o widget Pluggy Connect
+  usa para criar um item **no navegador**. Retorna só o valor do token: credenciais bancárias
+  nunca transitam por este servidor.
+- `POST /api/v1/pluggy/items` — registra o `itemId` que o widget devolveu (`{ itemId, label }`).
+  Busca as contas do item e cria uma linha `PluggyAccount` **desabilitada** por conta — habilitar é
+  o ato de escolher `cardBrand`/`defaultPaymentType`, feito depois pela tela de configuração.
+- `GET /api/v1/pluggy/items` — status de cada item (`UPDATED`, `LOGIN_ERROR`, `WAITING_USER_ACTION`,
+  ...), para monitoramento.
+- `POST /api/v1/pluggy/sync?dryRun=&accountId=` — **o alvo do cron** (Easypanel, a cada 6h). Sem
+  `accountId`, sincroniza toda conta habilitada; com ele, sincroniza só aquela. Nunca força um
+  refresh na Pluggy — isso é reservado ao botão manual da tela de configuração (rota interna, fora
+  de `/api/v1`). Fora de `dryRun`, roda o auto-import (a correspondência com `BillMapping`) logo em
+  seguida: esta rota é o único disparo automático de todo o pipeline, então preencher o staging sem
+  também drenar as linhas já mapeadas deixaria todo comerciante conhecido esperando um humano para
+  sempre. `dryRun=true` só relata contagens e não escreve nada — nem no staging, nem gastos/receitas.
+- `GET /api/v1/pluggy/transactions?status=&accountId=&cursor=&limit=` — linhas em staging, paginado
+  por cursor como `/expenses`. `status` é um de `pending`, `imported`, `ignored`,
+  `skipped_existing`, `anomaly`.
+
+Não há uma rota v1 de importação manual ou de configuração de contas — essas ficam só na superfície
+interna (`/api/pluggy/*`, sem autenticação), porque são exclusivas da tela de revisão que a UI usa
+e nunca deveriam levar a `API_KEY` ao navegador.
+
 ## Apoio
 
 - `GET /api/v1/categories?kind=expense|income` — categorias e subtipos válidos.

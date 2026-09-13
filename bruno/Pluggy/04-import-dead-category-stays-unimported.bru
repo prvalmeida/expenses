@@ -1,0 +1,58 @@
+meta {
+  name: Import naming a dead category stays unimported
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{internalUrl}}/pluggy/import
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "pluggyId": "BRUNO_TEST_pluggy_dead_category",
+        "kind": "expense",
+        "type": "BRUNO_TEST_categoria_inexistente",
+        "subtype": "BRUNO_TEST_subtipo_inexistente",
+        "paymentType": "pix"
+      }
+    ]
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  test("nothing was imported", function () {
+    expect(res.body.imported).to.equal(0);
+  });
+
+  test("the row is counted as skippedInvalid, not silently dropped", function () {
+    expect(res.body.skippedInvalid).to.equal(1);
+  });
+
+  test("skippedExisting stays at zero — this is not a dedupe case", function () {
+    expect(res.body.skippedExisting).to.equal(0);
+  });
+}
+
+docs {
+  pluggyService.importStaged never throws INVALID_CATEGORY the way
+  receiptService's whole-batch import does: it follows the bill-import
+  three-count envelope instead, where an invalid (type, subtype) pair — or, as
+  here, a pluggyId with no matching staged row at all — lands in
+  skippedInvalid and the request still answers 201. Both failure reasons share
+  the same early-return path in importStagedExpense, so this untagged request
+  can only pin the "never imports, always counted" contract; it cannot reach a
+  staged row far enough to exercise validateExpensePair specifically, because
+  a real PluggyTransaction only exists after a live sync (see the `external`
+  request in this folder). Category validity is re-checked here the same way
+  autoImportStaged does it, so a category renamed away after a BillMapping
+  hint was set still surfaces for review instead of importing an orphan.
+}

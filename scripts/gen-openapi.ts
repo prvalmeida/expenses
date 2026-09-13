@@ -23,6 +23,11 @@ import { importBillSchema, parseBillSchema } from '../lib/api/schemas/bill';
 import { importReceiptSchema, parseReceiptUrlSchema } from '../lib/api/schemas/receipt';
 import { telegramExpenseTextSchema } from '../lib/api/schemas/telegram';
 import { cardCycleQuerySchema, categoriesQuerySchema } from '../lib/api/schemas/support';
+import {
+  listPluggyTransactionsQuerySchema,
+  registerPluggyItemSchema,
+  syncPluggyQuerySchema,
+} from '../lib/api/schemas/pluggy';
 import { ERROR_STATUS } from '../lib/api/respond';
 
 const OUTPUT = join(process.cwd(), 'public', 'openapi.yaml');
@@ -250,6 +255,47 @@ const document = {
         summary: 'Consulta o ciclo (fechamento/vencimento) de um cartão',
         parameters: toParameters(cardCycleQuerySchema),
         responses: responses('200', 'closingDate e dueDate do ciclo'),
+      },
+    },
+    '/pluggy/sync': {
+      post: {
+        summary: 'Sincroniza transações da Pluggy para a coleção de staging',
+        description:
+          'Alvo do cron do Easypanel (a cada 6h). Sem `accountId`, sincroniza toda conta ' +
+          'habilitada; nunca força um refresh na Pluggy (isso fica reservado ao botão manual ' +
+          'da rota interna). Fora de `dryRun`, roda o auto-import logo em seguida — esta rota ' +
+          'é o único disparo automático de todo o pipeline.',
+        parameters: toParameters(syncPluggyQuerySchema),
+        responses: responses('200', '{ sync, autoImport? } ou { locked: true }', ['UPSTREAM_FAILED']),
+      },
+    },
+    '/pluggy/items': {
+      get: {
+        summary: 'Lista os itens (conexões) registrados e sua saúde',
+        responses: responses('200', 'Os itens e o último status observado'),
+      },
+      post: {
+        summary: 'Registra um item criado no navegador pelo Pluggy Connect',
+        description:
+          'O item é criado no navegador com o token de /pluggy/connect-token; credenciais ' +
+          'bancárias nunca transitam por este servidor. Registra o item e uma conta ' +
+          '(desabilitada) por conta retornada pela Pluggy.',
+        requestBody: jsonBody(registerPluggyItemSchema),
+        responses: responses('201', 'O item registrado e a contagem de contas', ['UPSTREAM_FAILED']),
+      },
+    },
+    '/pluggy/transactions': {
+      get: {
+        summary: 'Lista transações da Pluggy em staging, paginado por cursor',
+        parameters: toParameters(listPluggyTransactionsQuerySchema),
+        responses: responses('200', 'Página de transações e o nextCursor'),
+      },
+    },
+    '/pluggy/connect-token': {
+      post: {
+        summary: 'Emite o token de curta duração do widget Pluggy Connect',
+        description: 'Retorna só o valor do token — nenhum outro dado de item ou sessão.',
+        responses: responses('200', 'O token de conexão', ['UPSTREAM_FAILED']),
       },
     },
   },

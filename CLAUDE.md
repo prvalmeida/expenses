@@ -64,6 +64,10 @@ MONGODB_URI=<your MongoDB connection string>
 OPENAI_API_KEY=<OpenAI API key — required for receipt parsing>
 PDF_KEY=<CPF do titular, somente números>
 API_KEY=<static credential for the public API; unset means every /api/v1 route returns 401>
+PLUGGY_CLIENT_ID=<Pluggy client id — unset fails a sync with UPSTREAM_FAILED, not a build-time error>
+PLUGGY_CLIENT_SECRET=<Pluggy client secret>
+PLUGGY_SYNC_OVERLAP_DAYS=<days a sync re-covers past its high-water mark; default 5>
+PLUGGY_OWN_DOCUMENTS=<comma-separated CPF/CNPJ of the household, for the own-transfer ignore rule>
 ```
 
 ## Architecture
@@ -97,6 +101,15 @@ All amounts match the single shared `BRL_AMOUNT` pattern (`1.234,56`) — never 
 **Caixa installment tokens are guessed, so they are validated:** because the city stays in the description, a free `NN DE NN` search can hit a merchant or address (`POSTO 24 DE 05 CANOAS`) and fabricate an installment — and `/api/bills/import` expands `installmentTotal` into that many expense rows. `isPlausibleInstallment` therefore requires `total > 1 && 1 <= current <= total`, and `COMPRAS_PARCELADAS` prefers the end-anchored `C_INSTALL_TAIL` before falling back to the free search.
 
 **`BillMapping` keys go through `billMappingKey()`** (`normalizeDescription` + lowercase), on both the lookup and the upsert side. Keying on `.toLowerCase().trim()` alone breaks against mappings learned before descriptions were whitespace-normalized. `POST /api/admin/normalize-bill-mappings` is the one-off migration that collapses pre-existing keys; `description` is uniquely indexed, so it resolves collisions by keeping the newest doc and reporting what it discarded.
+
+**Pluggy (Open Finance) ingestion (`lib/services/pluggyService.ts`, `lib/utils/pluggyUtils.ts`):** pulls bank/card transactions on a cron (`POST /api/v1/pluggy/sync`, an Easypanel scheduled task — see `README_DOCKER.md`) into a `PluggyTransaction` staging collection, auto-imports the rows a `BillMapping` already classifies, and queues the rest for review. Full design in `docs/plans/pluggy-integration.md`; the load-bearing decisions:
+
+- **Staging owns the Pluggy link, not `Expense`/`Income`.** `Expense` gains no new field and no migration is needed; the link back (`importedExpenseIds`/`importedIncomeId`) lives on the `PluggyTransaction` side. This is what makes the integration additive — `expenseService`/`incomeService` stay unaware a row came from Pluggy at all.
+- **The ignore rules (`shouldIgnore`, `pluggyUtils.ts`) exist to stop double-counting, the integration's highest-risk failure**, not to filter noise: an inflow on a CREDIT account (a bill payment or refund) would book as income, an outflow paying a card bill on a BANK account would re-book purchases the CREDIT account already staged, and an own-transfer between household accounts would book as both an expense and an income. Each rule sets `statusReason` to its own id so the review screen can un-ignore one rule's rows without touching the others.
+- **`BillMapping` is reused rather than adding a `PluggyMapping`** because the four category cascades (`cascadeRename*`/`cascadeReassignExpenseType`, `categoryUtils.ts`) already keep it in sync with renames; a parallel table would need threading into all four, and forgetting one silently orphans mappings. Pluggy's `description` and a PDF parser's recovered text are different strings for the same merchant, so the two sources mostly build disjoint key sets inside the one collection — harmless, and not the reason for the reuse.
+- **A CREDIT `PluggyAccount.cardBrand` must be one of the three `CardBrand` enum values**, the same constraint `Expense.cardBrand`/`CardCycle.cardBrand`/`cycleUtils.DEFAULT_SETTINGS` already share — validated at the link-row boundary (`updateAccountLinkSchema`'s refine) so a mismatch is a 400, not a document `CreditExpense` says cannot exist.
+- **`PluggyTransaction` is deliberately outside the category cascades.** `suggestedType`/`suggestedSubtype` on a pending row are hints from a `BillMapping` hit, not stored classifications — a category rename just makes the hint stale, and `autoImportStaged`/`importStaged` already re-validate the pair at import time (`validateExpensePair`) and leave a failing row `pending` rather than importing an orphan. Threading `PluggyTransaction` into `cascadeRename*` would keep a hint fresh for no behavioral gain, since it's re-checked on every import attempt anyway.
+- **The installment anchor date is not the row's date, unlike the bill import's.** A fatura row's date already *is* the original purchase date, so `billService` passes it straight through. A Pluggy row's date is the **posting** date of the one installment it represents — passing it unchanged would file a mid-series purchase in the wrong month. `anchorPurchaseDate` (`pluggyUtils.ts`) backs it off by `installmentCurrent - 1` months (`addMonthsClamped` handles the negative offset, and clamps a day-31 anchor to the target month's last valid day) before calling the same `buildExpenseDocuments` the bill import uses. `installmentCurrent` is therefore required to expand a Pluggy installment row — one with a total but no plausible current stays `pending` rather than being expanded from an unknown offset.
 
 **Dashboard table:** Supports column sorting (date/name/type/value, click headers to toggle asc/desc) and category filtering via a dropdown above the table. Both are purely client-side — no extra API calls.
 
@@ -175,7 +188,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 ### Directory structure
 
 - `app/` — Next.js App Router pages and API routes; all UI pages are co-located here as `.tsx` files
-- `app/api/v1/` — the public API. `expenses/` (GET filtered+paginated, POST one purchase → N installments), `expenses/[id]/` (GET/PUT/PATCH/DELETE), `expenses/transactions/[transactionId]/` (GET/DELETE the whole installment group), `incomes/` + `incomes/[id]/`, `bills/{parse,import}/`, `receipts/{parse,import}/` (one parse endpoint takes multipart **or** `{ url }`), and read-only `categories/` + `card-cycles/`
+- `app/api/v1/` — the public API. `expenses/` (GET filtered+paginated, POST one purchase → N installments), `expenses/[id]/` (GET/PUT/PATCH/DELETE), `expenses/transactions/[transactionId]/` (GET/DELETE the whole installment group), `incomes/` + `incomes/[id]/`, `bills/{parse,import}/`, `receipts/{parse,import}/` (one parse endpoint takes multipart **or** `{ url }`), read-only `categories/` + `card-cycles/`, and `pluggy/{sync,items,connect-token,transactions}/` (the cron target `POST /sync` is documented in README_DOCKER.md)
 - `app/api/expenses/` — GET all, POST (one purchase, installments expanded server-side via `createExpenses`), DELETE by query param `?id=`
 - `app/api/expenses/[id]/` — GET by id, PUT (whitelisted fields only: `name`, `value`, `type`, `subtype`, `paymentType`, `cardBrand`, `date`, `effectiveDate`), DELETE (with optional `?all=true` for installments)
 - `app/api/income/` — GET all, POST; `app/api/income/[id]/` — DELETE
@@ -187,15 +200,19 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 - `app/api/admin/migrations/` — GET the ledger, POST to apply pending migrations (`?dryRun=true` reports counts and writes nothing). **Guarded by `requireApiKey` and answering in the v1 envelope**, unlike the rest of `/api/admin`: it rewrites stored data on demand, and the guard's own error body is that envelope
 - `app/api/categories/` — GET (list, filter by `?kind=`), POST (create type, or add subtype via `{ subtype }`), PUT (`action: 'renameType' | 'renameSubtype' | 'reorder'`), DELETE (guarded; `?reassignTo=` or `?force=true`)
 - `app/api/categories/seed/` — POST: forced reseed; thin wrapper over `seedCategories()` in `categoryUtils.ts`
+- `app/api/pluggy/` — internal, unauthenticated Pluggy surface (the review/config screens' backend): `transactions/` (GET staged rows), `transactions/[pluggyId]/` (PATCH un-ignore), `import/` (POST manual import via `importStaged`), `accounts/` (GET link rows, PUT update), `sync/` (POST "sincronizar agora", forces a Pluggy refresh via `patchItem` — never the cron), `items/` (GET list, POST register), `connect-token/` (POST mint the widget token). All delegate to `pluggyService`
 - `instrumentation.ts` — Next.js boot hook (`register()`); in the Node runtime it auto-runs `seedCategories()` **only when the `Category` collection is empty** (first-run seeding). Guarded by an empty-count check so cloud instances don't re-seed on every cold start; wrapped in try/catch so a DB hiccup never crashes boot. Forced reseed still goes through the POST route.
-- `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt,support}.ts`
-- `lib/services/` — `expenseService` (build/create/list/update/delete), `incomeService`, `billService` (parse + import), `receiptService` (single source of truth — do not re-inline into routes)
+- `lib/pluggy/client.ts` — hand-rolled Pluggy HTTP client (global-cache auth singleton, single-flight, retry-on-5xx only). Deliberately no `createItem`: the item is created browser-side by Pluggy Connect so bank credentials never transit this app
+- `lib/api/` — public-API boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/{common,expense,income,bill,receipt,support,pluggy}.ts`
+- `lib/services/` — `expenseService` (build/create/list/update/delete), `incomeService`, `billService` (parse + import), `receiptService` (single source of truth — do not re-inline into routes), `pluggyService` (register/sync/auto-import/import — the only writer of the Pluggy staging collections)
 - `scripts/gen-openapi.ts` — generates `public/openapi.yaml` from the Zod schemas
 - `scripts/telegram-record-expense.ts` (`npm run telegram:record`) and `scripts/telegram-categories.ts` (`npm run telegram:categories`) — the Hermes/Telegram CLI bridge; `scripts/lib/cliEnv.ts` holds their shared dotenv reading, flag parsing and error formatting (single source of truth — do not re-inline)
+- `scripts/pluggy-sync.ts` (`npm run pluggy:sync`) — checkout convenience that POSTs to `/api/v1/pluggy/sync` on a running server (`--dry-run`, `--account`), so it needs a base URL + `API_KEY` like the Telegram bridge, not `MONGODB_URI` like `migrate.ts`; the `runner` image cannot run tsx scripts, so production uses the route directly
 - `bruno/` — the API test collection (`npm run test:api`); `bruno/.env` and `bruno/fixtures/` are gitignored
 - `lib/mongodb.ts` — Mongoose connection with global cache (Next.js hot-reload safe)
 - `lib/openai.ts` — OpenAI client singleton (same global-cache pattern as `lib/mongodb.ts`)
-- `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`
+- `lib/models/` — Mongoose schemas: `Expense`, `Income`, `CardCycle`, `Store`, `ProductMapping`, `BillMapping`, `Category`, plus the Pluggy staging set `PluggyItem` / `PluggyAccount` / `PluggyTransaction` / `PluggySyncLock`
+- `lib/utils/pluggyUtils.ts` — pure Pluggy derivation helpers (`mapPluggyTransaction`, `deriveDirection`, `derivePaymentType`, `deriveInstallments`, `shouldIgnore`, `anchorPurchaseDate`); the ONLY place raw Pluggy transaction fields are read, so a spike correction stays localized. Covered by `tests/pluggy-utils.test.ts`
 - `lib/utils/cycleUtils.ts` — `getCycle`, `computeEffectiveDate`, `DEFAULT_SETTINGS` (single source of truth — do not duplicate)
 - `lib/utils/categoryUtils.ts` — category fetch/cache, `validateExpensePair`, `validateIncomeType`, `count*` and `cascadeRename*` helpers (single source of truth — do not duplicate). `getCategories()` calls `connectToDatabase()` itself: it is the first DB read on every route that validates a category before reaching a service, and `instrumentation.ts` swallows a failed boot connect, so without it the first request buffers for `bufferTimeoutMS` and 500s instead of failing immediately
 - `lib/migrations/` — the migration registry (`index.ts`, append-only and ordered) plus one file per migration. `lib/services/migrationService.ts` runs them; `scripts/migrate.ts` (`npm run migrate`, `-- --dry-run`, `-- --status`) drives it from a checkout and `POST /api/admin/migrations` drives it in production
@@ -214,7 +231,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 ### Navigation
 
-`app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, or `importBill`. There is no client-side router — view switching is purely state-driven.
+`app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, `importBill`, `pluggySync`, or `pluggyConfig`. There is no client-side router — view switching is purely state-driven. The `ViewId` union and the nav entries live in `components/NavMenu.tsx`, so a new view is added in both places.
 
 ### Responsive shell conventions
 

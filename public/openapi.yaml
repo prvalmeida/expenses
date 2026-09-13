@@ -1028,6 +1028,167 @@ paths:
           content:
             application/json:
               schema: *a1
+  /pluggy/sync:
+    post:
+      summary: Sincroniza transações da Pluggy para a coleção de staging
+      description: Alvo do cron do Easypanel (a cada 6h). Sem `accountId`, sincroniza toda conta habilitada; nunca força um refresh na Pluggy (isso fica reservado ao botão manual da rota interna). Fora de `dryRun`, roda o auto-import logo em seguida — esta rota é o único disparo automático de todo o pipeline.
+      parameters:
+        - name: dryRun
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - "true"
+              - "false"
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: "{ sync, autoImport? } ou { locked: true }"
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "502":
+          description: UPSTREAM_FAILED
+          content:
+            application/json:
+              schema: *a1
+  /pluggy/items:
+    get:
+      summary: Lista os itens (conexões) registrados e sua saúde
+      responses:
+        "200":
+          description: Os itens e o último status observado
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+    post:
+      summary: Registra um item criado no navegador pelo Pluggy Connect
+      description: O item é criado no navegador com o token de /pluggy/connect-token; credenciais bancárias nunca transitam por este servidor. Registra o item e uma conta (desabilitada) por conta retornada pela Pluggy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                itemId:
+                  type: string
+                  minLength: 1
+                label:
+                  type: string
+                  minLength: 1
+              required:
+                - itemId
+                - label
+      responses:
+        "201":
+          description: O item registrado e a contagem de contas
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "502":
+          description: UPSTREAM_FAILED
+          content:
+            application/json:
+              schema: *a1
+  /pluggy/transactions:
+    get:
+      summary: Lista transações da Pluggy em staging, paginado por cursor
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            default: 100
+            type: integer
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 500
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-fA-F]{24}$
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - pending
+              - imported
+              - ignored
+              - skipped_existing
+              - anomaly
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Página de transações e o nextCursor
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /pluggy/connect-token:
+    post:
+      summary: Emite o token de curta duração do widget Pluggy Connect
+      description: Retorna só o valor do token — nenhum outro dado de item ou sessão.
+      responses:
+        "200":
+          description: O token de conexão
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+        "502":
+          description: UPSTREAM_FAILED
+          content:
+            application/json:
+              schema: *a1
 components:
   securitySchemes:
     apiKey:
