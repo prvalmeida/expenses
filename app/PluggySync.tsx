@@ -210,9 +210,25 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
         return;
       }
       const imported = (data.autoImport?.expensesImported ?? 0) + (data.autoImport?.incomesImported ?? 0);
-      setNotice(
-        `Sincronização concluída. ${imported} ${imported === 1 ? 'transação importada' : 'transações importadas'} automaticamente.`
-      );
+
+      // A per-account failure comes back inside a 200 body (one bank must not
+      // stop the others), so an outage that hits every account — a Pluggy
+      // endpoint deprecation answering 410 — otherwise renders as a clean
+      // sync that imported nothing. Surface it instead of only reading
+      // `data.error`, which is set on non-OK responses alone.
+      const failed: { error?: string }[] =
+        (data.sync?.accounts ?? []).filter((a: { error?: string }) => a.error);
+
+      if (failed.length) {
+        setError(
+          `Falha ao sincronizar ${failed.length} ${failed.length === 1 ? 'conta' : 'contas'}: ` +
+            `${failed[0].error}`
+        );
+      } else {
+        setNotice(
+          `Sincronização concluída. ${imported} ${imported === 1 ? 'transação importada' : 'transações importadas'} automaticamente.`
+        );
+      }
       await load();
     } catch {
       setError('Erro de rede ao sincronizar com a Pluggy');
