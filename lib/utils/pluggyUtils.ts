@@ -59,14 +59,41 @@ export interface DirectionResult {
 // fallback. When the two disagree the row is written status: 'anomaly' rather
 // than guessed — a sign error would turn an income into an expense, and there
 // is no cheap way to notice that later.
-export function deriveDirection(tx: Pick<PluggyTransactionApi, 'type' | 'amount'>): DirectionResult {
+//
+// The cross-check is account-kind aware because Pluggy's sign convention is
+// NOT uniform, as observed on live Caixa accounts:
+//
+//   CREDIT (card):  a purchase is  type=DEBIT,  amount POSITIVE  (NETFLIX 44.9)
+//                   a refund is    type=CREDIT, amount NEGATIVE  (AJUSTE CRED -0.05)
+//   BANK (account): a payment is   type=DEBIT,  amount NEGATIVE  (BOLETO -516.91)
+//                   a deposit is   type=CREDIT, amount POSITIVE  (CRED PIX 6400)
+//
+// On a card statement the amount is the size of the charge against the bill,
+// so an outflow reads positive; on an account it is the effect on the balance.
+// Treating BANK's convention as universal made every single card purchase an
+// anomaly — 71 of 86 rows in production — so no card expense could ever be
+// imported. When the account kind is unknown the sign is not a usable
+// cross-check at all, so tx.type is trusted on its own.
+export function deriveDirection(
+  tx: Pick<PluggyTransactionApi, 'type' | 'amount'>,
+  account?: Pick<PluggyAccountLike, 'kind'>
+): DirectionResult {
   const byType: PluggyDirection | undefined =
     tx.type === 'DEBIT' ? 'outflow' : tx.type === 'CREDIT' ? 'inflow' : undefined;
-  const bySign: PluggyDirection = tx.amount < 0 ? 'outflow' : 'inflow';
+
+  // A card outflow is positive; an account outflow is negative.
+  const outflowIsPositive = account?.kind === 'CREDIT';
+  const bySign: PluggyDirection = outflowIsPositive
+    ? tx.amount > 0 ? 'outflow' : 'inflow'
+    : tx.amount < 0 ? 'outflow' : 'inflow';
+
+  if (!account) return { direction: byType ?? bySign };
 
   if (byType && byType !== bySign) {
     return {
-      anomalyReason: `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção da transação.`,
+      anomalyReason:
+        `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção ` +
+        `da transação em uma conta ${account.kind}.`,
     };
   }
   return { direction: byType ?? bySign };
