@@ -11,6 +11,7 @@ import {
   getItem,
   listAccounts,
   listTransactions,
+  parseAfterCursor,
   patchItem,
   PluggyAccountApi,
   PluggyTransactionApi,
@@ -199,9 +200,11 @@ export async function updateAccountLink(input: UpdateAccountLinkInput) {
 // window always re-covers the last few days rather than starting exactly
 // where the previous sync left off.
 const DEFAULT_OVERLAP_DAYS = 5;
-// A pagination bug (or a page that never shrinks) must not loop forever.
+// A pagination bug (or a cursor that never advances) must not loop forever.
+// v2 fixes the page at 500 rows and rejects `pageSize` outright, so this is a
+// ceiling of 25k transactions per account per sync — far beyond any real
+// window, and the loop only runs while Pluggy keeps handing back a cursor.
 const MAX_SYNC_PAGES = 50;
-const PAGE_SIZE = 100;
 
 function computeSyncWindow(
   account: { connectedAt: string; lastSyncedAt?: Date | null },
@@ -392,8 +395,9 @@ export async function syncAccount(
 
   const result: SyncAccountResult = { accountId, fetched: 0, created: 0, updated: 0, anomalies: 0 };
 
+  let after: string | undefined;
   for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
-    const { results: rows } = await listTransactions({ accountId, from, to, page, pageSize: PAGE_SIZE });
+    const { results: rows, next } = await listTransactions({ accountId, from, to, after });
     result.fetched += rows.length;
 
     // dryRun still classifies each row (a DB read) so the report reflects what
@@ -406,7 +410,12 @@ export async function syncAccount(
       else if (outcome === 'anomaly') result.anomalies++;
     }
 
-    if (rows.length < PAGE_SIZE) break;
+    // v2 reports the end of the list with `next: null` — a short page is NOT
+    // the signal it was under the old page/pageSize contract, and Pluggy is
+    // free to return fewer rows than the cap on a page that still has a
+    // successor.
+    after = parseAfterCursor(next);
+    if (!after) break;
   }
 
   if (!dryRun) {

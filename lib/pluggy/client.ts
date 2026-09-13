@@ -197,19 +197,23 @@ export interface PluggyTransactionApi {
   [key: string]: unknown;
 }
 
+// The cursor-based page shape of GET /v2/transactions. `next` is a full query
+// string (`?accountId=…&after=…`) when another page exists, and null on the
+// last page — there is no page/total/totalPages, and no way to know the total
+// up front.
 export interface PluggyTransactionsPage {
   results: PluggyTransactionApi[];
-  page: number;
-  total: number;
-  totalPages: number;
+  next: string | null;
 }
 
 export interface ListTransactionsParams {
   accountId: string;
   from?: string;
   to?: string;
-  page?: number;
-  pageSize?: number;
+  // The URL-DECODED `after` value parsed out of the previous page's `next`,
+  // never the whole `next` string. v2 rejects `pageSize` outright
+  // ("property pageSize should not exist"); page size is fixed at 500.
+  after?: string;
 }
 
 export interface PluggyConnectToken {
@@ -224,9 +228,30 @@ export function listAccounts(itemId: string): Promise<PluggyAccountsResponse> {
   return pluggyFetch('/accounts', { query: { itemId } });
 }
 
+// GET /v2/transactions — cursor pagination. The page-based /transactions was
+// retired by Pluggy and now answers 410 ENDPOINT_DEPRECATED, which syncAccount
+// swallowed per account, so every sync silently reported `fetched: 0`.
+// `dateFrom`/`dateTo` are the v2 names for the old `from`/`to`.
 export function listTransactions(params: ListTransactionsParams): Promise<PluggyTransactionsPage> {
-  const { accountId, from, to, page, pageSize } = params;
-  return pluggyFetch('/transactions', { query: { accountId, from, to, page, pageSize } });
+  const { accountId, from, to, after } = params;
+  return pluggyFetch('/v2/transactions', {
+    query: { accountId, dateFrom: from, dateTo: to, after },
+  });
+}
+
+// Pluggy returns `next` as a ready-made query string (`?accountId=…&after=…`).
+// Re-sending it whole as a single `after` value 400s; the documented contract
+// is to extract the URL-decoded `after` and pass only that. Returns undefined
+// when there is no next page, or when `next` carries no `after` — treating an
+// unparseable cursor as "no more pages" ends the loop instead of refetching
+// page 1 forever.
+export function parseAfterCursor(next: string | null | undefined): string | undefined {
+  if (!next) return undefined;
+  const queryStart = next.indexOf('?');
+  const query = queryStart >= 0 ? next.slice(queryStart + 1) : next;
+  // An empty `after` is not a cursor: returning '' would send `after=` on the
+  // next request and make the loop refetch page 1.
+  return new URLSearchParams(query).get('after') || undefined;
 }
 
 export function createConnectToken(): Promise<PluggyConnectToken> {
