@@ -48,6 +48,48 @@ function inferYear(txMonth: number, dueMonth: number, dueYear: number): number {
   return txMonth > dueMonth ? dueYear - 1 : dueYear;
 }
 
+// Installment rows print the PURCHASE DD/MM with no year, and the purchase can
+// be many months (at least one year for a long plan) before the bill. inferYear
+// alone mis-years a mid/late-series row whose purchase month ≤ dueMonth — the
+// production case was a "12 DE 12" row printed 19/09 on a bill due 25/09/2026,
+// whose real purchase was 19/09/2025.
+//
+// The purchase year is recoverable because this installment's CHARGE date —
+// purchase + (current-1) months — must land inside the bill's cycle, i.e. in
+// the ~month ending at the due date. We therefore pick the most recent
+// purchase year whose charge date does not run past the due month. Month
+// arithmetic is done on a absolute month index (year*12 + month) so the
+// (current-1) offset and the year roll-over compose without clamping edge cases.
+export function inferInstallmentPurchaseYear({
+  txMonth,
+  installmentCurrent,
+  dueMonth,
+  dueYear,
+}: {
+  txDay: number;
+  txMonth: number;
+  installmentCurrent: number;
+  installmentTotal: number;
+  dueMonth: number;
+  dueYear: number;
+}): number {
+  // A bill only lists installments charged inside its own cycle, so this
+  // installment's charge month must sit in the ~month ending at the due month.
+  // We accept a one-month lower slack because closing precedes due by a few
+  // days and a charge late in the window can read as the prior month.
+  const dueIndex = dueYear * 12 + (dueMonth - 1);
+  const chargeOffset = installmentCurrent - 1;
+  const chargeIndex = (purchaseYear: number) =>
+    purchaseYear * 12 + (txMonth - 1) + chargeOffset;
+  // Most recent candidate is the inferYear rule; walk back whole years until
+  // the charge month is no longer after the due month.
+  let purchaseYear = inferYear(txMonth, dueMonth, dueYear);
+  while (chargeIndex(purchaseYear) > dueIndex) {
+    purchaseYear -= 1;
+  }
+  return purchaseYear;
+}
+
 // "1.234,56" → 1234.56
 function parseBRLAmount(raw: string): number {
   return parseFloat(raw.replace(/\./g, '').replace(',', '.'));
@@ -76,6 +118,28 @@ function extractDueDate(rawText: string): { dueMonth: number; dueYear: number } 
 
 function buildDate(dd: number, mm: number, dueMonth: number, dueYear: number): string {
   const year = inferYear(mm, dueMonth, dueYear);
+  return `${year}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+}
+
+// The printed DD/MM on an installment row is the purchase date; only the year
+// is unknown and is resolved against the bill's cycle. Kept separate from
+// buildDate so a plain (non-installment) row keeps the simple inferYear rule.
+function buildInstallmentDate(
+  dd: number,
+  mm: number,
+  installmentCurrent: number,
+  installmentTotal: number,
+  dueMonth: number,
+  dueYear: number,
+): string {
+  const year = inferInstallmentPurchaseYear({
+    txDay: dd,
+    txMonth: mm,
+    installmentCurrent,
+    installmentTotal,
+    dueMonth,
+    dueYear,
+  });
   return `${year}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 }
 
@@ -121,12 +185,14 @@ function parseSantanderLine(
   if (subsection === 'Parcelamentos') {
     const m = line.match(S_PARCELADO);
     if (m) {
+      const installmentCurrent = parseInt(m[4], 10);
+      const installmentTotal = parseInt(m[5], 10);
       return {
-        date: buildDate(+m[1], +m[2], dueMonth, dueYear),
+        date: buildInstallmentDate(+m[1], +m[2], installmentCurrent, installmentTotal, dueMonth, dueYear),
         description: normalizeDescription(m[3]),
         value: parseBRLAmount(m[6]),
-        installmentCurrent: parseInt(m[4], 10),
-        installmentTotal:   parseInt(m[5], 10),
+        installmentCurrent,
+        installmentTotal,
         cardholder,
         subsection,
       };
@@ -148,7 +214,10 @@ function parseSantanderLine(
   return null;
 }
 
-function preprocessSantanderText(rawText: string): PreprocessedTransaction[] {
+// Exported for tests: the deterministic preprocessors are the seam where a
+// real bill line is asserted against its parsed date/installments, without the
+// GPT classification pass that parseBillText adds on top.
+export function preprocessSantanderText(rawText: string): PreprocessedTransaction[] {
   const { dueMonth, dueYear } = extractDueDate(rawText);
   const results: PreprocessedTransaction[] = [];
 
@@ -235,24 +304,27 @@ function parseCaixaLine(
   if (!m) return null;
   if (m[5] === 'C') return null; // credit line — exclude
 
-  const date = buildDate(parseInt(m[1], 10), parseInt(m[2], 10), dueMonth, dueYear);
+  const dd = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
   const value = parseBRLAmount(m[4]);
   const middle = normalizeDescription(m[3]);
 
   // Installments show up in both subsections — "ALLIANZ SEGU 07 de 12" sits under COMPRAS.
-  // In COMPRAS_PARCELADAS the token is normally the trailing column, so prefer that reading;
+  // In COMPRAS_PARCELADAS the token is the trailing column, so prefer that reading;
   // fall back to a free search for rows that carry a city after it.
   const install = (subsection === 'COMPRAS_PARCELADAS' ? middle.match(C_INSTALL_TAIL) : null)
     ?? middle.match(C_INSTALL_TOKEN);
   if (install && isPlausibleInstallment(parseInt(install[1], 10), parseInt(install[2], 10))) {
     const description = normalizeDescription(middle.slice(0, install.index ?? 0));
     if (description) {
+      const installmentCurrent = parseInt(install[1], 10);
+      const installmentTotal = parseInt(install[2], 10);
       return {
-        date,
+        date: buildInstallmentDate(dd, mm, installmentCurrent, installmentTotal, dueMonth, dueYear),
         description,
         value,
-        installmentCurrent: parseInt(install[1], 10),
-        installmentTotal:   parseInt(install[2], 10),
+        installmentCurrent,
+        installmentTotal,
         cardholder,
         subsection,
       };
@@ -261,10 +333,10 @@ function parseCaixaLine(
 
   // No installment token: merchant and city are separated only by a space and both may
   // contain spaces, so the boundary is not recoverable — keep the whole segment.
-  return { date, description: middle, value, cardholder, subsection };
+  return { date: buildDate(dd, mm, dueMonth, dueYear), description: middle, value, cardholder, subsection };
 }
 
-function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
+export function preprocessCaixaText(rawText: string): PreprocessedTransaction[] {
   const { dueMonth, dueYear } = extractDueDate(rawText);
   const results: PreprocessedTransaction[] = [];
 
