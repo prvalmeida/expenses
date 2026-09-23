@@ -10,6 +10,23 @@ function normalizeDescription(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ');
 }
 
+// "2026-08-14T03:00:00.000Z" -> "2026-08-14". Already-narrow values pass
+// through untouched, so a connector that sends a bare date is fine too.
+// Exported because rows staged before mapPluggyTransaction started narrowing
+// `date` still hold a timestamp until migration 002 rewrites them, and the
+// drift check in pluggyService must not read that as a changed date.
+export function toIsoDate(raw: string): string {
+  return (raw ?? '').split('T')[0];
+}
+
+function firstNonEmpty(...values: (string | null | undefined)[]): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
 export interface PluggyRawFields {
   date: string;
   amount: number;
@@ -21,28 +38,41 @@ export interface PluggyRawFields {
   pluggyStatus: string;
   installmentCurrent?: number;
   installmentTotal?: number;
+  purchaseDate?: string;
   paymentMethod?: string;
   raw: unknown;
 }
 
 // The functions in this file are the only place in the app that reads a raw
-// Pluggy transaction field. Every field name is a hypothesis from the plan's
-// §0 research table, unverified against a live account — centralizing the
-// reads means a correction from a future spike touches this file and nothing
-// that consumes its output.
+// Pluggy transaction field — centralizing the reads means a correction touches
+// this file and nothing that consumes its output. The field names were
+// verified against a live Caixa connection on 2026-09-07 (see client.ts).
 export function mapPluggyTransaction(tx: PluggyTransactionApi): PluggyRawFields {
   const descriptionRaw = tx.description ?? '';
   return {
-    date: tx.date,
+    // Pluggy sends a full ISO timestamp; everything downstream treats
+    // PluggyTransaction.date as YYYY-MM-DD — listPluggyTransactions paginates
+    // by comparing it lexically against a cursor row's date, upsertTransaction
+    // compares it against the stored value to detect post-import drift, and it
+    // reaches Expense.date through buildExpenseDocuments. Storing the raw
+    // timestamp would make the drift check fire on a re-read that only moved
+    // the clock, and file the expense under a date the rest of the app cannot
+    // match.
+    date: toIsoDate(tx.date),
     amount: tx.amount,
     currencyCode: tx.currencyCode ?? 'BRL',
     descriptionRaw,
     description: normalizeDescription(descriptionRaw),
-    merchantName: tx.merchant?.name ?? undefined,
+    // Both merchant name fields come back as empty strings on some rows, which
+    // would otherwise store a blank merchantName rather than none.
+    merchantName: firstNonEmpty(tx.merchant?.name, tx.merchant?.businessName),
     pluggyCategory: tx.category ?? undefined,
     pluggyStatus: tx.status ?? 'POSTED',
     installmentCurrent: tx.creditCardMetadata?.installmentNumber ?? undefined,
     installmentTotal: tx.creditCardMetadata?.totalInstallments ?? undefined,
+    purchaseDate: tx.creditCardMetadata?.purchaseDate
+      ? toIsoDate(tx.creditCardMetadata.purchaseDate)
+      : undefined,
     paymentMethod: tx.paymentData?.paymentMethod ?? undefined,
     raw: tx,
   };
@@ -83,21 +113,40 @@ export function deriveDirection(
 ): DirectionResult {
   const byType: PluggyDirection | undefined =
     tx.type === 'DEBIT' ? 'outflow' : tx.type === 'CREDIT' ? 'inflow' : undefined;
-
   // A card outflow is positive; an account outflow is negative.
   const outflowIsPositive = account.kind === 'CREDIT';
-  const bySign: PluggyDirection = outflowIsPositive
-    ? tx.amount > 0 ? 'outflow' : 'inflow'
-    : tx.amount < 0 ? 'outflow' : 'inflow';
+  // A zero amount carries no sign, so it cross-checks nothing: reading `0 > 0`
+  // as an inflow made a zero-value CREDIT row on a card — a fully annulled
+  // estorno, which Caixa does emit — disagree with tx.type and stage as an
+  // anomaly. Defer to tx.type, and consult the sign only when there is one.
+  const bySign: PluggyDirection | undefined =
+    tx.amount === 0
+      ? undefined
+      : outflowIsPositive
+        ? tx.amount > 0
+          ? 'outflow'
+          : 'inflow'
+        : tx.amount < 0
+          ? 'outflow'
+          : 'inflow';
 
-  if (byType && byType !== bySign) {
+  if (byType && bySign && byType !== bySign) {
     return {
       anomalyReason:
         `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção ` +
         `da transação em uma conta ${account.kind}.`,
     };
   }
-  return { direction: byType ?? bySign };
+  const direction = byType ?? bySign;
+  if (!direction) {
+    // Neither signal resolved: an unknown tx.type on a zero-amount row.
+    return {
+      anomalyReason:
+        `Não foi possível determinar a direção da transação em uma conta ${account.kind}: ` +
+        `tx.type (${tx.type ?? 'ausente'}) não resolve e o valor (${tx.amount}) não tem sinal.`,
+    };
+  }
+  return { direction };
 }
 
 export interface PluggyAccountLike {
@@ -253,13 +302,100 @@ export interface IgnoreOutcome {
 // A Pluggy row's date is the POSTING date of the one installment it
 // represents, not the original purchase date — buildExpenseDocuments walks
 // forward from `date` treating it as installment 1, so a mid-series row must
-// be backed off by (installmentCurrent - 1) months before being passed in.
-// addMonthsClamped handles the negative offset correctly, and also clamps a
-// day-31 anchor to the target month's last valid day, so the reconstruction
-// is a purchase *month*, not a guaranteed exact calendar day.
-export function anchorPurchaseDate(row: { date: string }, installments?: { current: number }): string {
+// be anchored to the purchase before being passed in.
+//
+// Pluggy reports the real thing on card rows (creditCardMetadata.purchaseDate)
+// and that is exactly what Expense.date means in this app — "the purchase
+// date, when you decided to spend" — so it wins whenever it is present, for
+// installment and single-charge rows alike. The month arithmetic below is the
+// fallback for the rows (and connectors) that omit it: back off by
+// (installmentCurrent - 1) months, which addMonthsClamped handles for a
+// negative offset and clamps a day-31 anchor to the target month's last valid
+// day. That fallback reconstructs a purchase *month*, not a calendar day —
+// e.g. a 4/4 parcela posted 2026-08-14 whose real purchase was 2026-04-23
+// reconstructs as 2026-05-14, three weeks and a month off.
+//
+// A reported purchaseDate is only trusted when it is not AFTER the posting
+// date: a card charge cannot post before it happens, so a later value is bad
+// upstream data, and taking it would file the expense in a future month.
+export function anchorPurchaseDate(
+  row: { date: string; purchaseDate?: string | null },
+  installments?: { current: number }
+): string {
+  const reported = reportedPurchaseDate(row);
+  if (reported) return reported;
+
   if (!installments) return row.date;
   return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
+}
+
+// The reported purchase date, when it is usable. Both values are YYYY-MM-DD,
+// so the lexical comparison is a date comparison.
+export function reportedPurchaseDate(row: {
+  date: string;
+  purchaseDate?: string | null;
+}): string | undefined {
+  const reported = row.purchaseDate?.trim();
+  return reported && reported <= row.date ? reported : undefined;
+}
+
+export interface InstallmentPlan {
+  // The anchor handed to buildExpenseDocuments as `date`.
+  date: string;
+  // How many expense rows the purchase expands into.
+  installments: number;
+  // Whether the expansion is an installment group, which is what makes
+  // insertExpenseDocuments dedupe against an already-imported series.
+  isGroup: boolean;
+}
+
+export type InstallmentPlanResult = { plan: InstallmentPlan } | { reason: string };
+
+// Resolves "how many expenses does this staged row become, dated when" — the
+// single source of truth for both import paths (autoImportExpenses and
+// importStagedExpense), which previously carried the same guard twice.
+//
+// `installmentCurrent` is only needed for the month-arithmetic fallback in
+// anchorPurchaseDate. When Pluggy reports a usable purchaseDate the anchor and
+// the total together determine the whole series, so a row with a good
+// purchaseDate but a missing or implausible installmentNumber is expandable
+// and must not be parked as pending.
+export function resolveInstallmentPlan(row: {
+  date: string;
+  purchaseDate?: string | null;
+  installmentCurrent?: number | null;
+  installmentTotal?: number | null;
+}): InstallmentPlanResult {
+  const total = row.installmentTotal ?? undefined;
+  if (total === undefined || total <= 1) {
+    return { plan: { date: anchorPurchaseDate(row), installments: 1, isGroup: false } };
+  }
+
+  if (total > MAX_INSTALLMENTS) {
+    return {
+      reason: `Parcelamento com ${total} parcelas acima do limite de ${MAX_INSTALLMENTS}.`,
+    };
+  }
+
+  const installments = deriveInstallments({
+    installmentCurrent: row.installmentCurrent ?? undefined,
+    installmentTotal: total,
+  });
+  if (installments) {
+    return {
+      plan: { date: anchorPurchaseDate(row, installments), installments: total, isGroup: true },
+    };
+  }
+
+  const reported = reportedPurchaseDate(row);
+  if (reported) {
+    return { plan: { date: reported, installments: total, isGroup: true } };
+  }
+
+  return {
+    reason:
+      'Parcela sem número de parcela atual plausível e sem data de compra — não é possível ancorar a data de compra.',
+  };
 }
 
 export function shouldIgnore(

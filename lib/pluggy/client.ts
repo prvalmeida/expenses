@@ -146,10 +146,10 @@ async function pluggyFetch<T>(path: string, options: PluggyRequestOptions = {}):
 }
 
 // ─── Typed shapes ───────────────────────────────────────────────────────────
-// Field names are hypotheses from the plan's §0 research table, unverified
-// against a live account (step 1 is out of scope without Pluggy credentials).
-// Every raw-field read on these types is centralized in lib/utils/pluggyUtils.ts
-// so a spike correction later touches one file.
+// Verified against a live Caixa connection (connector 200) on 2026-09-07 —
+// what follows is the payload that account actually returns, not the plan's
+// §0 research table. Every raw-field read on these types is still centralized
+// in lib/utils/pluggyUtils.ts so the next correction touches one file.
 
 export interface PluggyItemApi {
   id: string;
@@ -177,11 +177,20 @@ export interface PluggyAccountsResponse {
 export interface PluggyTransactionApi {
   id: string;
   accountId: string;
+  // Full ISO timestamp ("2026-08-14T03:00:00.000Z"), not a bare YYYY-MM-DD —
+  // mapPluggyTransaction is what narrows it to a date.
   date: string;
   description: string;
   amount: number;
   currencyCode?: string;
-  merchant?: { name?: string | null } | null;
+  // Both name fields come back empty on some rows and absent on others; the
+  // live payload carries `{ cnpj, name, businessName }` or `{ cnae, cnpj,
+  // category, businessName }` depending on the merchant.
+  merchant?: {
+    name?: string | null;
+    businessName?: string | null;
+    [key: string]: unknown;
+  } | null;
   category?: string | null;
   status?: string; // 'POSTED' | 'PENDING'
   type?: string; // 'DEBIT' | 'CREDIT'
@@ -193,6 +202,14 @@ export interface PluggyTransactionApi {
   creditCardMetadata?: {
     installmentNumber?: number | null;
     totalInstallments?: number | null;
+    // The original purchase date of an installment series, present on Caixa's
+    // installment rows. This is what Expense.date means, so anchorPurchaseDate
+    // prefers it over the month arithmetic whenever it is present; see the
+    // note there.
+    purchaseDate?: string | null;
+    cardNumber?: string | null;
+    billId?: string | null;
+    billForecastDate?: string | null;
   } | null;
   [key: string]: unknown;
 }

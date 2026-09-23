@@ -61,6 +61,73 @@ async function fetchTransactions(status: string): Promise<PluggyTransactionRow[]
   return (data.items ?? []) as PluggyTransactionRow[];
 }
 
+// The POST /api/pluggy/sync envelope (RunPluggySyncResult in pluggyService).
+interface SyncResponse {
+  sync?: {
+    accounts?: { accountId: string; fetched: number; created: number; anomalies: number; error?: string }[];
+    items?: { itemId: string; status: string }[];
+  };
+  autoImport?: {
+    expensesImported: number;
+    incomesImported: number;
+    stillPending: number;
+    skippedExisting: number;
+  };
+}
+
+// A sync that reads nothing looks identical to a sync with no new
+// transactions unless the counts are shown: an account left disabled in
+// "Sincronizar agora" PATCHes every item first, which starts an ASYNCHRONOUS
+// Pluggy refresh, and syncAllAccounts reads the status back immediately after
+// — so UPDATING is the normal outcome of a healthy manual sync, not a problem.
+// Warning on it would fire on every run and train the user to ignore the very
+// notice that exists to surface a real LOGIN_ERROR. WAITING_USER_INPUT is
+// likewise the connector asking for an MFA code in the Pluggy widget.
+const HEALTHY_ITEM_STATUSES = new Set(['UPDATED', 'UPDATING', 'WAITING_USER_INPUT']);
+
+// "Configurar Pluggy" is never fetched (syncAllAccounts filters on
+// `enabled: true`), and an item in LOGIN_ERROR silently returns no rows. Both
+// are configuration problems the user can only act on if the screen names
+// them, so the notice reports accounts synced / rows fetched and calls out an
+// unhealthy item by name. A per-account failure is the caller's to surface —
+// it goes in the error banner, not here.
+function describeSync(data: SyncResponse): string {
+  const accounts = data.sync?.accounts ?? [];
+  const items = data.sync?.items ?? [];
+  const lines: string[] = [];
+
+  if (accounts.length === 0) {
+    lines.push(
+      'Nenhuma conta habilitada — nada foi lido. Habilite as contas em "Configurar Pluggy" (marque "Habilitada" e salve cada conta).'
+    );
+  } else {
+    const fetched = accounts.reduce((sum, a) => sum + a.fetched, 0);
+    const created = accounts.reduce((sum, a) => sum + a.created, 0);
+    const anomalies = accounts.reduce((sum, a) => sum + a.anomalies, 0);
+    lines.push(
+      `Sincronização concluída · ${accounts.length} ${accounts.length === 1 ? 'conta' : 'contas'} · ` +
+        `${fetched} ${fetched === 1 ? 'transação lida' : 'transações lidas'}, ${created} ${created === 1 ? 'nova' : 'novas'}` +
+        (anomalies > 0 ? `, ${anomalies} ${anomalies === 1 ? 'anomalia' : 'anomalias'}` : '')
+    );
+
+    if (data.autoImport) {
+      const { expensesImported, incomesImported, stillPending, skippedExisting } = data.autoImport;
+      const imported = expensesImported + incomesImported;
+      lines.push(
+        `${imported} ${imported === 1 ? 'transação importada' : 'transações importadas'} automaticamente · ` +
+          `${stillPending} aguardando revisão` +
+          (skippedExisting > 0 ? ` · ${skippedExisting} já existiam` : '')
+      );
+    }
+  }
+
+  for (const item of items) {
+    if (!HEALTHY_ITEM_STATUSES.has(item.status)) lines.push(`⚠ Conexão ${item.itemId}: ${item.status}`);
+  }
+
+  return lines.join('\n');
+}
+
 export default function PluggySync({ onDone }: { onDone: () => void }) {
   const {
     expenseTypes,
@@ -204,18 +271,17 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
     setNotice(null);
     try {
       const res = await fetch('/api/pluggy/sync', { method: 'POST' });
-      const data = await res.json();
+      const data: SyncResponse = await res.json();
       if (!res.ok) {
-        setError(data.error ?? 'Erro ao sincronizar com a Pluggy');
+        setError((data as { error?: string }).error ?? 'Erro ao sincronizar com a Pluggy');
         return;
       }
-      const imported = (data.autoImport?.expensesImported ?? 0) + (data.autoImport?.incomesImported ?? 0);
-
       // A per-account failure comes back inside a 200 body (one bank must not
       // stop the others), so an outage that hits every account — a Pluggy
       // endpoint deprecation answering 410 — otherwise renders as a clean
-      // sync that imported nothing. Surface it instead of only reading
-      // `data.error`, which is set on non-OK responses alone.
+      // sync that imported nothing. It goes in the error banner rather than
+      // the notice, which `data.error` alone (set on non-OK responses only)
+      // would never carry; describeSync still reports what DID sync.
       const failed: { error?: string }[] =
         (data.sync?.accounts ?? []).filter((a: { error?: string }) => a.error);
 
@@ -224,11 +290,8 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
           `Falha ao sincronizar ${failed.length} ${failed.length === 1 ? 'conta' : 'contas'}: ` +
             `${failed[0].error}`
         );
-      } else {
-        setNotice(
-          `Sincronização concluída. ${imported} ${imported === 1 ? 'transação importada' : 'transações importadas'} automaticamente.`
-        );
       }
+      setNotice(describeSync(data));
       await load();
     } catch {
       setError('Erro de rede ao sincronizar com a Pluggy');
@@ -478,7 +541,9 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
       )}
       {notice && (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2">{notice}</p>
+        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2 whitespace-pre-line">
+          {notice}
+        </p>
       )}
 
       {loading ? (

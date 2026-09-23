@@ -21,6 +21,10 @@ const PluggyTransactionSchema = new mongoose.Schema(
     pluggyStatus: { type: String, required: true },
     installmentCurrent: { type: Number, required: false },
     installmentTotal: { type: Number, required: false },
+    // YYYY-MM-DD. The original purchase date Pluggy reports on a card row
+    // (creditCardMetadata.purchaseDate), which `date` is NOT — see
+    // anchorPurchaseDate. Absent on bank rows and on connectors that omit it.
+    purchaseDate: { type: String, required: false },
     paymentMethod: { type: String, required: false },
     // `strict: true` drops an untyped object outright; kept for debugging a bad
     // derivation against what Pluggy actually sent.
