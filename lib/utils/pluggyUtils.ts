@@ -10,6 +10,20 @@ function normalizeDescription(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ');
 }
 
+// "2026-08-14T03:00:00.000Z" -> "2026-08-14". Already-narrow values pass
+// through untouched, so a connector that sends a bare date is fine too.
+function toIsoDate(raw: string): string {
+  return (raw ?? '').split('T')[0];
+}
+
+function firstNonEmpty(...values: (string | null | undefined)[]): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
 export interface PluggyRawFields {
   date: string;
   amount: number;
@@ -21,28 +35,41 @@ export interface PluggyRawFields {
   pluggyStatus: string;
   installmentCurrent?: number;
   installmentTotal?: number;
+  purchaseDate?: string;
   paymentMethod?: string;
   raw: unknown;
 }
 
 // The functions in this file are the only place in the app that reads a raw
-// Pluggy transaction field. Every field name is a hypothesis from the plan's
-// §0 research table, unverified against a live account — centralizing the
-// reads means a correction from a future spike touches this file and nothing
-// that consumes its output.
+// Pluggy transaction field — centralizing the reads means a correction touches
+// this file and nothing that consumes its output. The field names were
+// verified against a live Caixa connection on 2026-09-07 (see client.ts).
 export function mapPluggyTransaction(tx: PluggyTransactionApi): PluggyRawFields {
   const descriptionRaw = tx.description ?? '';
   return {
-    date: tx.date,
+    // Pluggy sends a full ISO timestamp; everything downstream treats
+    // PluggyTransaction.date as YYYY-MM-DD — listPluggyTransactions paginates
+    // by comparing it lexically against a cursor row's date, upsertTransaction
+    // compares it against the stored value to detect post-import drift, and it
+    // reaches Expense.date through buildExpenseDocuments. Storing the raw
+    // timestamp would make the drift check fire on a re-read that only moved
+    // the clock, and file the expense under a date the rest of the app cannot
+    // match.
+    date: toIsoDate(tx.date),
     amount: tx.amount,
     currencyCode: tx.currencyCode ?? 'BRL',
     descriptionRaw,
     description: normalizeDescription(descriptionRaw),
-    merchantName: tx.merchant?.name ?? undefined,
+    // Both merchant name fields come back as empty strings on some rows, which
+    // would otherwise store a blank merchantName rather than none.
+    merchantName: firstNonEmpty(tx.merchant?.name, tx.merchant?.businessName),
     pluggyCategory: tx.category ?? undefined,
     pluggyStatus: tx.status ?? 'POSTED',
     installmentCurrent: tx.creditCardMetadata?.installmentNumber ?? undefined,
     installmentTotal: tx.creditCardMetadata?.totalInstallments ?? undefined,
+    purchaseDate: tx.creditCardMetadata?.purchaseDate
+      ? toIsoDate(tx.creditCardMetadata.purchaseDate)
+      : undefined,
     paymentMethod: tx.paymentData?.paymentMethod ?? undefined,
     raw: tx,
   };
@@ -59,14 +86,29 @@ export interface DirectionResult {
 // fallback. When the two disagree the row is written status: 'anomaly' rather
 // than guessed — a sign error would turn an income into an expense, and there
 // is no cheap way to notice that later.
-export function deriveDirection(tx: Pick<PluggyTransactionApi, 'type' | 'amount'>): DirectionResult {
+//
+// The sign convention is per account kind, and it is INVERTED between them —
+// reading it as one rule flagged every single card row as an anomaly. On a
+// BANK account an outflow is negative (`DEBIT -5300` = a PIX out). On a CREDIT
+// account the balance being described is the bill, so a purchase is a positive
+// DEBIT (`DEBIT 34.52` = a card purchase) and a refund or bill payment is a
+// negative CREDIT (`CREDIT -0.08` = an interest adjustment). Verified on a
+// live Caixa connection: 102 card rows, every one of them positive-DEBIT or
+// negative-CREDIT.
+export function deriveDirection(
+  tx: Pick<PluggyTransactionApi, 'type' | 'amount'>,
+  account: Pick<PluggyAccountLike, 'kind'>
+): DirectionResult {
   const byType: PluggyDirection | undefined =
     tx.type === 'DEBIT' ? 'outflow' : tx.type === 'CREDIT' ? 'inflow' : undefined;
-  const bySign: PluggyDirection = tx.amount < 0 ? 'outflow' : 'inflow';
+  const outflowIsNegative = account.kind !== 'CREDIT';
+  const isNegative = tx.amount < 0;
+  const bySign: PluggyDirection =
+    isNegative === outflowIsNegative ? 'outflow' : 'inflow';
 
   if (byType && byType !== bySign) {
     return {
-      anomalyReason: `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção da transação.`,
+      anomalyReason: `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção da transação em uma conta ${account.kind}.`,
     };
   }
   return { direction: byType ?? bySign };
@@ -222,11 +264,30 @@ export interface IgnoreOutcome {
 // A Pluggy row's date is the POSTING date of the one installment it
 // represents, not the original purchase date — buildExpenseDocuments walks
 // forward from `date` treating it as installment 1, so a mid-series row must
-// be backed off by (installmentCurrent - 1) months before being passed in.
-// addMonthsClamped handles the negative offset correctly, and also clamps a
-// day-31 anchor to the target month's last valid day, so the reconstruction
-// is a purchase *month*, not a guaranteed exact calendar day.
-export function anchorPurchaseDate(row: { date: string }, installments?: { current: number }): string {
+// be anchored to the purchase before being passed in.
+//
+// Pluggy reports the real thing on card rows (creditCardMetadata.purchaseDate)
+// and that is exactly what Expense.date means in this app — "the purchase
+// date, when you decided to spend" — so it wins whenever it is present, for
+// installment and single-charge rows alike. The month arithmetic below is the
+// fallback for the rows (and connectors) that omit it: back off by
+// (installmentCurrent - 1) months, which addMonthsClamped handles for a
+// negative offset and clamps a day-31 anchor to the target month's last valid
+// day. That fallback reconstructs a purchase *month*, not a calendar day —
+// e.g. a 4/4 parcela posted 2026-08-14 whose real purchase was 2026-04-23
+// reconstructs as 2026-05-14, three weeks and a month off.
+//
+// A reported purchaseDate is only trusted when it is not AFTER the posting
+// date: a card charge cannot post before it happens, so a later value is bad
+// upstream data, and taking it would file the expense in a future month.
+export function anchorPurchaseDate(
+  row: { date: string; purchaseDate?: string | null },
+  installments?: { current: number }
+): string {
+  const reported = row.purchaseDate?.trim();
+  // Both are YYYY-MM-DD, so the lexical comparison is a date comparison.
+  if (reported && reported <= row.date) return reported;
+
   if (!installments) return row.date;
   return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
 }

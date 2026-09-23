@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  mapPluggyTransaction,
   derivePaymentType,
   deriveDirection,
   deriveInstallments,
@@ -8,6 +9,45 @@ import {
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
 } from '../lib/utils/pluggyUtils';
+
+// --- mapPluggyTransaction: the raw-field reads ---------------------------
+
+test('mapPluggyTransaction: narrows the timestamp and drops empty merchant names', () => {
+  const base = {
+    id: 'tx-1',
+    accountId: 'acc-1',
+    description: '  PANVEL   MATRIZ ',
+    amount: 34.52,
+  };
+
+  // Pluggy sends a full ISO timestamp; everything downstream compares
+  // PluggyTransaction.date as a YYYY-MM-DD string.
+  const narrowed = mapPluggyTransaction({ ...base, date: '2026-08-14T03:00:00.000Z' });
+  assert.equal(narrowed.date, '2026-08-14');
+  assert.equal(narrowed.description, 'PANVEL MATRIZ');
+  assert.equal(narrowed.descriptionRaw, '  PANVEL   MATRIZ ');
+
+  // A bare date passes through untouched.
+  assert.equal(mapPluggyTransaction({ ...base, date: '2026-08-14' }).date, '2026-08-14');
+
+  // Both merchant name fields come back empty on some live rows.
+  const withName = mapPluggyTransaction({
+    ...base,
+    date: '2026-08-14T03:00:00.000Z',
+    merchant: { cnpj: '', name: 'panvel', businessName: '' },
+  });
+  assert.equal(withName.merchantName, 'panvel');
+
+  const businessOnly = mapPluggyTransaction({
+    ...base,
+    date: '2026-08-14T03:00:00.000Z',
+    merchant: { name: '', businessName: 'PAYPAL DO BRASIL' },
+  });
+  assert.equal(businessOnly.merchantName, 'PAYPAL DO BRASIL');
+
+  const noMerchant = mapPluggyTransaction({ ...base, date: '2026-08-14T03:00:00.000Z', merchant: null });
+  assert.equal(noMerchant.merchantName, undefined);
+});
 
 // --- step 8: derivePaymentType, the ladder -------------------------------
 
@@ -88,22 +128,33 @@ test('derivePaymentType: the ladder, first match wins', () => {
 // --- step 8: deriveDirection, the direction cross-check -------------------
 
 test('deriveDirection: tx.type is primary, amount sign is a cross-check', () => {
+  const bank = { kind: 'BANK' };
+  const card = { kind: 'CREDIT' };
   const cases: Array<{
     name: string;
     tx: Parameters<typeof deriveDirection>[0];
+    account: Parameters<typeof deriveDirection>[1];
     expectAnomaly: boolean;
     expectedDirection?: 'outflow' | 'inflow';
   }> = [
-    { name: 'DEBIT + negative amount agree: outflow', tx: { type: 'DEBIT', amount: -42 }, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'CREDIT + positive amount agree: inflow', tx: { type: 'CREDIT', amount: 42 }, expectAnomaly: false, expectedDirection: 'inflow' },
-    { name: 'DEBIT + positive amount disagree: anomaly', tx: { type: 'DEBIT', amount: 42 }, expectAnomaly: true },
-    { name: 'CREDIT + negative amount disagree: anomaly', tx: { type: 'CREDIT', amount: -42 }, expectAnomaly: true },
-    { name: 'no tx.type: falls back to the sign alone (negative -> outflow)', tx: { type: undefined, amount: -1 }, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'no tx.type: falls back to the sign alone (positive -> inflow)', tx: { type: undefined, amount: 1 }, expectAnomaly: false, expectedDirection: 'inflow' },
+    // BANK: an outflow is negative.
+    { name: 'BANK DEBIT + negative amount agree: outflow', tx: { type: 'DEBIT', amount: -42 }, account: bank, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'BANK CREDIT + positive amount agree: inflow', tx: { type: 'CREDIT', amount: 42 }, account: bank, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'BANK DEBIT + positive amount disagree: anomaly', tx: { type: 'DEBIT', amount: 42 }, account: bank, expectAnomaly: true },
+    { name: 'BANK CREDIT + negative amount disagree: anomaly', tx: { type: 'CREDIT', amount: -42 }, account: bank, expectAnomaly: true },
+    { name: 'BANK, no tx.type: falls back to the sign alone (negative -> outflow)', tx: { type: undefined, amount: -1 }, account: bank, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'BANK, no tx.type: falls back to the sign alone (positive -> inflow)', tx: { type: undefined, amount: 1 }, account: bank, expectAnomaly: false, expectedDirection: 'inflow' },
+    // CREDIT: the convention is inverted — a purchase is a positive DEBIT.
+    { name: 'CREDIT card DEBIT + positive amount agree: outflow (a purchase)', tx: { type: 'DEBIT', amount: 34.52 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'CREDIT card CREDIT + negative amount agree: inflow (a refund)', tx: { type: 'CREDIT', amount: -0.08 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'CREDIT card DEBIT + negative amount disagree: anomaly', tx: { type: 'DEBIT', amount: -42 }, account: card, expectAnomaly: true },
+    { name: 'CREDIT card CREDIT + positive amount disagree: anomaly', tx: { type: 'CREDIT', amount: 42 }, account: card, expectAnomaly: true },
+    { name: 'CREDIT card, no tx.type: positive is an outflow', tx: { type: undefined, amount: 1 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'CREDIT card, no tx.type: negative is an inflow', tx: { type: undefined, amount: -1 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
   ];
 
-  for (const { name, tx, expectAnomaly, expectedDirection } of cases) {
-    const result = deriveDirection(tx);
+  for (const { name, tx, account, expectAnomaly, expectedDirection } of cases) {
+    const result = deriveDirection(tx, account);
     if (expectAnomaly) {
       assert.equal(result.direction, undefined, name);
       assert.ok(result.anomalyReason, `${name}: expected an anomalyReason`);
@@ -143,7 +194,7 @@ test('deriveInstallments: plausibility guard and the MAX_INSTALLMENTS bound', ()
 test('anchorPurchaseDate: a mid-series row backs off to the purchase month', () => {
   const cases: Array<{
     name: string;
-    row: { date: string };
+    row: { date: string; purchaseDate?: string | null };
     installments?: { current: number };
     expected: string;
   }> = [
@@ -185,6 +236,47 @@ test('anchorPurchaseDate: a mid-series row backs off to the purchase month', () 
       row: { date: '2026-05-31' },
       installments: { current: 2 },
       expected: '2026-04-30',
+    },
+    // Pluggy's own purchaseDate wins over the month arithmetic whenever it is
+    // present — the live 4/4 row the fallback would have put three weeks and a
+    // month late.
+    {
+      name: 'reported purchaseDate wins over the back-off',
+      row: { date: '2026-08-14', purchaseDate: '2026-04-23' },
+      installments: { current: 4 },
+      expected: '2026-04-23',
+    },
+    {
+      name: 'reported purchaseDate is used on a single-charge row too',
+      row: { date: '2026-08-14', purchaseDate: '2026-08-12' },
+      installments: undefined,
+      expected: '2026-08-12',
+    },
+    {
+      name: 'a purchaseDate equal to the posting date is fine',
+      row: { date: '2026-08-14', purchaseDate: '2026-08-14' },
+      installments: undefined,
+      expected: '2026-08-14',
+    },
+    // A charge cannot post before it happens, so a later value is bad upstream
+    // data: fall back rather than file the expense in a future month.
+    {
+      name: 'a purchaseDate after the posting date is rejected, back-off applies',
+      row: { date: '2026-06-04', purchaseDate: '2026-09-01' },
+      installments: { current: 3 },
+      expected: '2026-04-04',
+    },
+    {
+      name: 'a purchaseDate after the posting date on a single charge falls back to the row date',
+      row: { date: '2026-06-04', purchaseDate: '2026-09-01' },
+      installments: undefined,
+      expected: '2026-06-04',
+    },
+    {
+      name: 'null/blank purchaseDate is ignored',
+      row: { date: '2026-06-04', purchaseDate: null },
+      installments: { current: 3 },
+      expected: '2026-04-04',
     },
   ];
 

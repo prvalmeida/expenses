@@ -61,6 +61,67 @@ async function fetchTransactions(status: string): Promise<PluggyTransactionRow[]
   return (data.items ?? []) as PluggyTransactionRow[];
 }
 
+// The POST /api/pluggy/sync envelope (RunPluggySyncResult in pluggyService).
+interface SyncResponse {
+  sync?: {
+    accounts?: { accountId: string; fetched: number; created: number; anomalies: number; error?: string }[];
+    items?: { itemId: string; status: string }[];
+  };
+  autoImport?: {
+    expensesImported: number;
+    incomesImported: number;
+    stillPending: number;
+    skippedExisting: number;
+  };
+}
+
+// A sync that reads nothing looks identical to a sync with no new
+// transactions unless the counts are shown: an account left disabled in
+// "Configurar Pluggy" is never fetched (syncAllAccounts filters on
+// `enabled: true`), and an item in LOGIN_ERROR silently returns no rows. Both
+// are configuration problems the user can only act on if the screen names
+// them, so the notice reports accounts synced / rows fetched, and calls out a
+// failing account or a not-UPDATED item by name.
+function describeSync(data: SyncResponse): string {
+  const accounts = data.sync?.accounts ?? [];
+  const items = data.sync?.items ?? [];
+  const lines: string[] = [];
+
+  if (accounts.length === 0) {
+    lines.push(
+      'Nenhuma conta habilitada — nada foi lido. Habilite as contas em "Configurar Pluggy" (marque "Habilitada" e salve cada conta).'
+    );
+  } else {
+    const fetched = accounts.reduce((sum, a) => sum + a.fetched, 0);
+    const created = accounts.reduce((sum, a) => sum + a.created, 0);
+    const anomalies = accounts.reduce((sum, a) => sum + a.anomalies, 0);
+    lines.push(
+      `Sincronização concluída · ${accounts.length} ${accounts.length === 1 ? 'conta' : 'contas'} · ` +
+        `${fetched} ${fetched === 1 ? 'transação lida' : 'transações lidas'}, ${created} ${created === 1 ? 'nova' : 'novas'}` +
+        (anomalies > 0 ? `, ${anomalies} ${anomalies === 1 ? 'anomalia' : 'anomalias'}` : '')
+    );
+
+    if (data.autoImport) {
+      const { expensesImported, incomesImported, stillPending, skippedExisting } = data.autoImport;
+      const imported = expensesImported + incomesImported;
+      lines.push(
+        `${imported} ${imported === 1 ? 'transação importada' : 'transações importadas'} automaticamente · ` +
+          `${stillPending} aguardando revisão` +
+          (skippedExisting > 0 ? ` · ${skippedExisting} já existiam` : '')
+      );
+    }
+  }
+
+  for (const account of accounts) {
+    if (account.error) lines.push(`⚠ Conta ${account.accountId}: ${account.error}`);
+  }
+  for (const item of items) {
+    if (item.status !== 'UPDATED') lines.push(`⚠ Conexão ${item.itemId}: ${item.status}`);
+  }
+
+  return lines.join('\n');
+}
+
 export default function PluggySync({ onDone }: { onDone: () => void }) {
   const {
     expenseTypes,
@@ -204,15 +265,12 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
     setNotice(null);
     try {
       const res = await fetch('/api/pluggy/sync', { method: 'POST' });
-      const data = await res.json();
+      const data: SyncResponse = await res.json();
       if (!res.ok) {
-        setError(data.error ?? 'Erro ao sincronizar com a Pluggy');
+        setError((data as { error?: string }).error ?? 'Erro ao sincronizar com a Pluggy');
         return;
       }
-      const imported = (data.autoImport?.expensesImported ?? 0) + (data.autoImport?.incomesImported ?? 0);
-      setNotice(
-        `Sincronização concluída. ${imported} ${imported === 1 ? 'transação importada' : 'transações importadas'} automaticamente.`
-      );
+      setNotice(describeSync(data));
       await load();
     } catch {
       setError('Erro de rede ao sincronizar com a Pluggy');
@@ -462,7 +520,9 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
       )}
       {notice && (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2">{notice}</p>
+        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2 whitespace-pre-line">
+          {notice}
+        </p>
       )}
 
       {loading ? (

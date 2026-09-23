@@ -50,3 +50,5 @@ next-env.d.ts
 
 .claude/worktrees/
 .claude/settings*.json
+# local scratch scripts (not part of the app)
+*.local.ts

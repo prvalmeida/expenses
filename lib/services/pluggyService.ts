@@ -199,9 +199,8 @@ export async function updateAccountLink(input: UpdateAccountLinkInput) {
 // window always re-covers the last few days rather than starting exactly
 // where the previous sync left off.
 const DEFAULT_OVERLAP_DAYS = 5;
-// A pagination bug (or a page that never shrinks) must not loop forever.
+// A pagination bug (or a cursor that never clears) must not loop forever.
 const MAX_SYNC_PAGES = 50;
-const PAGE_SIZE = 100;
 
 function computeSyncWindow(
   account: { connectedAt: string; lastSyncedAt?: Date | null },
@@ -255,7 +254,7 @@ function deriveStaging(
   linkedAccountIds: ReadonlySet<string>,
   { skipIgnore = false }: { skipIgnore?: boolean } = {}
 ): StagingDerivation {
-  const { direction, anomalyReason } = deriveDirection(tx);
+  const { direction, anomalyReason } = deriveDirection(tx, account);
   if (!direction) {
     return { status: 'anomaly', statusReason: anomalyReason };
   }
@@ -392,8 +391,13 @@ export async function syncAccount(
 
   const result: SyncAccountResult = { accountId, fetched: 0, created: 0, updated: 0, anomalies: 0 };
 
+  // Cursor pagination (GET /v2/transactions): the page ends when Pluggy stops
+  // returning a cursor, not when a page comes back short — v2 fixes the page
+  // size at 500 and does not report a total. MAX_SYNC_PAGES still bounds the
+  // walk so a cursor that never clears cannot loop forever.
+  let cursor: string | undefined;
   for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
-    const { results: rows } = await listTransactions({ accountId, from, to, page, pageSize: PAGE_SIZE });
+    const { results: rows, nextCursor } = await listTransactions({ accountId, from, to, after: cursor });
     result.fetched += rows.length;
 
     // dryRun still classifies each row (a DB read) so the report reflects what
@@ -406,7 +410,8 @@ export async function syncAccount(
       else if (outcome === 'anomaly') result.anomalies++;
     }
 
-    if (rows.length < PAGE_SIZE) break;
+    if (!nextCursor) break;
+    cursor = nextCursor;
   }
 
   if (!dryRun) {

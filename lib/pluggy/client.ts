@@ -146,10 +146,10 @@ async function pluggyFetch<T>(path: string, options: PluggyRequestOptions = {}):
 }
 
 // ─── Typed shapes ───────────────────────────────────────────────────────────
-// Field names are hypotheses from the plan's §0 research table, unverified
-// against a live account (step 1 is out of scope without Pluggy credentials).
-// Every raw-field read on these types is centralized in lib/utils/pluggyUtils.ts
-// so a spike correction later touches one file.
+// Verified against a live Caixa connection (connector 200) on 2026-09-07 —
+// what follows is the payload that account actually returns, not the plan's
+// §0 research table. Every raw-field read on these types is still centralized
+// in lib/utils/pluggyUtils.ts so the next correction touches one file.
 
 export interface PluggyItemApi {
   id: string;
@@ -177,11 +177,20 @@ export interface PluggyAccountsResponse {
 export interface PluggyTransactionApi {
   id: string;
   accountId: string;
+  // Full ISO timestamp ("2026-08-14T03:00:00.000Z"), not a bare YYYY-MM-DD —
+  // mapPluggyTransaction is what narrows it to a date.
   date: string;
   description: string;
   amount: number;
   currencyCode?: string;
-  merchant?: { name?: string | null } | null;
+  // Both name fields come back empty on some rows and absent on others; the
+  // live payload carries `{ cnpj, name, businessName }` or `{ cnae, cnpj,
+  // category, businessName }` depending on the merchant.
+  merchant?: {
+    name?: string | null;
+    businessName?: string | null;
+    [key: string]: unknown;
+  } | null;
   category?: string | null;
   status?: string; // 'POSTED' | 'PENDING'
   type?: string; // 'DEBIT' | 'CREDIT'
@@ -193,23 +202,46 @@ export interface PluggyTransactionApi {
   creditCardMetadata?: {
     installmentNumber?: number | null;
     totalInstallments?: number | null;
+    // The original purchase date of an installment series, present on Caixa's
+    // installment rows. Not read yet — anchorPurchaseDate still reconstructs
+    // the anchor by month arithmetic; see the note there.
+    purchaseDate?: string | null;
+    cardNumber?: string | null;
+    billId?: string | null;
+    billForecastDate?: string | null;
   } | null;
   [key: string]: unknown;
 }
 
+// GET /v2/transactions answers with a cursor envelope, not a page count:
+// `next` is a ready-made query string ("?accountId=…&after=…") or null on the
+// last page. `nextCursor` is that string's `after` value, extracted here so no
+// caller has to parse a URL — the pagination shape stays inside this file.
 export interface PluggyTransactionsPage {
   results: PluggyTransactionApi[];
-  page: number;
-  total: number;
-  totalPages: number;
+  nextCursor?: string;
 }
 
 export interface ListTransactionsParams {
   accountId: string;
   from?: string;
   to?: string;
-  page?: number;
-  pageSize?: number;
+  after?: string;
+}
+
+interface PluggyCursorPageApi {
+  results: PluggyTransactionApi[];
+  next: string | null;
+}
+
+// `next` arrives as a query string rather than a bare token. Reading `after`
+// out of it (instead of appending the string to the path) keeps buildUrl the
+// single place a Pluggy URL is assembled, and means a new filter Pluggy starts
+// echoing back cannot silently override the ones we sent.
+function cursorFromNext(next: string | null): string | undefined {
+  if (!next) return undefined;
+  const query = next.includes('?') ? next.slice(next.indexOf('?') + 1) : next;
+  return new URLSearchParams(query).get('after') ?? undefined;
 }
 
 export interface PluggyConnectToken {
@@ -224,9 +256,23 @@ export function listAccounts(itemId: string): Promise<PluggyAccountsResponse> {
   return pluggyFetch('/accounts', { query: { itemId } });
 }
 
-export function listTransactions(params: ListTransactionsParams): Promise<PluggyTransactionsPage> {
-  const { accountId, from, to, page, pageSize } = params;
-  return pluggyFetch('/transactions', { query: { accountId, from, to, page, pageSize } });
+// GET /transactions (page-numbered) is retired — it answers 410 "This endpoint
+// is deprecated. Use GET /v2/transactions with cursor pagination instead", so
+// every sync failed with UPSTREAM_FAILED and staged nothing. v2 renames the
+// date filters (`dateFrom`/`dateTo`, not `from`/`to`) and rejects `pageSize`
+// outright; its page size is fixed at 500.
+export async function listTransactions(
+  params: ListTransactionsParams
+): Promise<PluggyTransactionsPage> {
+  const { accountId, from, to, after } = params;
+  const page = await pluggyFetch<PluggyCursorPageApi>('/v2/transactions', {
+    query: { accountId, dateFrom: from, dateTo: to, after },
+  });
+
+  return {
+    results: page.results ?? [],
+    ...(cursorFromNext(page.next) && { nextCursor: cursorFromNext(page.next) }),
+  };
 }
 
 export function createConnectToken(): Promise<PluggyConnectToken> {
