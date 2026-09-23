@@ -77,11 +77,19 @@ interface SyncResponse {
 
 // A sync that reads nothing looks identical to a sync with no new
 // transactions unless the counts are shown: an account left disabled in
+// "Sincronizar agora" PATCHes every item first, which starts an ASYNCHRONOUS
+// Pluggy refresh, and syncAllAccounts reads the status back immediately after
+// — so UPDATING is the normal outcome of a healthy manual sync, not a problem.
+// Warning on it would fire on every run and train the user to ignore the very
+// notice that exists to surface a real LOGIN_ERROR. WAITING_USER_INPUT is
+// likewise the connector asking for an MFA code in the Pluggy widget.
+const HEALTHY_ITEM_STATUSES = new Set(['UPDATED', 'UPDATING', 'WAITING_USER_INPUT']);
+
 // "Configurar Pluggy" is never fetched (syncAllAccounts filters on
 // `enabled: true`), and an item in LOGIN_ERROR silently returns no rows. Both
 // are configuration problems the user can only act on if the screen names
 // them, so the notice reports accounts synced / rows fetched, and calls out a
-// failing account or a not-UPDATED item by name.
+// failing account or an unhealthy item by name.
 function describeSync(data: SyncResponse): string {
   const accounts = data.sync?.accounts ?? [];
   const items = data.sync?.items ?? [];
@@ -116,7 +124,7 @@ function describeSync(data: SyncResponse): string {
     if (account.error) lines.push(`⚠ Conta ${account.accountId}: ${account.error}`);
   }
   for (const item of items) {
-    if (item.status !== 'UPDATED') lines.push(`⚠ Conexão ${item.itemId}: ${item.status}`);
+    if (!HEALTHY_ITEM_STATUSES.has(item.status)) lines.push(`⚠ Conexão ${item.itemId}: ${item.status}`);
   }
 
   return lines.join('\n');

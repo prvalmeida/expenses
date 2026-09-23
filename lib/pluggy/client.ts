@@ -203,8 +203,9 @@ export interface PluggyTransactionApi {
     installmentNumber?: number | null;
     totalInstallments?: number | null;
     // The original purchase date of an installment series, present on Caixa's
-    // installment rows. Not read yet — anchorPurchaseDate still reconstructs
-    // the anchor by month arithmetic; see the note there.
+    // installment rows. This is what Expense.date means, so anchorPurchaseDate
+    // prefers it over the month arithmetic whenever it is present; see the
+    // note there.
     purchaseDate?: string | null;
     cardNumber?: string | null;
     billId?: string | null;
@@ -269,9 +270,10 @@ export async function listTransactions(
     query: { accountId, dateFrom: from, dateTo: to, after },
   });
 
+  const nextCursor = cursorFromNext(page.next);
   return {
     results: page.results ?? [],
-    ...(cursorFromNext(page.next) && { nextCursor: cursorFromNext(page.next) }),
+    ...(nextCursor && { nextCursor }),
   };
 }
 

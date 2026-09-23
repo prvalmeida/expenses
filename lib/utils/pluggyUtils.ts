@@ -12,7 +12,10 @@ function normalizeDescription(raw: string): string {
 
 // "2026-08-14T03:00:00.000Z" -> "2026-08-14". Already-narrow values pass
 // through untouched, so a connector that sends a bare date is fine too.
-function toIsoDate(raw: string): string {
+// Exported because rows staged before mapPluggyTransaction started narrowing
+// `date` still hold a timestamp until migration 002 rewrites them, and the
+// drift check in pluggyService must not read that as a changed date.
+export function toIsoDate(raw: string): string {
   return (raw ?? '').split('T')[0];
 }
 
@@ -101,17 +104,31 @@ export function deriveDirection(
 ): DirectionResult {
   const byType: PluggyDirection | undefined =
     tx.type === 'DEBIT' ? 'outflow' : tx.type === 'CREDIT' ? 'inflow' : undefined;
+  // A zero amount carries no sign, so it is not a cross-check at all — reading
+  // `!(0 < 0)` as "positive" makes a zero-value CREDIT row (a fully-annulled
+  // estorno, which Caixa does emit) disagree with tx.type and stage as an
+  // anomaly. Defer to tx.type; only fall back to the sign when there is one.
   const outflowIsNegative = account.kind !== 'CREDIT';
-  const isNegative = tx.amount < 0;
-  const bySign: PluggyDirection =
-    isNegative === outflowIsNegative ? 'outflow' : 'inflow';
+  const bySign: PluggyDirection | undefined =
+    tx.amount === 0
+      ? undefined
+      : (tx.amount < 0) === outflowIsNegative
+        ? 'outflow'
+        : 'inflow';
 
-  if (byType && byType !== bySign) {
+  if (byType && bySign && byType !== bySign) {
     return {
       anomalyReason: `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção da transação em uma conta ${account.kind}.`,
     };
   }
-  return { direction: byType ?? bySign };
+  const direction = byType ?? bySign;
+  if (!direction) {
+    // Neither signal resolved: an unknown tx.type on a zero-amount row.
+    return {
+      anomalyReason: `Não foi possível determinar a direção da transação (tx.type=${tx.type ?? 'ausente'}, valor ${tx.amount}).`,
+    };
+  }
+  return { direction };
 }
 
 export interface PluggyAccountLike {
@@ -284,12 +301,80 @@ export function anchorPurchaseDate(
   row: { date: string; purchaseDate?: string | null },
   installments?: { current: number }
 ): string {
-  const reported = row.purchaseDate?.trim();
-  // Both are YYYY-MM-DD, so the lexical comparison is a date comparison.
-  if (reported && reported <= row.date) return reported;
+  const reported = reportedPurchaseDate(row);
+  if (reported) return reported;
 
   if (!installments) return row.date;
   return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
+}
+
+// The reported purchase date, when it is usable. Both values are YYYY-MM-DD,
+// so the lexical comparison is a date comparison.
+export function reportedPurchaseDate(row: {
+  date: string;
+  purchaseDate?: string | null;
+}): string | undefined {
+  const reported = row.purchaseDate?.trim();
+  return reported && reported <= row.date ? reported : undefined;
+}
+
+export interface InstallmentPlan {
+  // The anchor handed to buildExpenseDocuments as `date`.
+  date: string;
+  // How many expense rows the purchase expands into.
+  installments: number;
+  // Whether the expansion is an installment group, which is what makes
+  // insertExpenseDocuments dedupe against an already-imported series.
+  isGroup: boolean;
+}
+
+export type InstallmentPlanResult = { plan: InstallmentPlan } | { reason: string };
+
+// Resolves "how many expenses does this staged row become, dated when" — the
+// single source of truth for both import paths (autoImportExpenses and
+// importStagedExpense), which previously carried the same guard twice.
+//
+// `installmentCurrent` is only needed for the month-arithmetic fallback in
+// anchorPurchaseDate. When Pluggy reports a usable purchaseDate the anchor and
+// the total together determine the whole series, so a row with a good
+// purchaseDate but a missing or implausible installmentNumber is expandable
+// and must not be parked as pending.
+export function resolveInstallmentPlan(row: {
+  date: string;
+  purchaseDate?: string | null;
+  installmentCurrent?: number | null;
+  installmentTotal?: number | null;
+}): InstallmentPlanResult {
+  const total = row.installmentTotal ?? undefined;
+  if (total === undefined || total <= 1) {
+    return { plan: { date: anchorPurchaseDate(row), installments: 1, isGroup: false } };
+  }
+
+  if (total > MAX_INSTALLMENTS) {
+    return {
+      reason: `Parcelamento com ${total} parcelas acima do limite de ${MAX_INSTALLMENTS}.`,
+    };
+  }
+
+  const installments = deriveInstallments({
+    installmentCurrent: row.installmentCurrent ?? undefined,
+    installmentTotal: total,
+  });
+  if (installments) {
+    return {
+      plan: { date: anchorPurchaseDate(row, installments), installments: total, isGroup: true },
+    };
+  }
+
+  const reported = reportedPurchaseDate(row);
+  if (reported) {
+    return { plan: { date: reported, installments: total, isGroup: true } };
+  }
+
+  return {
+    reason:
+      'Parcela sem número de parcela atual plausível e sem data de compra — não é possível ancorar a data de compra.',
+  };
 }
 
 export function shouldIgnore(

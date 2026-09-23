@@ -19,9 +19,9 @@ import {
   mapPluggyTransaction,
   deriveDirection,
   derivePaymentType,
-  deriveInstallments,
   shouldIgnore,
-  anchorPurchaseDate,
+  resolveInstallmentPlan,
+  toIsoDate as narrowIsoDate,
   PluggyAccountLike,
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
@@ -318,7 +318,13 @@ async function upsertTransaction(
   }
 
   if (existing.status === 'imported') {
-    const changed = existing.amount !== fields.amount || existing.date !== fields.date;
+    // toIsoDate on the stored side too: rows staged before mapPluggyTransaction
+    // narrowed `date` hold a full timestamp until migration
+    // 002-pluggy-transaction-dates rewrites them, and comparing the two
+    // formats directly would flag every one of them as drifted on the first
+    // sync after deploy.
+    const changed =
+      existing.amount !== fields.amount || narrowIsoDate(existing.date) !== fields.date;
     if (!changed) return 'unchanged';
     if (!dryRun) {
       await PluggyTransaction.updateOne(
@@ -714,20 +720,16 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
       continue;
     }
 
-    const installments = deriveInstallments({
-      installmentCurrent: row.installmentCurrent ?? undefined,
-      installmentTotal: row.installmentTotal ?? undefined,
-    });
-    // installmentCurrent is required to expand: a row that carries a total
-    // but no plausible current stays pending rather than being expanded from
-    // an unknown offset.
-    if (row.installmentTotal && row.installmentTotal > 1 && !installments) {
-      row.statusReason =
-        'Parcela sem número de parcela atual plausível — não é possível ancorar a data de compra.';
+    // A row whose series cannot be anchored stays pending rather than being
+    // expanded from an unknown offset.
+    const resolved = resolveInstallmentPlan(row);
+    if ('reason' in resolved) {
+      row.statusReason = resolved.reason;
       await row.save();
       result.stillPending++;
       continue;
     }
+    const { plan } = resolved;
 
     const documents = await buildExpenseDocuments({
       name: row.description,
@@ -736,12 +738,12 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
       subtype: mapping.subtype ?? undefined,
       paymentType: row.paymentType ?? 'debit',
       cardBrand: row.cardBrand ?? undefined,
-      date: anchorPurchaseDate(row, installments),
-      installments: installments ? installments.total : 1,
+      date: plan.date,
+      installments: plan.installments,
       valueIsTotal: false,
     });
 
-    const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, !!installments);
+    const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, plan.isGroup);
     result.skippedExisting += skippedExisting;
 
     if (importedIds.length > 0) {
@@ -849,14 +851,12 @@ async function importStagedExpense(
     return;
   }
 
-  const installments = deriveInstallments({
-    installmentCurrent: row.installmentCurrent ?? undefined,
-    installmentTotal: row.installmentTotal ?? undefined,
-  });
-  if (row.installmentTotal && row.installmentTotal > 1 && !installments) {
+  const resolved = resolveInstallmentPlan(row);
+  if ('reason' in resolved) {
     result.skippedInvalid++;
     return;
   }
+  const { plan } = resolved;
 
   const paymentType = item.paymentType ?? row.paymentType ?? 'debit';
   const cardBrand = item.cardBrand ?? row.cardBrand ?? undefined;
@@ -868,12 +868,12 @@ async function importStagedExpense(
     subtype: item.subtype,
     paymentType,
     cardBrand,
-    date: anchorPurchaseDate(row, installments),
-    installments: installments ? installments.total : 1,
+    date: plan.date,
+    installments: plan.installments,
     valueIsTotal: false,
   });
 
-  const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, !!installments);
+  const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, plan.isGroup);
   result.skippedExisting += skippedExisting;
 
   if (importedIds.length > 0) {

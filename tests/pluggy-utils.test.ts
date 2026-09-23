@@ -6,6 +6,7 @@ import {
   deriveDirection,
   deriveInstallments,
   anchorPurchaseDate,
+  resolveInstallmentPlan,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
 } from '../lib/utils/pluggyUtils';
@@ -151,6 +152,13 @@ test('deriveDirection: tx.type is primary, amount sign is a cross-check', () => 
     { name: 'CREDIT card CREDIT + positive amount disagree: anomaly', tx: { type: 'CREDIT', amount: 42 }, account: card, expectAnomaly: true },
     { name: 'CREDIT card, no tx.type: positive is an outflow', tx: { type: undefined, amount: 1 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
     { name: 'CREDIT card, no tx.type: negative is an inflow', tx: { type: undefined, amount: -1 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
+    // A zero amount carries no sign, so it cross-checks nothing: a fully
+    // annulled estorno (CREDIT 0 on a card) must resolve from tx.type rather
+    // than reading "not negative" as a positive and disagreeing with it.
+    { name: 'CREDIT card CREDIT + zero amount: tx.type decides, no anomaly', tx: { type: 'CREDIT', amount: 0 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'CREDIT card DEBIT + zero amount: tx.type decides, no anomaly', tx: { type: 'DEBIT', amount: 0 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'BANK DEBIT + zero amount: tx.type decides, no anomaly', tx: { type: 'DEBIT', amount: 0 }, account: bank, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'zero amount and no tx.type: nothing resolves it, anomaly', tx: { type: undefined, amount: 0 }, account: bank, expectAnomaly: true },
   ];
 
   for (const { name, tx, account, expectAnomaly, expectedDirection } of cases) {
@@ -451,5 +459,74 @@ test('PLUGGY_IGNORE_RULES: every rule carries a stable id and a human reason for
   for (const rule of PLUGGY_IGNORE_RULES) {
     assert.ok(rule.id.length > 0);
     assert.ok(rule.reason.length > 0);
+  }
+});
+
+// --- resolveInstallmentPlan: how many expenses, dated when ----------------
+
+test('resolveInstallmentPlan: purchaseDate anchors a series without a plausible current', () => {
+  const cases: Array<{
+    name: string;
+    row: Parameters<typeof resolveInstallmentPlan>[0];
+    expected: { date: string; installments: number; isGroup: boolean } | { reason: true };
+  }> = [
+    {
+      name: 'no installment metadata: a single expense on the row date',
+      row: { date: '2026-08-14' },
+      expected: { date: '2026-08-14', installments: 1, isGroup: false },
+    },
+    {
+      name: 'total of 1 is not a group',
+      row: { date: '2026-08-14', installmentCurrent: 1, installmentTotal: 1 },
+      expected: { date: '2026-08-14', installments: 1, isGroup: false },
+    },
+    {
+      name: 'plausible current + total: the full series, anchored by back-off',
+      row: { date: '2026-08-14', installmentCurrent: 3, installmentTotal: 6 },
+      expected: { date: '2026-06-14', installments: 6, isGroup: true },
+    },
+    {
+      name: 'reported purchaseDate wins over the back-off',
+      row: { date: '2026-08-14', purchaseDate: '2026-04-23', installmentCurrent: 4, installmentTotal: 4 },
+      expected: { date: '2026-04-23', installments: 4, isGroup: true },
+    },
+    // The fix: the anchor and the total fully determine the series, so a
+    // missing/implausible installmentNumber is no longer a reason to park the
+    // row — installmentCurrent only feeds the month-arithmetic fallback.
+    {
+      name: 'no current but a usable purchaseDate: still expandable',
+      row: { date: '2026-08-14', purchaseDate: '2026-04-23', installmentTotal: 5 },
+      expected: { date: '2026-04-23', installments: 5, isGroup: true },
+    },
+    {
+      name: 'implausible current but a usable purchaseDate: still expandable',
+      row: { date: '2026-08-14', purchaseDate: '2026-04-23', installmentCurrent: 9, installmentTotal: 5 },
+      expected: { date: '2026-04-23', installments: 5, isGroup: true },
+    },
+    {
+      name: 'no current and no purchaseDate: unanchorable, stays pending',
+      row: { date: '2026-08-14', installmentTotal: 5 },
+      expected: { reason: true },
+    },
+    {
+      name: 'a purchaseDate after the posting date is not usable either',
+      row: { date: '2026-08-14', purchaseDate: '2026-09-01', installmentTotal: 5 },
+      expected: { reason: true },
+    },
+    {
+      name: 'a total past MAX_INSTALLMENTS is rejected even with a purchaseDate',
+      row: { date: '2026-08-14', purchaseDate: '2026-04-23', installmentCurrent: 1, installmentTotal: 500 },
+      expected: { reason: true },
+    },
+  ];
+
+  for (const { name, row, expected } of cases) {
+    const result = resolveInstallmentPlan(row);
+    if ('reason' in expected) {
+      assert.ok('reason' in result, `${name}: expected a reason`);
+    } else {
+      assert.ok('plan' in result, `${name}: expected a plan`);
+      assert.deepEqual((result as { plan: unknown }).plan, expected, name);
+    }
   }
 });
