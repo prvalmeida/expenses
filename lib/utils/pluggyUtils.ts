@@ -90,49 +90,70 @@ export interface DirectionResult {
 // than guessed — a sign error would turn an income into an expense, and there
 // is no cheap way to notice that later.
 //
-// The sign convention is per account kind, and it is INVERTED between them —
-// reading it as one rule flagged every single card row as an anomaly. On a
-// BANK account an outflow is negative (`DEBIT -5300` = a PIX out). On a CREDIT
-// account the balance being described is the bill, so a purchase is a positive
-// DEBIT (`DEBIT 34.52` = a card purchase) and a refund or bill payment is a
-// negative CREDIT (`CREDIT -0.08` = an interest adjustment). Verified on a
-// live Caixa connection: 102 card rows, every one of them positive-DEBIT or
-// negative-CREDIT.
+// The cross-check is account-kind aware because Pluggy's sign convention is
+// NOT uniform, as observed on live Caixa accounts:
+//
+//   CREDIT (card):  a purchase is  type=DEBIT,  amount POSITIVE  (NETFLIX 44.9)
+//                   a refund is    type=CREDIT, amount NEGATIVE  (AJUSTE CRED -0.05)
+//   BANK (account): a payment is   type=DEBIT,  amount NEGATIVE  (BOLETO -516.91)
+//                   a deposit is   type=CREDIT, amount POSITIVE  (CRED PIX 6400)
+//
+// On a card statement the amount is the size of the charge against the bill,
+// so an outflow reads positive; on an account it is the effect on the balance.
+// Treating BANK's convention as universal made every single card purchase an
+// anomaly — 71 of 86 rows in production — so no card expense could ever be
+// imported.
+//
+// The account is REQUIRED: without it the sign carries no meaning, and an
+// optional parameter would let a future caller silently apply the BANK
+// convention to a card — re-arming the exact bug this fixes.
 export function deriveDirection(
   tx: Pick<PluggyTransactionApi, 'type' | 'amount'>,
   account: Pick<PluggyAccountLike, 'kind'>
 ): DirectionResult {
   const byType: PluggyDirection | undefined =
     tx.type === 'DEBIT' ? 'outflow' : tx.type === 'CREDIT' ? 'inflow' : undefined;
-  // A zero amount carries no sign, so it is not a cross-check at all — reading
-  // `!(0 < 0)` as "positive" makes a zero-value CREDIT row (a fully-annulled
-  // estorno, which Caixa does emit) disagree with tx.type and stage as an
-  // anomaly. Defer to tx.type; only fall back to the sign when there is one.
-  const outflowIsNegative = account.kind !== 'CREDIT';
+  // A card outflow is positive; an account outflow is negative.
+  const outflowIsPositive = account.kind === 'CREDIT';
+  // A zero amount carries no sign, so it cross-checks nothing: reading `0 > 0`
+  // as an inflow made a zero-value CREDIT row on a card — a fully annulled
+  // estorno, which Caixa does emit — disagree with tx.type and stage as an
+  // anomaly. Defer to tx.type, and consult the sign only when there is one.
   const bySign: PluggyDirection | undefined =
     tx.amount === 0
       ? undefined
-      : (tx.amount < 0) === outflowIsNegative
-        ? 'outflow'
-        : 'inflow';
+      : outflowIsPositive
+        ? tx.amount > 0
+          ? 'outflow'
+          : 'inflow'
+        : tx.amount < 0
+          ? 'outflow'
+          : 'inflow';
 
   if (byType && bySign && byType !== bySign) {
     return {
-      anomalyReason: `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção da transação em uma conta ${account.kind}.`,
+      anomalyReason:
+        `tx.type (${tx.type}) e o sinal do valor (${tx.amount}) discordam sobre a direção ` +
+        `da transação em uma conta ${account.kind}.`,
     };
   }
   const direction = byType ?? bySign;
   if (!direction) {
     // Neither signal resolved: an unknown tx.type on a zero-amount row.
     return {
-      anomalyReason: `Não foi possível determinar a direção da transação (tx.type=${tx.type ?? 'ausente'}, valor ${tx.amount}).`,
+      anomalyReason:
+        `Não foi possível determinar a direção da transação em uma conta ${account.kind}: ` +
+        `tx.type (${tx.type ?? 'ausente'}) não resolve e o valor (${tx.amount}) não tem sinal.`,
     };
   }
   return { direction };
 }
 
 export interface PluggyAccountLike {
-  kind: string;
+  // Narrowed to the PluggyAccount schema's own enum: the sign convention in
+  // deriveDirection branches on this, and a plain `string` would let anything
+  // that is not 'CREDIT' silently take the BANK branch.
+  kind: 'BANK' | 'CREDIT';
   cardBrand?: string | null;
   defaultPaymentType?: string | null;
 }

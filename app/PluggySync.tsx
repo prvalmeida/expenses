@@ -88,8 +88,9 @@ const HEALTHY_ITEM_STATUSES = new Set(['UPDATED', 'UPDATING', 'WAITING_USER_INPU
 // "Configurar Pluggy" is never fetched (syncAllAccounts filters on
 // `enabled: true`), and an item in LOGIN_ERROR silently returns no rows. Both
 // are configuration problems the user can only act on if the screen names
-// them, so the notice reports accounts synced / rows fetched, and calls out a
-// failing account or an unhealthy item by name.
+// them, so the notice reports accounts synced / rows fetched and calls out an
+// unhealthy item by name. A per-account failure is the caller's to surface —
+// it goes in the error banner, not here.
 function describeSync(data: SyncResponse): string {
   const accounts = data.sync?.accounts ?? [];
   const items = data.sync?.items ?? [];
@@ -120,9 +121,6 @@ function describeSync(data: SyncResponse): string {
     }
   }
 
-  for (const account of accounts) {
-    if (account.error) lines.push(`⚠ Conta ${account.accountId}: ${account.error}`);
-  }
   for (const item of items) {
     if (!HEALTHY_ITEM_STATUSES.has(item.status)) lines.push(`⚠ Conexão ${item.itemId}: ${item.status}`);
   }
@@ -277,6 +275,21 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
       if (!res.ok) {
         setError((data as { error?: string }).error ?? 'Erro ao sincronizar com a Pluggy');
         return;
+      }
+      // A per-account failure comes back inside a 200 body (one bank must not
+      // stop the others), so an outage that hits every account — a Pluggy
+      // endpoint deprecation answering 410 — otherwise renders as a clean
+      // sync that imported nothing. It goes in the error banner rather than
+      // the notice, which `data.error` alone (set on non-OK responses only)
+      // would never carry; describeSync still reports what DID sync.
+      const failed: { error?: string }[] =
+        (data.sync?.accounts ?? []).filter((a: { error?: string }) => a.error);
+
+      if (failed.length) {
+        setError(
+          `Falha ao sincronizar ${failed.length} ${failed.length === 1 ? 'conta' : 'contas'}: ` +
+            `${failed[0].error}`
+        );
       }
       setNotice(describeSync(data));
       await load();

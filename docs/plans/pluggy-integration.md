@@ -37,7 +37,7 @@ every field name below is a hypothesis until it passes:
 | `transaction.paymentData.paymentMethod` carries `'PIX'` | Step 8 — the `pix` payment type |
 | `transaction.creditCardMetadata.{installmentNumber,totalInstallments}` exists on card rows | Step 9 — installment expansion |
 | `transaction.id` is stable across syncs and across a `PENDING → POSTED` transition | Step 5 — the entire idempotency story |
-| `GET /transactions` accepts `accountId`, `from`, `to`, `page`, `pageSize` | Step 4 — the fetch loop |
+| `GET /v2/transactions` accepts `accountId`, `dateFrom`, `dateTo`, `after` (cursor) | Step 4 — the fetch loop. **Corrected:** the original `GET /transactions` with `page`/`pageSize` was retired by Pluggy and answers `410 ENDPOINT_DEPRECATED`; v2 rejects `pageSize` outright and fixes the page at 500 |
 | A card installment row's `date` is the **posting** date of that installment, not the original purchase date | Step 11 — the anchor date of the expanded group |
 | `transaction.status` distinguishes `PENDING` from `POSTED`, and a `PENDING` row can change amount or disappear | Steps 5 and 11 — what may be auto-imported |
 | An item can be created from a Connect token in the browser, so raw Meu Pluggy credentials never reach our server | Steps 2 and 3 — how a connection is established |
@@ -214,7 +214,7 @@ in §0. **Do not proceed on an unverified field name.**
   scope — the CI `lint`/`build` jobs run with no secrets, and a module-scope read makes the
   build depend on one (the same rule as `requireApiKey` and `connectToDatabase`).
 - Thin typed wrappers: `listAccounts(itemId)`, `getItem(itemId)`, `listTransactions({ accountId,
-  from, to, page, pageSize })`, `createConnectToken()`, `patchItem(itemId)` (the manual refresh of
+  from, to, after })`, `createConnectToken()`, `patchItem(itemId)` (the manual refresh of
   §5). **No `createItem(connectorId, credentials)`** — see step 3.
 - Hand-rolled over `fetch`, **no `pluggy-sdk` dependency**. Everything needed is four endpoints, and
   a new runtime dependency has to be reasoned about against `serverExternalPackages` and the
@@ -246,8 +246,11 @@ no `cardBrand` — a document `CreditExpense` says cannot exist.
 - Window: `from = max(connectedAt, lastSyncedAt − OVERLAP_DAYS)`, `to = today`.
   `PLUGGY_SYNC_OVERLAP_DAYS` defaults to **5**. The overlap is not optional: card transactions
   post late, and `PENDING` rows change after we first see them.
-- Page through `listTransactions` until a short page. Hard-cap the page count (say 50) so a
-  pagination bug cannot loop forever.
+- Drain the cursor: follow the response's `next` until it is `null`. **Never stop on a short
+  page** — under `/v2/transactions` Pluggy may return fewer rows than the 500-row cap on a page
+  that still has a successor, so the original "page until a short page" rule silently dropped
+  every row after it. Hard-cap the request count (50) so a stuck cursor cannot loop forever, and
+  treat hitting that cap as a **failed read**, not a completed one.
 - Upsert each row by `pluggyId` (step 5), then set `lastSyncedAt = now` **only after** the whole
   account succeeded — a partial page must be re-fetched, and the overlap alone is not a
   guarantee if the failure outlasted it.
@@ -291,9 +294,15 @@ quietly. Two overlapping cron firings must not both page the same account. Retur
 Voucher types (`food-voucher`, `meal-voucher`, `fuel-voucher`) are **not** derivable from Pluggy
 and are only ever set by hand in the review screen.
 
-**Direction** uses `tx.type` as primary with the sign of `amount` as a cross-check. When the two
-disagree the row is written `status: 'anomaly'` rather than guessed — a sign error turns an income
-into an expense, and there is no cheap way to notice that later.
+**Direction** uses `tx.type` as primary with the sign of `amount` as a cross-check, **branching on
+the account kind** — the sign convention is not uniform. On a CREDIT account a purchase is `DEBIT`
+with a **positive** amount (the size of the charge against the bill) and a refund is `CREDIT`
+negative; on a BANK account a payment is `DEBIT` **negative** (the effect on the balance) and a
+deposit is `CREDIT` positive. When the two disagree the row is written `status: 'anomaly'` rather
+than guessed — a sign error turns an income into an expense, and there is no cheap way to notice
+that later. The account argument is required, not optional: applying the BANK convention to a card
+made every purchase an anomaly (71 of 86 rows in production), so a caller that can omit it re-arms
+the same bug.
 
 **9. `deriveInstallments(tx)`.** Reads `creditCardMetadata.installmentNumber` / `totalInstallments`,
 then applies the same plausibility guard the Caixa bill parser uses (`isPlausibleInstallment`:
@@ -596,6 +605,25 @@ rules). Substantive corrections made:
    timestamp and taken over cleanly.
 10. **Approximate anchor date noted** (step 11) — the reconstructed purchase month may not round-trip
     to the exact posting day because `addMonthsClamped` clamps day 31.
+
+### Corrections from first contact with the live API (2026-09)
+
+The §0 table's field hypotheses went unverified until the integration ran against a real Caixa
+connection. Two of them were wrong, and both failed **silently** — the sync reported success while
+importing nothing:
+
+11. **`GET /transactions` is retired** (step 4) — it answers `410 ENDPOINT_DEPRECATED`. Replaced by
+    `GET /v2/transactions`: `from`/`to` become `dateFrom`/`dateTo`, `pageSize` is rejected outright,
+    the page is fixed at 500, and pagination is a cursor (`next`, `null` on the last page) whose
+    follow-up request carries only the URL-decoded `after`. The old "page until a short page" rule
+    is wrong under v2 and would drop every row after a short page.
+12. **The `amount` sign convention depends on the account kind** (step 8) — see the Direction
+    paragraph above. This one cost every card expense: 71 of 86 live rows were written as anomalies.
+
+The shared lesson is about the failure mode, not the field names: a per-account error returned
+inside a `200` body, unread by both the cron and the review screen, is what let a total outage look
+like a clean sync for weeks. The Bruno check that should have caught it asserted only that `fetched`
+was *a number*, and `0` is a number.
 
 Unchanged and still correct: the staging-first shape, the advisory lock concept, accounts-start-disabled,
 the ignore-rule set, the three-count import envelope, the Easypanel cron over the internal network,

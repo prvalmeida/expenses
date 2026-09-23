@@ -128,9 +128,7 @@ test('derivePaymentType: the ladder, first match wins', () => {
 
 // --- step 8: deriveDirection, the direction cross-check -------------------
 
-test('deriveDirection: tx.type is primary, amount sign is a cross-check', () => {
-  const bank = { kind: 'BANK' };
-  const card = { kind: 'CREDIT' };
+test('deriveDirection: tx.type is primary, amount sign is a kind-aware cross-check', () => {
   const cases: Array<{
     name: string;
     tx: Parameters<typeof deriveDirection>[0];
@@ -138,27 +136,33 @@ test('deriveDirection: tx.type is primary, amount sign is a cross-check', () => 
     expectAnomaly: boolean;
     expectedDirection?: 'outflow' | 'inflow';
   }> = [
-    // BANK: an outflow is negative.
-    { name: 'BANK DEBIT + negative amount agree: outflow', tx: { type: 'DEBIT', amount: -42 }, account: bank, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'BANK CREDIT + positive amount agree: inflow', tx: { type: 'CREDIT', amount: 42 }, account: bank, expectAnomaly: false, expectedDirection: 'inflow' },
-    { name: 'BANK DEBIT + positive amount disagree: anomaly', tx: { type: 'DEBIT', amount: 42 }, account: bank, expectAnomaly: true },
-    { name: 'BANK CREDIT + negative amount disagree: anomaly', tx: { type: 'CREDIT', amount: -42 }, account: bank, expectAnomaly: true },
-    { name: 'BANK, no tx.type: falls back to the sign alone (negative -> outflow)', tx: { type: undefined, amount: -1 }, account: bank, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'BANK, no tx.type: falls back to the sign alone (positive -> inflow)', tx: { type: undefined, amount: 1 }, account: bank, expectAnomaly: false, expectedDirection: 'inflow' },
-    // CREDIT: the convention is inverted — a purchase is a positive DEBIT.
-    { name: 'CREDIT card DEBIT + positive amount agree: outflow (a purchase)', tx: { type: 'DEBIT', amount: 34.52 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'CREDIT card CREDIT + negative amount agree: inflow (a refund)', tx: { type: 'CREDIT', amount: -0.08 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
-    { name: 'CREDIT card DEBIT + negative amount disagree: anomaly', tx: { type: 'DEBIT', amount: -42 }, account: card, expectAnomaly: true },
-    { name: 'CREDIT card CREDIT + positive amount disagree: anomaly', tx: { type: 'CREDIT', amount: 42 }, account: card, expectAnomaly: true },
-    { name: 'CREDIT card, no tx.type: positive is an outflow', tx: { type: undefined, amount: 1 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'CREDIT card, no tx.type: negative is an inflow', tx: { type: undefined, amount: -1 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
+    // BANK: the amount is the effect on the balance, so an outflow is negative.
+    { name: 'BANK DEBIT + negative agree: outflow', tx: { type: 'DEBIT', amount: -516.91 }, account: { kind: 'BANK' }, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'BANK CREDIT + positive agree: inflow', tx: { type: 'CREDIT', amount: 6400 }, account: { kind: 'BANK' }, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'BANK DEBIT + positive disagree: anomaly', tx: { type: 'DEBIT', amount: 42 }, account: { kind: 'BANK' }, expectAnomaly: true },
+    { name: 'BANK CREDIT + negative disagree: anomaly', tx: { type: 'CREDIT', amount: -42 }, account: { kind: 'BANK' }, expectAnomaly: true },
+
+    // CREDIT: the amount is the size of the charge against the bill, so a
+    // purchase is POSITIVE. These four are the live Caixa shapes — reading
+    // them with BANK's convention made every card purchase an anomaly.
+    { name: 'CREDIT DEBIT + positive agree: outflow (NETFLIX 44.9)', tx: { type: 'DEBIT', amount: 44.9 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'CREDIT CREDIT + negative agree: inflow (AJUSTE CRED -0.05)', tx: { type: 'CREDIT', amount: -0.05 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'CREDIT DEBIT + negative disagree: anomaly', tx: { type: 'DEBIT', amount: -44.9 }, account: { kind: 'CREDIT' }, expectAnomaly: true },
+    { name: 'CREDIT CREDIT + positive disagree: anomaly', tx: { type: 'CREDIT', amount: 0.05 }, account: { kind: 'CREDIT' }, expectAnomaly: true },
+
+    // No tx.type: the sign alone decides, still per the account's convention.
+    { name: 'BANK no type: negative -> outflow', tx: { type: undefined, amount: -1 }, account: { kind: 'BANK' }, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'BANK no type: positive -> inflow', tx: { type: undefined, amount: 1 }, account: { kind: 'BANK' }, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'CREDIT no type: positive -> outflow', tx: { type: undefined, amount: 1 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'CREDIT no type: negative -> inflow', tx: { type: undefined, amount: -1 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'inflow' },
     // A zero amount carries no sign, so it cross-checks nothing: a fully
-    // annulled estorno (CREDIT 0 on a card) must resolve from tx.type rather
-    // than reading "not negative" as a positive and disagreeing with it.
-    { name: 'CREDIT card CREDIT + zero amount: tx.type decides, no anomaly', tx: { type: 'CREDIT', amount: 0 }, account: card, expectAnomaly: false, expectedDirection: 'inflow' },
-    { name: 'CREDIT card DEBIT + zero amount: tx.type decides, no anomaly', tx: { type: 'DEBIT', amount: 0 }, account: card, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'BANK DEBIT + zero amount: tx.type decides, no anomaly', tx: { type: 'DEBIT', amount: 0 }, account: bank, expectAnomaly: false, expectedDirection: 'outflow' },
-    { name: 'zero amount and no tx.type: nothing resolves it, anomaly', tx: { type: undefined, amount: 0 }, account: bank, expectAnomaly: true },
+    // annulled estorno (CREDIT 0 on a card, which Caixa emits) must resolve
+    // from tx.type rather than reading "not positive" as a negative and
+    // disagreeing with it.
+    { name: 'CREDIT CREDIT + zero: tx.type decides, no anomaly', tx: { type: 'CREDIT', amount: 0 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'inflow' },
+    { name: 'CREDIT DEBIT + zero: tx.type decides, no anomaly', tx: { type: 'DEBIT', amount: 0 }, account: { kind: 'CREDIT' }, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'BANK DEBIT + zero: tx.type decides, no anomaly', tx: { type: 'DEBIT', amount: 0 }, account: { kind: 'BANK' }, expectAnomaly: false, expectedDirection: 'outflow' },
+    { name: 'zero amount and no tx.type: nothing resolves it, anomaly', tx: { type: undefined, amount: 0 }, account: { kind: 'BANK' }, expectAnomaly: true },
   ];
 
   for (const { name, tx, account, expectAnomaly, expectedDirection } of cases) {
@@ -166,6 +170,9 @@ test('deriveDirection: tx.type is primary, amount sign is a cross-check', () => 
     if (expectAnomaly) {
       assert.equal(result.direction, undefined, name);
       assert.ok(result.anomalyReason, `${name}: expected an anomalyReason`);
+      // The reason must name the account kind: with the convention now
+      // depending on it, "the sign disagrees" is not diagnosable on its own.
+      assert.match(result.anomalyReason!, new RegExp(account.kind), name);
     } else {
       assert.equal(result.direction, expectedDirection, name);
       assert.equal(result.anomalyReason, undefined, name);

@@ -22,8 +22,20 @@ tests {
     expect(res.body.data.sync.accountId).to.equal(bru.getProcessEnv("PLUGGY_TEST_ACCOUNT_ID"));
   });
 
-  test("fetched is a real count, not undefined", function () {
+  test("the account did not fail — no swallowed per-account error", function () {
+    // A per-account failure travels back inside a 200 body so one failing bank
+    // cannot stop the others. Asserting only the HTTP status is what let a
+    // Pluggy endpoint deprecation (410 on every account) pass this suite while
+    // production imported nothing.
+    expect(res.body.data.sync.error, `sync reported: ${res.body.data.sync.error}`).to.be.undefined;
+  });
+
+  test("fetched is a real count, and the read actually returned rows", function () {
+    // `fetched` was previously only asserted to be a number, and 0 is a number:
+    // this test passed throughout the outage. A live, enabled account inside
+    // its window must yield at least one transaction.
     expect(res.body.data.sync.fetched).to.be.a("number");
+    expect(res.body.data.sync.fetched).to.be.greaterThan(0);
   });
 }
 
