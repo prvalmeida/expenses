@@ -66,7 +66,6 @@ export function inferInstallmentPurchaseYear({
   dueMonth,
   dueYear,
 }: {
-  txDay: number;
   txMonth: number;
   installmentCurrent: number;
   installmentTotal: number;
@@ -133,7 +132,6 @@ function buildInstallmentDate(
   dueYear: number,
 ): string {
   const year = inferInstallmentPurchaseYear({
-    txDay: dd,
     txMonth: mm,
     installmentCurrent,
     installmentTotal,

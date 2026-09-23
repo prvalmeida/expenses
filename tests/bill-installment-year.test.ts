@@ -16,7 +16,6 @@ import { inferInstallmentPurchaseYear } from '../lib/utils/billUtils';
 test('inferInstallmentPurchaseYear: a 12/12 row on a Sept-2026 bill was bought in 2025', () => {
   // printed 19/09, current=12, total=12, cycle due 25/09/2026 (closing 15/09/2026)
   const year = inferInstallmentPurchaseYear({
-    txDay: 19,
     txMonth: 9,
     installmentCurrent: 12,
     installmentTotal: 12,
@@ -28,7 +27,6 @@ test('inferInstallmentPurchaseYear: a 12/12 row on a Sept-2026 bill was bought i
 
 test('inferInstallmentPurchaseYear: a 1/12 row on the same bill was bought this year', () => {
   const year = inferInstallmentPurchaseYear({
-    txDay: 19,
     txMonth: 9,
     installmentCurrent: 1,
     installmentTotal: 12,
@@ -42,7 +40,6 @@ test('inferInstallmentPurchaseYear: mid-series row whose charge lands in the cyc
   // 3/4 printed 20/04 on a bill due in July 2026 -> charge 3 = Apr+2 = Jun 2026,
   // inside the cycle ending July 2026, so the purchase is this year.
   const year = inferInstallmentPurchaseYear({
-    txDay: 20,
     txMonth: 4,
     installmentCurrent: 3,
     installmentTotal: 4,
@@ -56,7 +53,6 @@ test('inferInstallmentPurchaseYear: last installment of a plan bought late prior
   // 4/4 printed 20/11 on a bill due in February 2026 -> charge 4 = Nov+3 = Feb 2026,
   // inside the cycle, so the purchase is the most recent November: 2025.
   const year = inferInstallmentPurchaseYear({
-    txDay: 20,
     txMonth: 11,
     installmentCurrent: 4,
     installmentTotal: 4,
@@ -69,7 +65,6 @@ test('inferInstallmentPurchaseYear: last installment of a plan bought late prior
 test('inferInstallmentPurchaseYear: December purchase on a January bill stays previous year', () => {
   // 2/12 printed 15/12 on a bill due Jan 2026 -> purchase Dec 2025.
   const year = inferInstallmentPurchaseYear({
-    txDay: 15,
     txMonth: 12,
     installmentCurrent: 2,
     installmentTotal: 12,
@@ -77,4 +72,17 @@ test('inferInstallmentPurchaseYear: December purchase on a January bill stays pr
     dueYear: 2026,
   });
   assert.equal(year, 2025);
+});
+
+test('inferInstallmentPurchaseYear: long plan backs off more than one year when needed', () => {
+  // 24/24 printed 19/09 on a bill due 25/10/2026 -> charge 24 = Sep+23 = Aug 2026,
+  // which is still inside the cycle ending Oct 2026, so purchase is 2024 (not 2025).
+  const year = inferInstallmentPurchaseYear({
+    txMonth: 9,
+    installmentCurrent: 24,
+    installmentTotal: 24,
+    dueMonth: 10,
+    dueYear: 2026,
+  });
+  assert.equal(year, 2024);
 });
