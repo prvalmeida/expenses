@@ -23,6 +23,7 @@ import {
   shouldIgnore,
   resolveInstallmentPlan,
   toIsoDate as narrowIsoDate,
+  computeSyncWindow,
   PluggyAccountLike,
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
@@ -32,10 +33,6 @@ import { ApiError } from '../api/respond';
 
 function today(): string {
   return new Date().toISOString().split('T')[0];
-}
-
-function toIsoDate(date: Date): string {
-  return date.toISOString().split('T')[0];
 }
 
 // Upserts PluggyItem from a fresh /items/:id read. `label` is only supplied by
@@ -156,6 +153,7 @@ export interface UpdateAccountLinkInput {
   cardBrand?: string;
   defaultPaymentType?: string;
   defaultIncomeType?: string;
+  connectedAt?: string;
 }
 
 // `kind` is immutable and read from Pluggy, never chosen by a caller — the
@@ -164,10 +162,22 @@ export interface UpdateAccountLinkInput {
 // distrust-the-caller rule updateExpense applies to a merged PATCH payload.
 // The three optional fields are $unset when omitted, matching updateExpense's
 // PUT-is-a-full-replace rule: leaving one out means "clear it", not "keep it".
+// `connectedAt` is the exception — it is required on the document, so omitting
+// it means "keep". Moving it EARLIER also unsets lastSyncedAt: otherwise the
+// window would still start at lastSyncedAt − overlap and the days between the
+// new start date and that point would never be fetched. Moving it LATER parks
+// the account's still-pending rows dated before it as 'ignored': the fetch
+// window alone only stops new rows, and a pending row is still auto-imported
+// (autoImportExpenses reads every pending row of an enabled account) and still
+// offered for manual import — which re-books exactly the days a PDF bill
+// already covered, the duplication moving the date later is meant to prevent.
+// 'ignored' rather than deleted keeps them visible and one click from
+// un-ignoring; moving the date back earlier re-fetches them and the resync
+// re-derivation (upsertTransaction) returns them to pending.
 export async function updateAccountLink(input: UpdateAccountLinkInput) {
   await connectToDatabase();
 
-  const existing = await PluggyAccount.findOne({ accountId: input.accountId }).select('kind');
+  const existing = await PluggyAccount.findOne({ accountId: input.accountId }).select('kind connectedAt');
   if (!existing) return null;
 
   if (existing.kind !== input.kind) {
@@ -189,36 +199,43 @@ export async function updateAccountLink(input: UpdateAccountLinkInput) {
   if (input.defaultIncomeType !== undefined) $set.defaultIncomeType = input.defaultIncomeType;
   else $unset.defaultIncomeType = '';
 
-  return PluggyAccount.findOneAndUpdate(
+  const movedLater =
+    input.connectedAt !== undefined && input.connectedAt > existing.connectedAt;
+  if (input.connectedAt !== undefined && input.connectedAt !== existing.connectedAt) {
+    $set.connectedAt = input.connectedAt;
+    if (input.connectedAt < existing.connectedAt) $unset.lastSyncedAt = '';
+  }
+
+  const updated = await PluggyAccount.findOneAndUpdate(
     { accountId: input.accountId },
     { $set, $unset },
     { new: true }
   );
+
+  if (movedLater) {
+    // `date` is YYYY-MM-DD (or a full timestamp on rows migration 002 has not
+    // rewritten yet), so a lexical `$lt` against the new start date is exact
+    // for both. ignoreOverridden is left as-is: it records a human's decision
+    // about the ignore RULES, which this is not.
+    await PluggyTransaction.updateMany(
+      { accountId: input.accountId, status: 'pending', date: { $lt: input.connectedAt } },
+      { $set: { status: 'ignored', statusReason: BEFORE_START_DATE_REASON } }
+    );
+  }
+
+  return updated;
 }
 
-// Card transactions post late and a PENDING row can still change, so the
-// window always re-covers the last few days rather than starting exactly
-// where the previous sync left off.
+const BEFORE_START_DATE_REASON =
+  'Anterior à data de início da conta — o período já foi lançado (ex.: pela fatura em PDF).';
+
+// How many days each sync re-covers past lastSyncedAt (computeSyncWindow).
 const DEFAULT_OVERLAP_DAYS = 5;
 // A pagination bug (or a cursor that never advances) must not loop forever.
 // v2 fixes the page at 500 rows and rejects `pageSize` outright, so this is a
 // ceiling of 25k transactions per account per sync — far beyond any real
 // window, and the loop only runs while Pluggy keeps handing back a cursor.
 const MAX_SYNC_PAGES = 50;
-
-function computeSyncWindow(
-  account: { connectedAt: string; lastSyncedAt?: Date | null },
-  overlapDays: number
-): { from: string; to: string } {
-  const to = toIsoDate(new Date());
-  if (!account.lastSyncedAt) return { from: account.connectedAt, to };
-
-  const overlapMs = overlapDays * 24 * 60 * 60 * 1000;
-  const overlapFrom = toIsoDate(new Date(account.lastSyncedAt.getTime() - overlapMs));
-  // ISO YYYY-MM-DD strings compare correctly lexically, so this is just `max`.
-  const from = overlapFrom > account.connectedAt ? overlapFrom : account.connectedAt;
-  return { from, to };
-}
 
 export interface SyncAccountResult {
   accountId: string;
@@ -434,9 +451,16 @@ export async function syncAccount(
     );
   }
 
+  // Conditional on the connectedAt this window was computed from: moving the
+  // start date earlier unsets lastSyncedAt (updateAccountLink) so the next run
+  // backfills from it, and an unconditional write here would re-set the mark
+  // and silently cancel that backfill if the edit landed mid-sync. Matching
+  // zero rows is the correct outcome — the next run recomputes the window.
   if (!dryRun) {
-    account.lastSyncedAt = new Date();
-    await account.save();
+    await PluggyAccount.updateOne(
+      { accountId, connectedAt: account.connectedAt },
+      { $set: { lastSyncedAt: new Date() } }
+    );
   }
 
   return result;

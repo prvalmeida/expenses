@@ -244,6 +244,11 @@ no `cardBrand` — a document `CreditExpense` says cannot exist.
 **4. `syncAccount(accountId, { dryRun })`.** For one enabled account:
 
 - Window: `from = max(connectedAt, lastSyncedAt − OVERLAP_DAYS)`, `to = today`.
+  `connectedAt` is user-editable (the config screen's start date). Moving it earlier unsets
+  `lastSyncedAt` so the next run backfills; `lastSyncedAt` is written conditionally on the
+  `connectedAt` the window was computed from, so an edit landing mid-sync is not overwritten.
+  Moving it later marks the account's `pending` rows dated before it `ignored` — otherwise the
+  auto-import would still book them and re-count the period a fatura PDF already covered.
   `PLUGGY_SYNC_OVERLAP_DAYS` defaults to **5**. The overlap is not optional: card transactions
   post late, and `PENDING` rows change after we first see them.
 - Drain the cursor: follow the response's `next` until it is `null`. **Never stop on a short

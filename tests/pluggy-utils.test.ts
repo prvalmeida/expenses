@@ -9,6 +9,7 @@ import {
   resolveInstallmentPlan,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
+  computeSyncWindow,
 } from '../lib/utils/pluggyUtils';
 
 // --- mapPluggyTransaction: the raw-field reads ---------------------------
@@ -536,4 +537,39 @@ test('resolveInstallmentPlan: purchaseDate anchors a series without a plausible 
       assert.deepEqual((result as { plan: unknown }).plan, expected, name);
     }
   }
+});
+
+// --- computeSyncWindow: the fetch window --------------------------------
+
+const NOW = new Date('2026-09-24T12:00:00.000Z');
+
+test('computeSyncWindow: never synced (or reset) reads from the start date', () => {
+  assert.deepEqual(computeSyncWindow({ connectedAt: '2026-09-16' }, 5, NOW), {
+    from: '2026-09-16',
+    to: '2026-09-24',
+  });
+  assert.deepEqual(computeSyncWindow({ connectedAt: '2026-09-16', lastSyncedAt: null }, 5, NOW), {
+    from: '2026-09-16',
+    to: '2026-09-24',
+  });
+});
+
+test('computeSyncWindow: re-covers the overlap past lastSyncedAt', () => {
+  const window = computeSyncWindow(
+    { connectedAt: '2026-08-01', lastSyncedAt: new Date('2026-09-20T10:00:00.000Z') },
+    5,
+    NOW
+  );
+  assert.deepEqual(window, { from: '2026-09-15', to: '2026-09-24' });
+});
+
+test('computeSyncWindow: a start date later than the overlap wins', () => {
+  // The user moved the start date forward past the overlap: nothing before it
+  // is fetched, even though lastSyncedAt would reach further back.
+  const window = computeSyncWindow(
+    { connectedAt: '2026-09-18', lastSyncedAt: new Date('2026-09-20T10:00:00.000Z') },
+    5,
+    NOW
+  );
+  assert.deepEqual(window, { from: '2026-09-18', to: '2026-09-24' });
 });
