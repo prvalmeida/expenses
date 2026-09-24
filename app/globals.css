@@ -1,17 +1,5 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
 /* This app is light-only: there is not a single `dark:` utility in the codebase,
    and every surface is a hard-coded light colour (`bg-white`, `bg-gray-50`,
    `bg-blue-50`). A `prefers-color-scheme: dark` override therefore only flipped
@@ -20,14 +8,23 @@
    preflight sets `color: inherit` on button/input/select) and the import form's
    fields — to light grey on a still-white background. Elements with an explicit
    `text-gray-*` class were unaffected, which is why the damage looked arbitrary.
-   It only reproduced on a phone in dark mode (iOS Safari), never on a desktop
-   Chrome left in light mode.
+   It reproduces on any device whose OS is set to dark mode — it surfaced on a
+   phone only because the desktop browser happened to be in light mode.
 
    `color-scheme: light` is the other half: without it the UA renders form
    controls, scrollbars and autofill with dark-mode chrome on a dark-mode
    device, independently of these variables. */
 :root {
+  --background: #ffffff;
+  --foreground: #171717;
   color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 html {

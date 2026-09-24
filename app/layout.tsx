@@ -26,7 +26,7 @@ export const viewport: Viewport = {
   themeColor: "#f9fafb",
   // The UI is light-only (no `dark:` utilities anywhere), so the preference is
   // declared in the document head as well as in CSS: the meta tag applies before
-  // the stylesheet loads and stops a dark-mode phone flashing UA dark chrome.
+  // the stylesheet loads and stops a dark-mode device flashing UA dark chrome.
   colorScheme: "light",
 };
 
