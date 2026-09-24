@@ -243,6 +243,10 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 `app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, `importBill`, `pluggySync`, or `pluggyConfig`. There is no client-side router — view switching is purely state-driven. The `ViewId` union and the nav entries live in `components/NavMenu.tsx`, so a new view is added in both places.
 
+### Colour scheme
+
+**The app is light-only; never reintroduce a `prefers-color-scheme: dark` block.** There is not a single `dark:` utility in the codebase and every surface is a hard-coded light colour (`bg-white`, `bg-gray-50`). A dark-mode override flips only `--foreground`, so surfaces stay white while every element that *inherits* its colour goes near-white — headings, and the buttons, inputs and selects Tailwind's preflight gives `color: inherit`. Elements carrying an explicit `text-gray-*` survive, so the damage looks arbitrary rather than global. This is an OS-level preference, not a device or browser quirk: it reproduces in any browser whose OS is set to dark mode, and it shipped unnoticed only because it was first exercised on a desktop left in light mode. The preference is pinned twice on purpose, closing two different windows: `color-scheme: light` on `:root` in `globals.css` for the steady state, and `colorScheme: "light"` in the `viewport` export, which Next renders as `<meta name="color-scheme" content="light">` in the head and so applies before the stylesheet loads, stopping a dark-mode device from painting UA dark form controls, scrollbars and autofill on first paint.
+
 ### Responsive shell conventions
 
 Four rules the mobile layout depends on, each of which failed silently once:
