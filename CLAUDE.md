@@ -242,7 +242,9 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 ### Responsive shell conventions
 
-Four rules the mobile layout depends on, each of which failed silently once:
+Five rules the mobile layout depends on, each of which failed silently once:
+
+- **The app is light-only; never reintroduce a `prefers-color-scheme: dark` block.** There is not a single `dark:` utility in the codebase and every surface is a hard-coded light colour (`bg-white`, `bg-gray-50`). A dark-mode override flips only `--foreground`, so surfaces stay white while every element that *inherits* its colour goes near-white — headings, and the buttons, inputs and selects Tailwind's preflight gives `color: inherit`. Elements carrying an explicit `text-gray-*` survive, so the damage looks arbitrary rather than global. It reproduces only on a device set to dark mode (a phone in iOS Safari), never on a desktop browser left in light mode, which is how it shipped. The preference is pinned twice on purpose: `color-scheme: light` on `:root` in `globals.css`, and `colorScheme: "light"` in the `viewport` export, which lands in the head before the stylesheet and stops a dark-mode device flashing UA dark form controls, scrollbars and autofill.
 
 - **The next/font variable classes belong on `<html>`, not `<body>`.** Tailwind's `@theme` maps `--font-sans: var(--font-geist-sans)` on `:root`; if `--font-geist-sans` is only defined lower down, `--font-sans` is a reference to nothing, and any `font-family` using it is invalid at computed-value time — the declaration is *dropped* and the whole app renders in the browser's default serif. For the same reason a fallback stack must sit **inside** `var(--font-sans, Arial, …)`: a list written after the closing paren is not a fallback.
 - **Safe-area padding must be restated per breakpoint.** `pb-[max(0.75rem,env(safe-area-inset-bottom))]` is unconditional and outranks `sm:p-6`'s bottom edge, so the desktop layout silently loses its bottom padding unless a `sm:pb-[…]` follows.

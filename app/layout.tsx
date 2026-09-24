@@ -24,6 +24,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: "#f9fafb",
+  // The UI is light-only (no `dark:` utilities anywhere), so the preference is
+  // declared in the document head as well as in CSS: the meta tag applies before
+  // the stylesheet loads and stops a dark-mode phone flashing UA dark chrome.
+  colorScheme: "light",
 };
 
 export default function RootLayout({
