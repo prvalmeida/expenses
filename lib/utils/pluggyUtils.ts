@@ -411,3 +411,25 @@ export function shouldIgnore(
   }
   return { ignored: false };
 }
+
+// The fetch window for one account: `from = max(connectedAt, lastSyncedAt −
+// overlapDays)`, `to = today`. Card transactions post late and a PENDING row
+// can still change, so the window re-covers the last few days rather than
+// starting exactly where the previous sync left off. `connectedAt` is the
+// user-chosen start date (PluggyConfig) — nothing dated before it is fetched.
+// An absent `lastSyncedAt` (never synced, or reset because the start date moved
+// earlier — see pluggyService.updateAccountLink) reads from `connectedAt`.
+export function computeSyncWindow(
+  account: { connectedAt: string; lastSyncedAt?: Date | null },
+  overlapDays: number,
+  now: Date = new Date()
+): { from: string; to: string } {
+  const to = now.toISOString().split('T')[0];
+  if (!account.lastSyncedAt) return { from: account.connectedAt, to };
+
+  const overlapMs = overlapDays * 24 * 60 * 60 * 1000;
+  const overlapFrom = new Date(account.lastSyncedAt.getTime() - overlapMs).toISOString().split('T')[0];
+  // ISO YYYY-MM-DD strings compare correctly lexically, so this is just `max`.
+  const from = overlapFrom > account.connectedAt ? overlapFrom : account.connectedAt;
+  return { from, to };
+}

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { cardBrand, paginationQuery, paymentType } from './common';
+import { cardBrand, isoDate, paginationQuery, paymentType } from './common';
 
 // Query strings are always strings, so z.coerce.boolean() is the wrong tool
 // here: Boolean("false") is true, which would make ?dryRun=false behave like
@@ -19,6 +19,31 @@ export const PLUGGY_TRANSACTION_STATUSES = [
 ] as const;
 
 export const pluggyTransactionStatus = z.enum(PLUGGY_TRANSACTION_STATUSES);
+
+// How far back a link row's start date may go. Open Finance serves roughly a
+// year of history, so an older date would just be a window Pluggy answers
+// short — and a silent short answer reads as "no transactions".
+export const MAX_SYNC_LOOKBACK_DAYS = 365;
+
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+}
+
+// PluggyAccount.connectedAt — the day the fetch window starts. Bounds are read
+// at parse time, never at module load, so they move with the calendar.
+// The regex in isoDate admits 2026-02-31, which passes both string bounds and
+// would be sent to Pluggy as `dateFrom` on every sync until someone edits it —
+// so the value must round-trip through Date unchanged.
+const syncStartDate = isoDate
+  .refine(value => {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
+  }, 'Data inválida')
+  .refine(value => value <= isoDaysAgo(0), 'A data de início não pode estar no futuro')
+  .refine(
+    value => value >= isoDaysAgo(MAX_SYNC_LOOKBACK_DAYS),
+    `A data de início não pode ser anterior a ${MAX_SYNC_LOOKBACK_DAYS} dias atrás`
+  );
 
 // The cron target: POST /api/v1/pluggy/sync?dryRun=&accountId=. Omitting
 // accountId syncs every enabled account.
@@ -56,6 +81,9 @@ export const updateAccountLinkSchema = z
     // credit document the refinement below exists to prevent.
     defaultPaymentType: paymentType.exclude(['credit']).optional(),
     defaultIncomeType: z.string().trim().min(1).optional(),
+    // Unlike the three fields above, omitting this means "keep", not "clear":
+    // connectedAt is required on the document (see updateAccountLink).
+    connectedAt: syncStartDate.optional(),
   })
   .refine(input => input.kind !== 'CREDIT' || Boolean(input.cardBrand), {
     path: ['cardBrand'],

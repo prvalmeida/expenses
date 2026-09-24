@@ -152,6 +152,17 @@ per running instance instead of once per deployment).
 Once a **CREDIT** `PluggyAccount` is enabled, **stop importing that card's
 fatura PDFs** for statement periods on or after its `connectedAt` date.
 
+`connectedAt` defaults to the day the connection was registered, but it is
+the account's **start date** and is editable on the Conexões Pluggy screen
+("Sincronizar a partir de"). Set it to the day after the closing date of the
+last fatura PDF you imported for that card — e.g. a bill that closed on 15/09
+means `16/09` — so the days between that closing and the connection are
+fetched too. Moving it earlier makes the next sync re-read from the new date
+(already-staged rows are deduped by Pluggy id); moving it later narrows future
+fetches and moves still-pending rows dated before the new start date to
+"Ignoradas" (nothing is deleted — they can be un-ignored from the review
+screen), so they are neither auto-imported nor offered for import.
+
 Nothing in the code enforces this: the PDF import route (`/api/bills/import`)
 has no knowledge of `PluggyAccount.connectedAt`, and the cross-source dedupe
 guard deliberately does not attempt a fuzzy match between a Pluggy
