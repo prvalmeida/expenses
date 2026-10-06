@@ -1,11 +1,13 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
+import Income from '../models/Income';
 import { createIncome } from './incomeService';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
 import { BillMapping } from '../models/BillMapping';
+import getOpenAI from '../openai';
 import {
   createConnectToken,
   drainCursor,
@@ -25,9 +27,17 @@ import {
   toIsoDate as narrowIsoDate,
   computeSyncWindow,
   PluggyAccountLike,
+  suggestionBatch,
+  validSuggestionAnswers,
+  SuggestionSource,
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
-import { validateExpensePair, validateIncomeType } from '../utils/categoryUtils';
+import {
+  getExpenseCategories,
+  getIncomeCategories,
+  validateExpensePair,
+  validateIncomeType,
+} from '../utils/categoryUtils';
 import { buildExpenseDocuments, ExpenseDocument } from './expenseService';
 import { ApiError } from '../api/respond';
 
@@ -665,6 +675,10 @@ export interface RunPluggySyncInput {
 export interface RunPluggySyncResult {
   sync: SyncAllResult | SyncAccountResult;
   autoImport?: AutoImportResult;
+  // Present unless dryRun, and null-shaped (absent) when the pass itself
+  // failed — a failed GPT call must not read as a failed sync; fetch and
+  // auto-import already succeeded by then.
+  suggestions?: SuggestStagedResult;
 }
 
 // The single entry point both sync routes call. Acquires the advisory lock
@@ -687,8 +701,22 @@ export async function runPluggySync({
 
     const sync = accountId ? await syncAccount(accountId, { dryRun }) : await syncAllAccounts({ dryRun });
     const autoImport = dryRun ? undefined : await autoImportStaged();
+    const suggestions = dryRun ? undefined : await suggestStagedCategories().catch(error => {
+      // The suggestion pass is an enhancement layered on a completed sync:
+      // fetch and auto-import already succeeded, and a failing GPT call or a
+      // malformed model answer must not turn a healthy run into an error the
+      // review screen renders as a failed sync. Log it server-side — the
+      // same rule syncAllAccounts applies to a per-account failure — and
+      // let the counts report what actually happened.
+      console.error(`[pluggy] passada de sugestão falhou: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
 
-    return { sync, ...(autoImport && { autoImport }) };
+    return {
+      sync,
+      ...(autoImport && { autoImport }),
+      ...(suggestions && { suggestions }),
+    };
   });
 }
 
@@ -869,6 +897,259 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
 
   await autoImportExpenses(result);
   await autoImportIncomes(result);
+
+  return result;
+}
+
+// --- the suggestion pass: the receipt import's intelligence, for staging ---
+
+export interface SuggestStagedResult {
+  expensesSuggested: number;
+  incomesSuggested: number;
+  alreadySuggested: number;
+  historyHits: number;
+  aiCalls: number;
+  aiAnswers: number;
+  unclassified: number;
+}
+
+interface PendingSuggestionRow {
+  _id: unknown;
+  pluggyId: string;
+  direction: 'outflow' | 'inflow';
+  description: string;
+  suggestedType?: string;
+  suggestedSubtype?: string;
+}
+
+// One GPT call per (direction, chunk) classifying the descriptions the
+// history lookup missed, mirroring the receipt import's gpt-4o-mini call
+// (the same model the app already ships, the same json_object response
+// format). Chunked rather than one call per direction: a first sync after
+// enabling an account can stage months of distinct merchants, and one
+// request listing hundreds of them is a timeout and a truncated answer.
+// The category list is read inside the function: it is a runtime database
+// question, and freezing it anywhere else would store stale suggestions.
+async function classifyWithModel(
+  descriptions: string[],
+  categories: { name: string; subtypes: string[] }[],
+  direction: 'expense' | 'income'
+): Promise<Record<string, unknown>> {
+  const categoryList = categories
+    .map(c => (c.subtypes.length > 0 ? `${c.name} (${c.subtypes.join(', ')})` : c.name))
+    .join('; ');
+  const subtypesGuidance =
+    direction === 'expense'
+      ? 'Gastos têm subcategorias: informe "subtype" quando conseguir escolher uma; se não conseguir, omita "subtype".'
+      : 'Receitas não têm subcategoria: nunca informe "subtype" em uma receita.';
+
+  const completion = await getOpenAI().chat.completions.create({
+    model: 'gpt-4o-mini',
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: `Você classifica transações bancárias brasileiras para um app de finanças pessoais.
+Retorne APENAS um JSON: { "DESCRIÇÃO": { "type": "categoria", "subtype": "subcategoria" } }, com um objeto para cada descrição enviada.
+
+As categorias${direction === 'expense' ? ' e subcategorias' : ''} válidas de ${direction === 'expense' ? 'gasto' : 'receita'} são EXATAMENTE estas:
+${categoryList}
+
+${subtypesGuidance}
+Se não conseguir classificar uma descrição com segurança, omita-a do objeto de resposta.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify(descriptions),
+      },
+    ],
+  });
+
+  return JSON.parse(completion.choices[0].message.content ?? '{}');
+}
+
+// How many descriptions go into one classifyWithModel call.
+const SUGGESTION_CHUNK_SIZE = 50;
+
+async function classifyAllWithModel(
+  descriptions: string[],
+  categories: { name: string; subtypes: string[] }[],
+  direction: 'expense' | 'income'
+): Promise<{ answers: Record<string, unknown>; calls: number }> {
+  const answers: Record<string, unknown> = {};
+  let calls = 0;
+
+  for (let i = 0; i < descriptions.length; i += SUGGESTION_CHUNK_SIZE) {
+    const chunk = descriptions.slice(i, i + SUGGESTION_CHUNK_SIZE);
+    const raw = await classifyWithModel(chunk, categories, direction);
+    calls++;
+    // A model answer keyed by something other than one of the descriptions
+    // sent is dropped here rather than trusted — validSuggestionAnswers
+    // filters the values, but the keys are trusted only because they match
+    // a description we actually staged.
+    for (const key of Object.keys(raw)) {
+      if (chunk.includes(key)) answers[key] = raw[key];
+    }
+  }
+
+  return { answers, calls };
+}
+
+// The suggestion pass, run by runPluggySync after autoImportStaged, inside
+// the same advisory-lock hold: every pending row still lacking a valid
+// suggestion gets one, history first (the latest already-classified
+// Expense/Income with the same description), then one batched GPT call per
+// direction for what history missed — the same ladder the receipt import
+// runs (ProductMapping → GPT), minus the receipt's store/product scoping,
+// which bank descriptions do not have.
+//
+// A stored suggestion is a prefill for the review screen, nothing more: it
+// never imports anything by itself, and importStaged re-validates the
+// confirmed pair against the live Category list at import time. Only rows
+// with no suggestion at all are touched (see below), so re-running it on
+// every sync is idempotent.
+export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
+  await connectToDatabase();
+
+  const result: SuggestStagedResult = {
+    expensesSuggested: 0,
+    incomesSuggested: 0,
+    alreadySuggested: 0,
+    historyHits: 0,
+    aiCalls: 0,
+    aiAnswers: 0,
+    unclassified: 0,
+  };
+
+  const [expenseCategories, incomeCategories] = await Promise.all([
+    getExpenseCategories(),
+    getIncomeCategories(),
+  ]);
+
+  const rows = await PluggyTransaction.find(
+    { status: 'pending' },
+    'pluggyId direction description suggestedType suggestedSubtype'
+  ).lean<PendingSuggestionRow[]>();
+
+  // Only rows with NO suggestion at all are eligible. A row that already
+  // carries one — a prior pass's answer that is still valid, or the
+  // orphaned-pair hint autoImportStaged writes when a BillMapping points at
+  // a renamed-away category — keeps it: overwriting the hint would hide
+  // what the mapping said, which is the exact context the review screen
+  // shows so the human can fix the mapping itself on confirm (see the
+  // Bruno "dead category stays unimported" request). The suggestion-pair
+  // validity question is left to the confirm gate, which re-validates
+  // against the live Category list — the same place importStaged checks it.
+  const needsSuggestion = rows.filter(row => row.suggestedType == null);
+
+  result.alreadySuggested = rows.length - needsSuggestion.length;
+  if (needsSuggestion.length === 0) return result;
+
+  const { expenses: expenseDescriptions, incomes: incomeDescriptions } =
+    suggestionBatch(needsSuggestion);
+
+  // --- history: the latest already-classified record with the same description
+  // History goes through validSuggestionAnswers like the model's answers: a
+  // past expense can carry a subtype that was since renamed away (the
+  // cascade fixes it, but `force` deletes leave orphans), and storing that
+  // pair would prefill a select the confirm gate then blanks.
+  const rawExpenseHistory: Record<string, unknown> = {};
+  for (const description of expenseDescriptions) {
+    const latest = await Expense.findOne(
+      { name: description, type: { $in: expenseCategories.map(c => c.name) } },
+      'type subtype',
+      { sort: { date: -1, _id: -1 } }
+    ).lean<{ type: string; subtype?: string } | null>();
+    if (latest) rawExpenseHistory[description] = { type: latest.type, subtype: latest.subtype };
+  }
+  const expenseHistory = new Map(Object.entries(validSuggestionAnswers(rawExpenseHistory, expenseCategories)));
+
+  const rawIncomeHistory: Record<string, unknown> = {};
+  for (const description of incomeDescriptions) {
+    const latest = await Income.findOne(
+      { name: description, type: { $in: incomeCategories.map(c => c.name) } },
+      'type',
+      { sort: { date: -1, _id: -1 } }
+    ).lean<{ type: string } | null>();
+    if (latest) rawIncomeHistory[description] = { type: latest.type };
+  }
+  const incomeHistory = new Map(Object.entries(validSuggestionAnswers(rawIncomeHistory, incomeCategories)));
+
+  result.historyHits = expenseHistory.size + incomeHistory.size;
+
+  // --- AI: batched calls per direction, only for what history missed
+  const aiExpenseDescriptions = expenseDescriptions.filter(d => !expenseHistory.has(d));
+  const aiIncomeDescriptions = incomeDescriptions.filter(d => !incomeHistory.has(d));
+
+  const expenseClassification =
+    aiExpenseDescriptions.length > 0
+      ? await classifyAllWithModel(aiExpenseDescriptions, expenseCategories, 'expense')
+      : { answers: {} as Record<string, unknown>, calls: 0 };
+  const incomeClassification =
+    aiIncomeDescriptions.length > 0
+      ? await classifyAllWithModel(aiIncomeDescriptions, incomeCategories, 'income')
+      : { answers: {} as Record<string, unknown>, calls: 0 };
+
+  const aiExpenses = validSuggestionAnswers(expenseClassification.answers, expenseCategories);
+  const aiIncomes = validSuggestionAnswers(incomeClassification.answers, incomeCategories);
+
+  result.aiCalls = expenseClassification.calls + incomeClassification.calls;
+  result.aiAnswers = Object.keys(aiExpenses).length + Object.keys(aiIncomes).length;
+  // Descriptions sent to the model that came back with no usable answer —
+  // omitted as uncertain, or naming a category that does not exist.
+  result.unclassified =
+    aiExpenseDescriptions.length +
+    aiIncomeDescriptions.length -
+    result.aiAnswers;
+
+  // --- write: history beats AI per description, onto the rows still lacking one
+  // Typed from the model's own bulkWrite signature rather than an imported
+  // generic — the raw schema doc shape it needs is inferred, not nameable.
+  const bulkOps: Parameters<typeof PluggyTransaction.bulkWrite>[0] = [];
+  for (const row of needsSuggestion) {
+    if (row.direction === 'outflow') {
+      const historyAnswer = expenseHistory.get(row.description);
+      const aiAnswer = aiExpenses[row.description];
+      const answer = historyAnswer ?? aiAnswer;
+      if (!answer) continue;
+      const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: row._id, status: 'pending' },
+          update: {
+            $set: {
+              suggestedType: answer.type,
+              ...(answer.subtype !== undefined && { suggestedSubtype: answer.subtype }),
+              suggestedBy: by,
+            },
+          },
+        },
+      });
+      result.expensesSuggested++;
+    } else {
+      const historyAnswer = incomeHistory.get(row.description);
+      const aiAnswer = aiIncomes[row.description];
+      const answer = historyAnswer ?? aiAnswer;
+      if (!answer) continue;
+      const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: row._id, status: 'pending' },
+          update: {
+            $set: {
+              suggestedType: answer.type,
+              suggestedBy: by,
+            },
+          },
+        },
+      });
+      result.incomesSuggested++;
+    }
+  }
+
+  if (bulkOps.length > 0) {
+    await PluggyTransaction.bulkWrite(bulkOps);
+  }
 
   return result;
 }

@@ -568,9 +568,9 @@ nothing.
 
 Telegram inline-keyboard categorization; iOS Shortcuts / Wallet ingestion; server-side email
 ingestion; a unified `/ingest` endpoint with a `source` field; a `pending`/`confirmed`/`orphan`
-reconciliation state machine across sources; GPT classification of Pluggy rows (the mapping table
-plus `pluggyCategory` hints should cover it — revisit only if the review queue stays noisy);
-retiring the fatura-PDF parsers; a fourth card brand.
+reconciliation state machine across sources; retiring the fatura-PDF parsers; a fourth card brand.
+(GPT classification of Pluggy rows was a non-goal until 2026-10 — see the suggestion-pass
+addition in the changelog; `pluggyCategory` hints alone did not keep the review queue quiet.)
 
 ---
 
@@ -633,3 +633,17 @@ was *a number*, and `0` is a number.
 Unchanged and still correct: the staging-first shape, the advisory lock concept, accounts-start-disabled,
 the ignore-rule set, the three-count import envelope, the Easypanel cron over the internal network,
 and the non-goals.
+
+### Addition: the suggestion pass (2026-10)
+
+The §6 non-goal "GPT classification of Pluggy rows" is reversed — the review queue stayed noisy, so
+the receipt import's intelligence now runs on staging too. `suggestStagedCategories` runs inside
+`runPluggySync`'s lock, after `autoImportStaged`: for every still-`pending` row without a *valid*
+suggestion, history first (the latest already-classified `Expense`/`Income` sharing the description),
+then chunked gpt-4o-mini calls (≤50 descriptions each) validated by `validSuggestionAnswers`
+(`pluggyUtils.ts`) against the live `Category` list **before** storage. It never imports: a stored
+suggestion only prefills the review screen's selects, `suggestedBy` (`'history' | 'ai'`) records the
+source, and confirming a history/AI suggestion as-is upserts the `BillMapping` (the `ProductMapping`
+flywheel) so the merchant's next occurrence auto-imports. A failed pass degrades the sync (logged
+server-side, no `suggestions` key) rather than failing it. The §6 non-goal "a unified /ingest
+endpoint" and the rest stand unchanged.

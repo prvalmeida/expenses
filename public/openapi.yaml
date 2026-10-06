@@ -1049,7 +1049,7 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: "{ sync, autoImport? } ou { locked: true }"
+          description: "{ sync, autoImport?, suggestions? } ou { locked: true }"
         "400":
           description: VALIDATION_FAILED ou INVALID_CATEGORY
           content:

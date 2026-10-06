@@ -33,6 +33,7 @@ interface PluggyTransactionRow {
   statusReason?: string;
   suggestedType?: string;
   suggestedSubtype?: string;
+  suggestedBy?: 'history' | 'ai';
 }
 
 type ExpenseRowState = PluggyTransactionRow & {
@@ -72,6 +73,15 @@ interface SyncResponse {
     incomesImported: number;
     stillPending: number;
     skippedExisting: number;
+  };
+  suggestions?: {
+    expensesSuggested: number;
+    incomesSuggested: number;
+    alreadySuggested: number;
+    historyHits: number;
+    aiCalls: number;
+    aiAnswers: number;
+    unclassified: number;
   };
 }
 
@@ -118,6 +128,26 @@ function describeSync(data: SyncResponse): string {
           `${stillPending} aguardando revisão` +
           (skippedExisting > 0 ? ` · ${skippedExisting} já existiam` : '')
       );
+    }
+
+    // The suggestion pass runs after the auto-import, so its counts describe
+    // the queue the user is about to review. Absent when the pass failed —
+    // a failed GPT call is a degraded sync, not a failed one, and the fetch
+    // and auto-import lines above already reported what did happen.
+    // historyHits/aiAnswers count distinct merchant descriptions answered,
+    // while `suggested` counts the staged rows that received one — several
+    // rows of the same merchant share one answer.
+    if (data.suggestions) {
+      const { expensesSuggested, incomesSuggested, historyHits, aiAnswers, unclassified } = data.suggestions;
+      const suggested = expensesSuggested + incomesSuggested;
+      if (suggested > 0) {
+        lines.push(
+          `✓ ${suggested} ${suggested === 1 ? 'linha com categoria sugerida' : 'linhas com categoria sugerida'} ` +
+            `(${historyHits + aiAnswers} ${historyHits + aiAnswers === 1 ? 'comerciante' : 'comerciantes'}: ` +
+            `${historyHits} pelo histórico, ${aiAnswers} pela IA)` +
+            (unclassified > 0 ? ` · ${unclassified} sem classificação confiável` : '')
+        );
+      }
     }
   }
 
@@ -190,7 +220,10 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
           }))
       );
       setIncomeRows(
-        pending.filter(r => r.direction === 'inflow').map(r => ({ ...r, resolvedType: null }))
+        pending.filter(r => r.direction === 'inflow').map(r => ({
+          ...r,
+          resolvedType: r.suggestedType ?? null,
+        }))
       );
       setIgnoredRows(ignored);
       setAnomalyRows(anomalies);
@@ -341,10 +374,18 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
     // Compare against the *effective* suggested values from the staged row,
     // never the raw parsed state — an orphaned suggestion the user never
     // touched must not look edited and overwrite the BillMapping with null.
+    // A suggestion that came from the mapping itself (suggestedBy unset:
+    // autoImportStaged's orphaned-pair hint) confirmed as-is leaves the
+    // mapping alone; one that came from the history/AI pass does not —
+    // confirming it as-is is exactly the moment the merchant's classification
+    // becomes human-approved, and not saving it would leave every
+    // first-occurrence merchant re-suggested forever (the flywheel the
+    // receipt import has via ProductMapping).
     const items = ready.map(({ row, type, subtype }) => {
       const suggestedType = effectiveType(row.suggestedType ?? null);
       const suggestedSubtype = effectiveSubtype(suggestedType, row.suggestedSubtype ?? null);
-      const newMapping = type !== suggestedType || subtype !== suggestedSubtype;
+      const newMapping =
+        row.suggestedBy !== undefined || type !== suggestedType || subtype !== suggestedSubtype;
       return {
         pluggyId: row.pluggyId,
         kind: 'expense' as const,
@@ -477,6 +518,11 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
           </select>
           {typeOrphaned && (
             <p className="text-[10px] text-amber-700 mt-0.5">⚠ &ldquo;{row.resolvedType}&rdquo; não existe mais</p>
+          )}
+          {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) && (
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
+            </p>
           )}
         </>
       ),
@@ -714,6 +760,11 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
                               {orphaned && (
                                 <p className="text-[10px] text-amber-700 mt-0.5">⚠ &ldquo;{row.resolvedType}&rdquo; não existe mais</p>
                               )}
+                              {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) && (
+                                <p className="text-[10px] text-gray-500 mt-0.5">
+                                  {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
+                                </p>
+                              )}
                             </td>
                             <td className="p-1.5 border border-gray-200 text-right text-xs whitespace-nowrap">R$ {fmt(row.amount)}</td>
                           </tr>
@@ -758,6 +809,11 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
                             <option value="">Selecione...</option>
                             {[...incomeTypes].sort().map(t => (<option key={t} value={t}>{t}</option>))}
                           </select>
+                          {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) && (
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
+                            </p>
+                          )}
                         </div>
                       </li>
                     );
