@@ -920,6 +920,7 @@ interface PendingSuggestionRow {
   description: string;
   suggestedType?: string;
   suggestedSubtype?: string;
+  suggestionAttemptedAt?: Date;
 }
 
 // One GPT call per (direction, chunk) classifying the descriptions the
@@ -1028,7 +1029,7 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
 
   const rows = await PluggyTransaction.find(
     { status: 'pending' },
-    'pluggyId direction description suggestedType suggestedSubtype'
+    'pluggyId direction description suggestedType suggestedSubtype suggestionAttemptedAt'
   ).lean<PendingSuggestionRow[]>();
 
   // Only rows with NO suggestion at all are eligible. A row that already
@@ -1053,33 +1054,61 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
   // past expense can carry a subtype that was since renamed away (the
   // cascade fixes it, but `force` deletes leave orphans), and storing that
   // pair would prefill a select the confirm gate then blanks.
-  const rawExpenseHistory: Record<string, unknown> = {};
-  for (const description of expenseDescriptions) {
-    const latest = await Expense.findOne(
-      { name: description, type: { $in: expenseCategories.map(c => c.name) } },
-      'type subtype',
-      { sort: { date: -1, _id: -1 } }
-    ).lean<{ type: string; subtype?: string } | null>();
-    if (latest) rawExpenseHistory[description] = { type: latest.type, subtype: latest.subtype };
-  }
-  const expenseHistory = new Map(Object.entries(validSuggestionAnswers(rawExpenseHistory, expenseCategories)));
+  //
+  // One query per direction, not one per description: `name` is unindexed,
+  // so N sequential findOne calls would be N collection scans inside the
+  // sync lock. Sorted newest first, the first document seen per name wins.
+  const latestByName = (docs: { name: string; type: string; subtype?: string }[]) => {
+    const latest: Record<string, unknown> = {};
+    for (const doc of docs) {
+      if (!(doc.name in latest)) latest[doc.name] = { type: doc.type, subtype: doc.subtype };
+    }
+    return latest;
+  };
 
-  const rawIncomeHistory: Record<string, unknown> = {};
-  for (const description of incomeDescriptions) {
-    const latest = await Income.findOne(
-      { name: description, type: { $in: incomeCategories.map(c => c.name) } },
-      'type',
-      { sort: { date: -1, _id: -1 } }
-    ).lean<{ type: string } | null>();
-    if (latest) rawIncomeHistory[description] = { type: latest.type };
-  }
-  const incomeHistory = new Map(Object.entries(validSuggestionAnswers(rawIncomeHistory, incomeCategories)));
+  const expenseDocs = expenseDescriptions.length
+    ? await Expense.find(
+        { name: { $in: expenseDescriptions }, type: { $in: expenseCategories.map(c => c.name) } },
+        'name type subtype'
+      )
+        .sort({ date: -1, _id: -1 })
+        .lean<{ name: string; type: string; subtype?: string }[]>()
+    : [];
+  const expenseHistory = new Map(
+    Object.entries(validSuggestionAnswers(latestByName(expenseDocs), expenseCategories))
+  );
+
+  const incomeDocs = incomeDescriptions.length
+    ? await Income.find(
+        { name: { $in: incomeDescriptions }, type: { $in: incomeCategories.map(c => c.name) } },
+        'name type'
+      )
+        .sort({ date: -1, _id: -1 })
+        .lean<{ name: string; type: string }[]>()
+    : [];
+  const incomeHistory = new Map(
+    Object.entries(validSuggestionAnswers(latestByName(incomeDocs), incomeCategories))
+  );
 
   result.historyHits = expenseHistory.size + incomeHistory.size;
 
-  // --- AI: batched calls per direction, only for what history missed
-  const aiExpenseDescriptions = expenseDescriptions.filter(d => !expenseHistory.has(d));
-  const aiIncomeDescriptions = incomeDescriptions.filter(d => !incomeHistory.has(d));
+  // --- AI: batched calls per direction, only for what history missed and
+  // the model has not already failed on (suggestionAttemptedAt). A
+  // description is sent when at least one of its rows is still unattempted.
+  const unattempted = (direction: 'outflow' | 'inflow') =>
+    new Set(
+      needsSuggestion
+        .filter(row => row.direction === direction && row.suggestionAttemptedAt == null)
+        .map(row => row.description)
+    );
+  const unattemptedExpenses = unattempted('outflow');
+  const unattemptedIncomes = unattempted('inflow');
+  const aiExpenseDescriptions = expenseDescriptions.filter(
+    d => !expenseHistory.has(d) && unattemptedExpenses.has(d)
+  );
+  const aiIncomeDescriptions = incomeDescriptions.filter(
+    d => !incomeHistory.has(d) && unattemptedIncomes.has(d)
+  );
 
   const expenseClassification =
     aiExpenseDescriptions.length > 0
@@ -1106,12 +1135,23 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
   // Typed from the model's own bulkWrite signature rather than an imported
   // generic — the raw schema doc shape it needs is inferred, not nameable.
   const bulkOps: Parameters<typeof PluggyTransaction.bulkWrite>[0] = [];
+  const attemptedAt = new Date();
+  const markAttempted = (row: PendingSuggestionRow) =>
+    bulkOps.push({
+      updateOne: {
+        filter: { _id: row._id, status: 'pending' },
+        update: { $set: { suggestionAttemptedAt: attemptedAt } },
+      },
+    });
   for (const row of needsSuggestion) {
     if (row.direction === 'outflow') {
       const historyAnswer = expenseHistory.get(row.description);
       const aiAnswer = aiExpenses[row.description];
       const answer = historyAnswer ?? aiAnswer;
-      if (!answer) continue;
+      if (!answer) {
+        if (aiExpenseDescriptions.includes(row.description)) markAttempted(row);
+        continue;
+      }
       const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
       bulkOps.push({
         updateOne: {
@@ -1130,7 +1170,10 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
       const historyAnswer = incomeHistory.get(row.description);
       const aiAnswer = aiIncomes[row.description];
       const answer = historyAnswer ?? aiAnswer;
-      if (!answer) continue;
+      if (!answer) {
+        if (aiIncomeDescriptions.includes(row.description)) markAttempted(row);
+        continue;
+      }
       const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
       bulkOps.push({
         updateOne: {

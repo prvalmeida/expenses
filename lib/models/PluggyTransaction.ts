@@ -60,6 +60,11 @@ const PluggyTransactionSchema = new mongoose.Schema(
     // that confirming the suggestion as-is should upsert the mapping (the
     // flywheel the receipt import has via ProductMapping).
     suggestedBy: { type: String, enum: ['history', 'ai'], required: false },
+    // Set when the row's description went to the model and came back with no
+    // usable answer. Without it every sync (cron every 6h) would resend the
+    // same unclassifiable merchants to GPT forever; the row stays eligible
+    // for the history lookup, which is free.
+    suggestionAttemptedAt: { type: Date, required: false },
     importedExpenseIds: { type: [String], required: false },
     importedIncomeId: { type: String, required: false },
     firstSeenAt: { type: Date, required: true },

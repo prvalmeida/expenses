@@ -519,7 +519,8 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
           {typeOrphaned && (
             <p className="text-[10px] text-amber-700 mt-0.5">⚠ &ldquo;{row.resolvedType}&rdquo; não existe mais</p>
           )}
-          {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) && (
+          {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) &&
+            subtype === (row.suggestedSubtype ?? null) && (
             <p className="text-[10px] text-gray-500 mt-0.5">
               {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
             </p>
