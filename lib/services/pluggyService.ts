@@ -906,7 +906,6 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
 export interface SuggestStagedResult {
   expensesSuggested: number;
   incomesSuggested: number;
-  alreadySuggested: number;
   historyHits: number;
   aiCalls: number;
   aiAnswers: number;
@@ -972,28 +971,54 @@ Se não conseguir classificar uma descrição com segurança, omita-a do objeto 
 // How many descriptions go into one classifyWithModel call.
 const SUGGESTION_CHUNK_SIZE = 50;
 
+// Case/accent-insensitive folding for matching the model's echoed keys — the
+// same fold categoryUtils uses to resolve caller-supplied names. The model is
+// asked to return each description as a JSON key, and LLMs routinely "clean
+// up" what they echo (trim, lowercase, drop an accent); matching folded keys
+// recovers those answers while still only ever trusting a key that folds to a
+// description we actually sent.
+const foldDescription = (s: string) =>
+  s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
 async function classifyAllWithModel(
   descriptions: string[],
   categories: { name: string; subtypes: string[] }[],
   direction: 'expense' | 'income'
-): Promise<{ answers: Record<string, unknown>; calls: number }> {
+): Promise<{ answers: Record<string, unknown>; calls: number; attempted: Set<string> }> {
   const answers: Record<string, unknown> = {};
+  const attempted = new Set<string>();
   let calls = 0;
 
   for (let i = 0; i < descriptions.length; i += SUGGESTION_CHUNK_SIZE) {
     const chunk = descriptions.slice(i, i + SUGGESTION_CHUNK_SIZE);
-    const raw = await classifyWithModel(chunk, categories, direction);
+    let raw: Record<string, unknown>;
+    try {
+      raw = await classifyWithModel(chunk, categories, direction);
+    } catch (error) {
+      // One chunk failing (timeout, malformed JSON, empty choices) must not
+      // sink the rest of the pass — nor the other direction, nor the history
+      // suggestions the caller writes alongside. Its descriptions stay
+      // unattempted, so the next sync retries them instead of permanently
+      // marking an unclassifiable merchant the model never actually saw.
+      console.error(
+        `[pluggy] chunk de sugestão (${direction}) falhou: ${error instanceof Error ? error.message : String(error)}`
+      );
+      continue;
+    }
     calls++;
+    for (const description of chunk) attempted.add(description);
     // A model answer keyed by something other than one of the descriptions
     // sent is dropped here rather than trusted — validSuggestionAnswers
-    // filters the values, but the keys are trusted only because they match
+    // filters the values, but the keys are trusted only because they fold to
     // a description we actually staged.
+    const byFolded = new Map(chunk.map(d => [foldDescription(d), d]));
     for (const key of Object.keys(raw)) {
-      if (chunk.includes(key)) answers[key] = raw[key];
+      const original = byFolded.get(foldDescription(key));
+      if (original !== undefined) answers[original] = raw[key];
     }
   }
 
-  return { answers, calls };
+  return { answers, calls, attempted };
 }
 
 // The suggestion pass, run by runPluggySync after autoImportStaged, inside
@@ -1015,7 +1040,6 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
   const result: SuggestStagedResult = {
     expensesSuggested: 0,
     incomesSuggested: 0,
-    alreadySuggested: 0,
     historyHits: 0,
     aiCalls: 0,
     aiAnswers: 0,
@@ -1043,7 +1067,6 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
   // against the live Category list — the same place importStaged checks it.
   const needsSuggestion = rows.filter(row => row.suggestedType == null);
 
-  result.alreadySuggested = rows.length - needsSuggestion.length;
   if (needsSuggestion.length === 0) return result;
 
   const { expenses: expenseDescriptions, incomes: incomeDescriptions } =
@@ -1113,22 +1136,24 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
   const expenseClassification =
     aiExpenseDescriptions.length > 0
       ? await classifyAllWithModel(aiExpenseDescriptions, expenseCategories, 'expense')
-      : { answers: {} as Record<string, unknown>, calls: 0 };
+      : { answers: {} as Record<string, unknown>, calls: 0, attempted: new Set<string>() };
   const incomeClassification =
     aiIncomeDescriptions.length > 0
       ? await classifyAllWithModel(aiIncomeDescriptions, incomeCategories, 'income')
-      : { answers: {} as Record<string, unknown>, calls: 0 };
+      : { answers: {} as Record<string, unknown>, calls: 0, attempted: new Set<string>() };
 
   const aiExpenses = validSuggestionAnswers(expenseClassification.answers, expenseCategories);
   const aiIncomes = validSuggestionAnswers(incomeClassification.answers, incomeCategories);
 
   result.aiCalls = expenseClassification.calls + incomeClassification.calls;
   result.aiAnswers = Object.keys(aiExpenses).length + Object.keys(aiIncomes).length;
-  // Descriptions sent to the model that came back with no usable answer —
-  // omitted as uncertain, or naming a category that does not exist.
+  // Descriptions the model actually saw but answered with nothing usable —
+  // omitted as uncertain, or naming a category that does not exist. Counted
+  // from `attempted` (not the full send list) so a failed chunk, whose rows
+  // were never really classified, is not reported as "unclassifiable".
   result.unclassified =
-    aiExpenseDescriptions.length +
-    aiIncomeDescriptions.length -
+    expenseClassification.attempted.size +
+    incomeClassification.attempted.size -
     result.aiAnswers;
 
   // --- write: history beats AI per description, onto the rows still lacking one
@@ -1149,7 +1174,7 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
       const aiAnswer = aiExpenses[row.description];
       const answer = historyAnswer ?? aiAnswer;
       if (!answer) {
-        if (aiExpenseDescriptions.includes(row.description)) markAttempted(row);
+        if (expenseClassification.attempted.has(row.description)) markAttempted(row);
         continue;
       }
       const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
@@ -1171,7 +1196,7 @@ export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
       const aiAnswer = aiIncomes[row.description];
       const answer = historyAnswer ?? aiAnswer;
       if (!answer) {
-        if (aiIncomeDescriptions.includes(row.description)) markAttempted(row);
+        if (incomeClassification.attempted.has(row.description)) markAttempted(row);
         continue;
       }
       const by: SuggestionSource = historyAnswer ? 'history' : 'ai';

@@ -176,9 +176,11 @@ só o contrato de rede.
   de uma chamada em lote ao gpt-4o-mini com as categorias vivas — a mesma inteligência da
   importação de nota, alimentando os selects da tela de revisão em vez de importar por conta
   própria; confirmar a sugestão na tela salva o `BillMapping` e a próxima ocorrência do
-  comerciante auto-importa. A passada falha em silêncio operacional: se o GPT falhar, o sync
-  responde sem a chave `suggestions` e nada mais muda. `dryRun=true` só relata contagens e não
-  escreve nada — nem no staging, nem gastos/receitas.
+  comerciante auto-importa. A passada falha em silêncio operacional: uma falha do GPT por
+  chunk é logada e pulada (as descrições daquele chunk ficam para a próxima rodada, o
+  histórico e os demais chunks ainda são gravados); só uma falha não-GPT (ex.: erro de escrita
+  no banco) faz o sync responder sem a chave `suggestions`. `dryRun=true` só relata contagens e
+  não escreve nada — nem no staging, nem gastos/receitas.
 - `GET /api/v1/pluggy/transactions?status=&accountId=&cursor=&limit=` — linhas em staging, paginado
   por cursor como `/expenses`. `status` é um de `pending`, `imported`, `ignored`,
   `skipped_existing`, `anomaly`.

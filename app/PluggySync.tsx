@@ -77,7 +77,6 @@ interface SyncResponse {
   suggestions?: {
     expensesSuggested: number;
     incomesSuggested: number;
-    alreadySuggested: number;
     historyHits: number;
     aiCalls: number;
     aiAnswers: number;
@@ -138,14 +137,14 @@ function describeSync(data: SyncResponse): string {
     // while `suggested` counts the staged rows that received one — several
     // rows of the same merchant share one answer.
     if (data.suggestions) {
-      const { expensesSuggested, incomesSuggested, historyHits, aiAnswers, unclassified } = data.suggestions;
+      const { expensesSuggested, incomesSuggested, historyHits, aiAnswers, aiCalls, unclassified } = data.suggestions;
       const suggested = expensesSuggested + incomesSuggested;
       if (suggested > 0) {
         lines.push(
           `✓ ${suggested} ${suggested === 1 ? 'linha com categoria sugerida' : 'linhas com categoria sugerida'} ` +
             `(${historyHits + aiAnswers} ${historyHits + aiAnswers === 1 ? 'comerciante' : 'comerciantes'}: ` +
-            `${historyHits} pelo histórico, ${aiAnswers} pela IA)` +
-            (unclassified > 0 ? ` · ${unclassified} sem classificação confiável` : '')
+            `${historyHits} pelo histórico, ${aiAnswers} pela IA em ${aiCalls} ${aiCalls === 1 ? 'chamada' : 'chamadas'})` +
+            (unclassified > 0 ? ` · ${unclassified} ${unclassified === 1 ? 'comerciante' : 'comerciantes'} sem classificação confiável` : '')
         );
       }
     }
@@ -227,21 +226,12 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
       setIncomeRows(nextIncomeRows);
       setIgnoredRows(ignored);
       setAnomalyRows(anomalies);
-      // Pre-check rows the suggestion pass already fully classified — an
-      // expense needs both category and subcategory resolved, an income just
-      // the type (it has no subcategory field) — so confirming them is a
-      // single click instead of touching every suggested row by hand. A row
-      // still missing a field stays unchecked, same as before.
-      setSelectedExpenseIds(
-        new Set(
-          nextExpenseRows
-            .filter(r => r.resolvedType !== null && r.resolvedSubtype !== null)
-            .map(r => r.pluggyId)
-        )
-      );
-      setSelectedIncomeIds(
-        new Set(nextIncomeRows.filter(r => r.resolvedType !== null).map(r => r.pluggyId))
-      );
+      // Selection is reset here and re-populated by the pre-check effect
+      // below once categories resolve — the pre-check must use the effective
+      // (validated) suggestion, which load() cannot know before useCategories
+      // finishes.
+      setSelectedExpenseIds(new Set());
+      setSelectedIncomeIds(new Set());
     } catch {
       setError('Erro ao carregar transações Pluggy');
     } finally {
@@ -250,6 +240,32 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Pre-check rows whose suggestion is still VALID, once categories resolve —
+  // not inside load(), which runs before useCategories finishes. A category
+  // renamed after the suggestion pass wrote the hint leaves an orphaned
+  // suggestedType/suggestedSubtype on a row, and pre-checking on the raw value
+  // would tick a box the confirm gate then silently drops. Reusing the same
+  // effective* predicates the confirm gate applies means a checked box always
+  // means "ready to import". An expense needs both category and subcategory
+  // resolved; an income has no subcategory, so its type alone qualifies.
+  useEffect(() => {
+    if (categoriesLoading) return;
+    setSelectedExpenseIds(
+      new Set(
+        expenseRows
+          .filter(r => {
+            const type = effectiveType(r.resolvedType);
+            return type !== null && effectiveSubtype(type, r.resolvedSubtype) !== null;
+          })
+          .map(r => r.pluggyId)
+      )
+    );
+    setSelectedIncomeIds(
+      new Set(incomeRows.filter(r => effectiveIncomeType(r.resolvedType) !== null).map(r => r.pluggyId))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoriesLoading, expenseRows, incomeRows]);
 
   const updateExpenseRow = <K extends keyof ExpenseRowState>(
     pluggyId: string,

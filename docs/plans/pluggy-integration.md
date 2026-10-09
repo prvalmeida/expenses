@@ -645,7 +645,10 @@ then chunked gpt-4o-mini calls (≤50 descriptions each) validated by `validSugg
 suggestion only prefills the review screen's selects, `suggestedBy` (`'history' | 'ai'`) records the
 source, and confirming a history/AI suggestion as-is upserts the `BillMapping` (the `ProductMapping`
 flywheel) so the merchant's next occurrence auto-imports. A failed pass degrades the sync (logged
-server-side, no `suggestions` key) rather than failing it. A row the model could not classify gets
+server-side, no `suggestions` key) rather than failing it — but a GPT failure is per-chunk, not
+per-pass: each `classifyAllWithModel` chunk call is individually caught, so one bad answer skips
+only that chunk (its descriptions stay unattempted for the next sync) while history and the other
+chunks/direction are still written. A row the model could not classify gets
 `suggestionAttemptedAt` and is never resent to GPT (history still applies), so an unclassifiable
 merchant does not cost an API call every 6h. The history lookup is one `$in` query per direction —
 `Expense.name`/`Income.name` are unindexed. The §6 non-goal "a unified /ingest
