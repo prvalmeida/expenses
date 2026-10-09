@@ -208,27 +208,40 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
         fetchTransactions('ignored'),
         fetchTransactions('anomaly'),
       ]);
-      setExpenseRows(
-        pending
-          .filter(r => r.direction === 'outflow')
-          .map(r => ({
-            ...r,
-            resolvedType: r.suggestedType ?? null,
-            resolvedSubtype: r.suggestedSubtype ?? null,
-            resolvedPaymentType: r.paymentType ?? 'debit',
-            resolvedCardBrand: r.cardBrand ?? '',
-          }))
-      );
-      setIncomeRows(
-        pending.filter(r => r.direction === 'inflow').map(r => ({
+      const nextExpenseRows: ExpenseRowState[] = pending
+        .filter(r => r.direction === 'outflow')
+        .map(r => ({
           ...r,
           resolvedType: r.suggestedType ?? null,
-        }))
-      );
+          resolvedSubtype: r.suggestedSubtype ?? null,
+          resolvedPaymentType: r.paymentType ?? 'debit',
+          resolvedCardBrand: r.cardBrand ?? '',
+        }));
+      const nextIncomeRows: IncomeRowState[] = pending
+        .filter(r => r.direction === 'inflow')
+        .map(r => ({
+          ...r,
+          resolvedType: r.suggestedType ?? null,
+        }));
+      setExpenseRows(nextExpenseRows);
+      setIncomeRows(nextIncomeRows);
       setIgnoredRows(ignored);
       setAnomalyRows(anomalies);
-      setSelectedExpenseIds(new Set());
-      setSelectedIncomeIds(new Set());
+      // Pre-check rows the suggestion pass already fully classified — an
+      // expense needs both category and subcategory resolved, an income just
+      // the type (it has no subcategory field) — so confirming them is a
+      // single click instead of touching every suggested row by hand. A row
+      // still missing a field stays unchecked, same as before.
+      setSelectedExpenseIds(
+        new Set(
+          nextExpenseRows
+            .filter(r => r.resolvedType !== null && r.resolvedSubtype !== null)
+            .map(r => r.pluggyId)
+        )
+      );
+      setSelectedIncomeIds(
+        new Set(nextIncomeRows.filter(r => r.resolvedType !== null).map(r => r.pluggyId))
+      );
     } catch {
       setError('Erro ao carregar transações Pluggy');
     } finally {
