@@ -10,6 +10,8 @@ import {
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
   computeSyncWindow,
+  suggestionBatch,
+  validSuggestionAnswers,
 } from '../lib/utils/pluggyUtils';
 
 // --- mapPluggyTransaction: the raw-field reads ---------------------------
@@ -572,4 +574,55 @@ test('computeSyncWindow: a start date later than the overlap wins', () => {
     NOW
   );
   assert.deepEqual(window, { from: '2026-09-18', to: '2026-09-24' });
+});
+
+// --- the suggestion pass: pure helpers -----------------------------------
+
+test('suggestionBatch: dedupes per direction, order-stable, drops empties', () => {
+  const rows = [
+    { direction: 'outflow' as const, description: 'NETFLIX.COM' },
+    { direction: 'outflow' as const, description: 'PANVEL MATRIZ' },
+    { direction: 'outflow' as const, description: 'NETFLIX.COM' },
+    { direction: 'inflow' as const, description: 'CRED SALARIO' },
+    { direction: 'inflow' as const, description: 'CRED SALARIO' },
+    { direction: 'outflow' as const, description: '' },
+    { direction: 'outflow' as const, description: '   ' },
+    { direction: 'inflow' as const, description: 'NETFLIX.COM' },
+  ];
+
+  // The same merchant as an outflow and as a refund inflow is classified
+  // against two different category lists, so neither occurrence may
+  // suppress the other.
+  assert.deepEqual(suggestionBatch(rows), {
+    expenses: ['NETFLIX.COM', 'PANVEL MATRIZ'],
+    incomes: ['CRED SALARIO', 'NETFLIX.COM'],
+  });
+
+  assert.deepEqual(suggestionBatch([]), { expenses: [], incomes: [] });
+});
+
+test('validSuggestionAnswers: only pairs that exist in the live category list survive', () => {
+  const categories = [
+    { name: 'comida', subtypes: ['Restaurante', 'Delivery'] },
+    { name: 'saúde', subtypes: ['Farmácia', 'Remédios'] },
+    { name: 'transporte', subtypes: ['Combustível'] },
+    { name: 'salário', subtypes: [] },
+  ];
+
+  const answers = {
+    'NETFLIX.COM': { type: 'lazer', subtype: 'Streaming' },        // dead type: dropped
+    'PANVEL MATRIZ': { type: 'saúde', subtype: 'wrong-subtype' },   // valid type, alien subtype: degraded to type only
+    'UBER TRIP': { type: 'transporte', subtype: 'Combustível' },   // fully valid
+    'CRED SALARIO': { type: 'salário', subtype: 'qualquer' },      // income shape: subtype dropped
+    'WEIRD': 'not-an-object',                                      // malformed: dropped
+    'ALSO WEIRD': { subtype: 'Remédios' },                          // no type: dropped
+  };
+
+  assert.deepEqual(validSuggestionAnswers(answers, categories), {
+    'PANVEL MATRIZ': { type: 'saúde' },
+    'UBER TRIP': { type: 'transporte', subtype: 'Combustível' },
+    'CRED SALARIO': { type: 'salário' },
+  });
+
+  assert.deepEqual(validSuggestionAnswers({}, categories), {});
 });

@@ -433,3 +433,77 @@ export function computeSyncWindow(
   const from = overlapFrom > account.connectedAt ? overlapFrom : account.connectedAt;
   return { from, to };
 }
+
+// --- the suggestion pass (pluggyService.suggestStagedCategories) ----------
+
+export type SuggestionSource = 'history' | 'ai';
+
+export interface SuggestionAnswer {
+  type: string;
+  subtype?: string;
+}
+
+// The distinct, order-stable description lists to classify, per direction.
+// Deduping is the point: a staged month routinely holds several rows of the
+// same merchant (installments, repeated charges) and they are one
+// classification each — the history lookup and the model call are both
+// per-description, never per-row. The two directions dedupe independently:
+// a merchant appearing as an outflow and as a refund inflow is classified
+// against two different category lists, so neither occurrence may suppress
+// the other. An empty description carries nothing to classify and is never
+// sent.
+export function suggestionBatch(
+  rows: { direction: PluggyDirection; description: string }[]
+): { expenses: string[]; incomes: string[] } {
+  const seenExpenses = new Set<string>();
+  const seenIncomes = new Set<string>();
+  const expenses: string[] = [];
+  const incomes: string[] = [];
+
+  for (const row of rows) {
+    if (!row.description.trim()) continue;
+    if (row.direction === 'outflow') {
+      if (!seenExpenses.has(row.description)) {
+        seenExpenses.add(row.description);
+        expenses.push(row.description);
+      }
+    } else if (!seenIncomes.has(row.description)) {
+      seenIncomes.add(row.description);
+      incomes.push(row.description);
+    }
+  }
+
+  return { expenses, incomes };
+}
+
+// Filters answers (from history or the model) down to pairs that still exist
+// in the live category list — the same rule validateExpensePair applies at
+// import time, applied BEFORE anything is stored as a suggestion, so a
+// hallucinated or renamed-away category never prefills a select the confirm
+// gate would then reject. The type must match a category to survive; the
+// subtype survives only when it is listed under that type, otherwise the
+// answer degrades to the type alone — which is exactly how an income answer
+// with a spurious subtype behaves, since income categories have no subtypes.
+export function validSuggestionAnswers(
+  answers: Record<string, unknown>,
+  categories: { name: string; subtypes: string[] }[]
+): Record<string, SuggestionAnswer> {
+  const valid: Record<string, SuggestionAnswer> = {};
+
+  for (const [description, answer] of Object.entries(answers)) {
+    if (typeof answer !== 'object' || answer === null) continue;
+    const { type, subtype } = answer as { type?: unknown; subtype?: unknown };
+    if (typeof type !== 'string') continue;
+
+    const category = categories.find(c => c.name === type);
+    if (!category) continue;
+
+    if (typeof subtype === 'string' && category.subtypes.includes(subtype)) {
+      valid[description] = { type, subtype };
+    } else {
+      valid[description] = { type };
+    }
+  }
+
+  return valid;
+}

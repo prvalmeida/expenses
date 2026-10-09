@@ -52,6 +52,19 @@ const PluggyTransactionSchema = new mongoose.Schema(
     ignoreOverridden: { type: Boolean, required: true, default: false },
     suggestedType: { type: String, required: false },
     suggestedSubtype: { type: String, required: false },
+    // Where the current suggestion came from: 'history' (the latest
+    // already-classified Expense/Income with the same description) or 'ai'
+    // (the batched GPT call). A BillMapping-hit suggestion never lands on a
+    // pending row with this set — a valid mapping auto-imports the row, and
+    // an orphaned one is invalid, so the review screen uses this to decide
+    // that confirming the suggestion as-is should upsert the mapping (the
+    // flywheel the receipt import has via ProductMapping).
+    suggestedBy: { type: String, enum: ['history', 'ai'], required: false },
+    // Set when the row's description went to the model and came back with no
+    // usable answer. Without it every sync (cron every 6h) would resend the
+    // same unclassifiable merchants to GPT forever; the row stays eligible
+    // for the history lookup, which is free.
+    suggestionAttemptedAt: { type: Date, required: false },
     importedExpenseIds: { type: [String], required: false },
     importedIncomeId: { type: String, required: false },
     firstSeenAt: { type: Date, required: true },

@@ -170,10 +170,17 @@ só o contrato de rede.
 - `POST /api/v1/pluggy/sync?dryRun=&accountId=` — **o alvo do cron** (Easypanel, a cada 6h). Sem
   `accountId`, sincroniza toda conta habilitada; com ele, sincroniza só aquela. Nunca força um
   refresh na Pluggy — isso é reservado ao botão manual da tela de configuração (rota interna, fora
-  de `/api/v1`). Fora de `dryRun`, roda o auto-import (a correspondência com `BillMapping`) logo em
-  seguida: esta rota é o único disparo automático de todo o pipeline, então preencher o staging sem
-  também drenar as linhas já mapeadas deixaria todo comerciante conhecido esperando um humano para
-  sempre. `dryRun=true` só relata contagens e não escreve nada — nem no staging, nem gastos/receitas.
+  de `/api/v1`). Fora de `dryRun`, roda o auto-import (a correspondência com `BillMapping`) e em
+  seguida a **passada de sugestão** logo depois: cada linha `pending` sem sugestão válida ganha uma
+  do histórico (a última despesa/receita já classificada com a mesma descrição) e, para o resto,
+  de uma chamada em lote ao gpt-4o-mini com as categorias vivas — a mesma inteligência da
+  importação de nota, alimentando os selects da tela de revisão em vez de importar por conta
+  própria; confirmar a sugestão na tela salva o `BillMapping` e a próxima ocorrência do
+  comerciante auto-importa. A passada falha em silêncio operacional: uma falha do GPT por
+  chunk é logada e pulada (as descrições daquele chunk ficam para a próxima rodada, o
+  histórico e os demais chunks ainda são gravados); só uma falha não-GPT (ex.: erro de escrita
+  no banco) faz o sync responder sem a chave `suggestions`. `dryRun=true` só relata contagens e
+  não escreve nada — nem no staging, nem gastos/receitas.
 - `GET /api/v1/pluggy/transactions?status=&accountId=&cursor=&limit=` — linhas em staging, paginado
   por cursor como `/expenses`. `status` é um de `pending`, `imported`, `ignored`,
   `skipped_existing`, `anomaly`.

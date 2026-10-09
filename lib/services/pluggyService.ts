@@ -1,11 +1,13 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
+import Income from '../models/Income';
 import { createIncome } from './incomeService';
 import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
 import { BillMapping } from '../models/BillMapping';
+import getOpenAI from '../openai';
 import {
   createConnectToken,
   drainCursor,
@@ -25,9 +27,17 @@ import {
   toIsoDate as narrowIsoDate,
   computeSyncWindow,
   PluggyAccountLike,
+  suggestionBatch,
+  validSuggestionAnswers,
+  SuggestionSource,
 } from '../utils/pluggyUtils';
 import { billMappingKey } from '../utils/billUtils';
-import { validateExpensePair, validateIncomeType } from '../utils/categoryUtils';
+import {
+  getExpenseCategories,
+  getIncomeCategories,
+  validateExpensePair,
+  validateIncomeType,
+} from '../utils/categoryUtils';
 import { buildExpenseDocuments, ExpenseDocument } from './expenseService';
 import { ApiError } from '../api/respond';
 
@@ -665,6 +675,10 @@ export interface RunPluggySyncInput {
 export interface RunPluggySyncResult {
   sync: SyncAllResult | SyncAccountResult;
   autoImport?: AutoImportResult;
+  // Present unless dryRun, and null-shaped (absent) when the pass itself
+  // failed — a failed GPT call must not read as a failed sync; fetch and
+  // auto-import already succeeded by then.
+  suggestions?: SuggestStagedResult;
 }
 
 // The single entry point both sync routes call. Acquires the advisory lock
@@ -687,8 +701,22 @@ export async function runPluggySync({
 
     const sync = accountId ? await syncAccount(accountId, { dryRun }) : await syncAllAccounts({ dryRun });
     const autoImport = dryRun ? undefined : await autoImportStaged();
+    const suggestions = dryRun ? undefined : await suggestStagedCategories().catch(error => {
+      // The suggestion pass is an enhancement layered on a completed sync:
+      // fetch and auto-import already succeeded, and a failing GPT call or a
+      // malformed model answer must not turn a healthy run into an error the
+      // review screen renders as a failed sync. Log it server-side — the
+      // same rule syncAllAccounts applies to a per-account failure — and
+      // let the counts report what actually happened.
+      console.error(`[pluggy] passada de sugestão falhou: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
 
-    return { sync, ...(autoImport && { autoImport }) };
+    return {
+      sync,
+      ...(autoImport && { autoImport }),
+      ...(suggestions && { suggestions }),
+    };
   });
 }
 
@@ -869,6 +897,327 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
 
   await autoImportExpenses(result);
   await autoImportIncomes(result);
+
+  return result;
+}
+
+// --- the suggestion pass: the receipt import's intelligence, for staging ---
+
+export interface SuggestStagedResult {
+  expensesSuggested: number;
+  incomesSuggested: number;
+  historyHits: number;
+  aiCalls: number;
+  aiAnswers: number;
+  unclassified: number;
+}
+
+interface PendingSuggestionRow {
+  _id: unknown;
+  pluggyId: string;
+  direction: 'outflow' | 'inflow';
+  description: string;
+  suggestedType?: string;
+  suggestedSubtype?: string;
+  suggestionAttemptedAt?: Date;
+}
+
+// One GPT call per (direction, chunk) classifying the descriptions the
+// history lookup missed, mirroring the receipt import's gpt-4o-mini call
+// (the same model the app already ships, the same json_object response
+// format). Chunked rather than one call per direction: a first sync after
+// enabling an account can stage months of distinct merchants, and one
+// request listing hundreds of them is a timeout and a truncated answer.
+// The category list is read inside the function: it is a runtime database
+// question, and freezing it anywhere else would store stale suggestions.
+async function classifyWithModel(
+  descriptions: string[],
+  categories: { name: string; subtypes: string[] }[],
+  direction: 'expense' | 'income'
+): Promise<Record<string, unknown>> {
+  const categoryList = categories
+    .map(c => (c.subtypes.length > 0 ? `${c.name} (${c.subtypes.join(', ')})` : c.name))
+    .join('; ');
+  const subtypesGuidance =
+    direction === 'expense'
+      ? 'Gastos têm subcategorias: informe "subtype" quando conseguir escolher uma; se não conseguir, omita "subtype".'
+      : 'Receitas não têm subcategoria: nunca informe "subtype" em uma receita.';
+
+  const completion = await getOpenAI().chat.completions.create({
+    model: 'gpt-4o-mini',
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: `Você classifica transações bancárias brasileiras para um app de finanças pessoais.
+Retorne APENAS um JSON: { "DESCRIÇÃO": { "type": "categoria", "subtype": "subcategoria" } }, com um objeto para cada descrição enviada.
+
+As categorias${direction === 'expense' ? ' e subcategorias' : ''} válidas de ${direction === 'expense' ? 'gasto' : 'receita'} são EXATAMENTE estas:
+${categoryList}
+
+${subtypesGuidance}
+Se não conseguir classificar uma descrição com segurança, omita-a do objeto de resposta.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify(descriptions),
+      },
+    ],
+  });
+
+  return JSON.parse(completion.choices[0].message.content ?? '{}');
+}
+
+// How many descriptions go into one classifyWithModel call.
+const SUGGESTION_CHUNK_SIZE = 50;
+
+// Case/accent-insensitive folding for matching the model's echoed keys — the
+// same fold categoryUtils uses to resolve caller-supplied names. The model is
+// asked to return each description as a JSON key, and LLMs routinely "clean
+// up" what they echo (trim, lowercase, drop an accent); matching folded keys
+// recovers those answers while still only ever trusting a key that folds to a
+// description we actually sent.
+const foldDescription = (s: string) =>
+  s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
+async function classifyAllWithModel(
+  descriptions: string[],
+  categories: { name: string; subtypes: string[] }[],
+  direction: 'expense' | 'income'
+): Promise<{ answers: Record<string, unknown>; calls: number; attempted: Set<string> }> {
+  const answers: Record<string, unknown> = {};
+  const attempted = new Set<string>();
+  let calls = 0;
+
+  for (let i = 0; i < descriptions.length; i += SUGGESTION_CHUNK_SIZE) {
+    const chunk = descriptions.slice(i, i + SUGGESTION_CHUNK_SIZE);
+    let raw: Record<string, unknown>;
+    try {
+      raw = await classifyWithModel(chunk, categories, direction);
+    } catch (error) {
+      // One chunk failing (timeout, malformed JSON, empty choices) must not
+      // sink the rest of the pass — nor the other direction, nor the history
+      // suggestions the caller writes alongside. Its descriptions stay
+      // unattempted, so the next sync retries them instead of permanently
+      // marking an unclassifiable merchant the model never actually saw.
+      console.error(
+        `[pluggy] chunk de sugestão (${direction}) falhou: ${error instanceof Error ? error.message : String(error)}`
+      );
+      continue;
+    }
+    calls++;
+    for (const description of chunk) attempted.add(description);
+    // A model answer keyed by something other than one of the descriptions
+    // sent is dropped here rather than trusted — validSuggestionAnswers
+    // filters the values, but the keys are trusted only because they fold to
+    // a description we actually staged.
+    const byFolded = new Map(chunk.map(d => [foldDescription(d), d]));
+    for (const key of Object.keys(raw)) {
+      const original = byFolded.get(foldDescription(key));
+      if (original !== undefined) answers[original] = raw[key];
+    }
+  }
+
+  return { answers, calls, attempted };
+}
+
+// The suggestion pass, run by runPluggySync after autoImportStaged, inside
+// the same advisory-lock hold: every pending row still lacking a valid
+// suggestion gets one, history first (the latest already-classified
+// Expense/Income with the same description), then one batched GPT call per
+// direction for what history missed — the same ladder the receipt import
+// runs (ProductMapping → GPT), minus the receipt's store/product scoping,
+// which bank descriptions do not have.
+//
+// A stored suggestion is a prefill for the review screen, nothing more: it
+// never imports anything by itself, and importStaged re-validates the
+// confirmed pair against the live Category list at import time. Only rows
+// with no suggestion at all are touched (see below), so re-running it on
+// every sync is idempotent.
+export async function suggestStagedCategories(): Promise<SuggestStagedResult> {
+  await connectToDatabase();
+
+  const result: SuggestStagedResult = {
+    expensesSuggested: 0,
+    incomesSuggested: 0,
+    historyHits: 0,
+    aiCalls: 0,
+    aiAnswers: 0,
+    unclassified: 0,
+  };
+
+  const [expenseCategories, incomeCategories] = await Promise.all([
+    getExpenseCategories(),
+    getIncomeCategories(),
+  ]);
+
+  const rows = await PluggyTransaction.find(
+    { status: 'pending' },
+    'pluggyId direction description suggestedType suggestedSubtype suggestionAttemptedAt'
+  ).lean<PendingSuggestionRow[]>();
+
+  // Only rows with NO suggestion at all are eligible. A row that already
+  // carries one — a prior pass's answer that is still valid, or the
+  // orphaned-pair hint autoImportStaged writes when a BillMapping points at
+  // a renamed-away category — keeps it: overwriting the hint would hide
+  // what the mapping said, which is the exact context the review screen
+  // shows so the human can fix the mapping itself on confirm (see the
+  // Bruno "dead category stays unimported" request). The suggestion-pair
+  // validity question is left to the confirm gate, which re-validates
+  // against the live Category list — the same place importStaged checks it.
+  const needsSuggestion = rows.filter(row => row.suggestedType == null);
+
+  if (needsSuggestion.length === 0) return result;
+
+  const { expenses: expenseDescriptions, incomes: incomeDescriptions } =
+    suggestionBatch(needsSuggestion);
+
+  // --- history: the latest already-classified record with the same description
+  // History goes through validSuggestionAnswers like the model's answers: a
+  // past expense can carry a subtype that was since renamed away (the
+  // cascade fixes it, but `force` deletes leave orphans), and storing that
+  // pair would prefill a select the confirm gate then blanks.
+  //
+  // One query per direction, not one per description: `name` is unindexed,
+  // so N sequential findOne calls would be N collection scans inside the
+  // sync lock. Sorted newest first, the first document seen per name wins.
+  const latestByName = (docs: { name: string; type: string; subtype?: string }[]) => {
+    const latest: Record<string, unknown> = {};
+    for (const doc of docs) {
+      if (!(doc.name in latest)) latest[doc.name] = { type: doc.type, subtype: doc.subtype };
+    }
+    return latest;
+  };
+
+  const expenseDocs = expenseDescriptions.length
+    ? await Expense.find(
+        { name: { $in: expenseDescriptions }, type: { $in: expenseCategories.map(c => c.name) } },
+        'name type subtype'
+      )
+        .sort({ date: -1, _id: -1 })
+        .lean<{ name: string; type: string; subtype?: string }[]>()
+    : [];
+  const expenseHistory = new Map(
+    Object.entries(validSuggestionAnswers(latestByName(expenseDocs), expenseCategories))
+  );
+
+  const incomeDocs = incomeDescriptions.length
+    ? await Income.find(
+        { name: { $in: incomeDescriptions }, type: { $in: incomeCategories.map(c => c.name) } },
+        'name type'
+      )
+        .sort({ date: -1, _id: -1 })
+        .lean<{ name: string; type: string }[]>()
+    : [];
+  const incomeHistory = new Map(
+    Object.entries(validSuggestionAnswers(latestByName(incomeDocs), incomeCategories))
+  );
+
+  result.historyHits = expenseHistory.size + incomeHistory.size;
+
+  // --- AI: batched calls per direction, only for what history missed and
+  // the model has not already failed on (suggestionAttemptedAt). A
+  // description is sent when at least one of its rows is still unattempted.
+  const unattempted = (direction: 'outflow' | 'inflow') =>
+    new Set(
+      needsSuggestion
+        .filter(row => row.direction === direction && row.suggestionAttemptedAt == null)
+        .map(row => row.description)
+    );
+  const unattemptedExpenses = unattempted('outflow');
+  const unattemptedIncomes = unattempted('inflow');
+  const aiExpenseDescriptions = expenseDescriptions.filter(
+    d => !expenseHistory.has(d) && unattemptedExpenses.has(d)
+  );
+  const aiIncomeDescriptions = incomeDescriptions.filter(
+    d => !incomeHistory.has(d) && unattemptedIncomes.has(d)
+  );
+
+  const expenseClassification =
+    aiExpenseDescriptions.length > 0
+      ? await classifyAllWithModel(aiExpenseDescriptions, expenseCategories, 'expense')
+      : { answers: {} as Record<string, unknown>, calls: 0, attempted: new Set<string>() };
+  const incomeClassification =
+    aiIncomeDescriptions.length > 0
+      ? await classifyAllWithModel(aiIncomeDescriptions, incomeCategories, 'income')
+      : { answers: {} as Record<string, unknown>, calls: 0, attempted: new Set<string>() };
+
+  const aiExpenses = validSuggestionAnswers(expenseClassification.answers, expenseCategories);
+  const aiIncomes = validSuggestionAnswers(incomeClassification.answers, incomeCategories);
+
+  result.aiCalls = expenseClassification.calls + incomeClassification.calls;
+  result.aiAnswers = Object.keys(aiExpenses).length + Object.keys(aiIncomes).length;
+  // Descriptions the model actually saw but answered with nothing usable —
+  // omitted as uncertain, or naming a category that does not exist. Counted
+  // from `attempted` (not the full send list) so a failed chunk, whose rows
+  // were never really classified, is not reported as "unclassifiable".
+  result.unclassified =
+    expenseClassification.attempted.size +
+    incomeClassification.attempted.size -
+    result.aiAnswers;
+
+  // --- write: history beats AI per description, onto the rows still lacking one
+  // Typed from the model's own bulkWrite signature rather than an imported
+  // generic — the raw schema doc shape it needs is inferred, not nameable.
+  const bulkOps: Parameters<typeof PluggyTransaction.bulkWrite>[0] = [];
+  const attemptedAt = new Date();
+  const markAttempted = (row: PendingSuggestionRow) =>
+    bulkOps.push({
+      updateOne: {
+        filter: { _id: row._id, status: 'pending' },
+        update: { $set: { suggestionAttemptedAt: attemptedAt } },
+      },
+    });
+  for (const row of needsSuggestion) {
+    if (row.direction === 'outflow') {
+      const historyAnswer = expenseHistory.get(row.description);
+      const aiAnswer = aiExpenses[row.description];
+      const answer = historyAnswer ?? aiAnswer;
+      if (!answer) {
+        if (expenseClassification.attempted.has(row.description)) markAttempted(row);
+        continue;
+      }
+      const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: row._id, status: 'pending' },
+          update: {
+            $set: {
+              suggestedType: answer.type,
+              ...(answer.subtype !== undefined && { suggestedSubtype: answer.subtype }),
+              suggestedBy: by,
+            },
+          },
+        },
+      });
+      result.expensesSuggested++;
+    } else {
+      const historyAnswer = incomeHistory.get(row.description);
+      const aiAnswer = aiIncomes[row.description];
+      const answer = historyAnswer ?? aiAnswer;
+      if (!answer) {
+        if (incomeClassification.attempted.has(row.description)) markAttempted(row);
+        continue;
+      }
+      const by: SuggestionSource = historyAnswer ? 'history' : 'ai';
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: row._id, status: 'pending' },
+          update: {
+            $set: {
+              suggestedType: answer.type,
+              suggestedBy: by,
+            },
+          },
+        },
+      });
+      result.incomesSuggested++;
+    }
+  }
+
+  if (bulkOps.length > 0) {
+    await PluggyTransaction.bulkWrite(bulkOps);
+  }
 
   return result;
 }

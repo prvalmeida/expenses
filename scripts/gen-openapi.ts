@@ -266,7 +266,7 @@ const document = {
           'da rota interna). Fora de `dryRun`, roda o auto-import logo em seguida — esta rota ' +
           'é o único disparo automático de todo o pipeline.',
         parameters: toParameters(syncPluggyQuerySchema),
-        responses: responses('200', '{ sync, autoImport? } ou { locked: true }', ['UPSTREAM_FAILED']),
+        responses: responses('200', '{ sync, autoImport?, suggestions? } ou { locked: true }', ['UPSTREAM_FAILED']),
       },
     },
     '/pluggy/items': {
