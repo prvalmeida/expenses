@@ -1,253 +1,140 @@
 'use client';
 
-import { Expense, Income } from "@/types";
-import { useCategories } from "@/hooks/useCategories";
-
-const VOUCHER_PAYMENT_TYPES = ['food-voucher', 'meal-voucher', 'fuel-voucher'];
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from 'next/link';
+import { useMemo } from 'react';
+import { ChevronRight, Plus, Receipt, TriangleAlert } from 'lucide-react';
+import { useCategories } from '@/hooks/useCategories';
+import { useTransactions } from '@/hooks/useTransactions';
+import { useReviewCount } from '@/components/shell/reviewCount';
+import { ICON_STROKE } from '@/components/shell/nav';
+import { ButtonLink, FOCUS_RING } from '@/components/ui/Button';
+import { Card, Chip, EmptyState, Notice, ProgressBar, SummaryCard } from '@/components/ui/display';
+import { MonthSwitcher } from '@/components/ui/controls';
+import { formatBRL, isVoucher } from '@/lib/utils/money';
+import { isInMonth, monthName } from '@/lib/utils/monthUtils';
+import { transactionsHref } from '@/lib/utils/routeParams';
 
 type Props = {
-  onOpenDetails: (month: string, viewMode: 'purchase' | 'payment') => void;
+  month: string;
+  onMonthChange: (month: string) => void;
 };
 
-export default function DashBoard({ onOpenDetails }: Props) {
+// Início: one simple view of the month by purchase date. The cash-flow view, the
+// month comparison and every individual record live in Lançamentos.
+export default function Dashboard({ month, onMonthChange }: Props) {
   const { isValidType } = useCategories();
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
-  const [allIncomes, setAllIncomes] = useState<Income[]>([]);
+  const { expenses, incomes, status } = useTransactions();
+  const reviewCount = useReviewCount();
 
-  // Toggle: 'purchase' (Data da Compra) vs 'payment' (Fluxo de Caixa)
-  const [viewMode, setViewMode] = useState<'purchase' | 'payment'>('purchase');
+  const monthExpenses = useMemo(() => expenses.filter(e => isInMonth(e.date, month)), [expenses, month]);
 
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
+  // The headline total leaves vouchers out (not the household's money); the category
+  // breakdown keeps them, so it still shows where food and fuel went.
+  const { total, voucherTotal } = useMemo(() => {
+    let t = 0;
+    let v = 0;
+    for (const e of monthExpenses) {
+      if (isVoucher(e.paymentType)) v += e.value;
+      else t += e.value;
+    }
+    return { total: t, voucherTotal: v };
+  }, [monthExpenses]);
 
-  const isInMonth = useCallback((dateStr: string) => {
-    if (!dateStr) return false;
-    const [year, month] = selectedMonth.split('-').map(Number);
-    const d = new Date(`${dateStr}T12:00:00Z`);
-    return d.getUTCMonth() === month - 1 && d.getUTCFullYear() === year;
-  }, [selectedMonth]);
-
-  // Expenses of the month under the current view mode (purchase vs payment date)
-  const monthExpenses = useMemo(
-    () => allExpenses.filter(e => isInMonth(viewMode === 'payment' ? e.effectiveDate : e.date)),
-    [allExpenses, viewMode, isInMonth]
-  );
-
-  // Total excludes voucher payment types
-  const totalThisMonth = useMemo(
-    () => monthExpenses
-      .filter(exp => !VOUCHER_PAYMENT_TYPES.includes(exp.paymentType ?? ''))
-      .reduce((sum, exp) => sum + exp.value, 0),
-    [monthExpenses]
-  );
-
-  // Category summary: ALWAYS by purchase date (date), INCLUDES vouchers
-  const summaryByCategory = useMemo(() => {
+  const byCategory = useMemo(() => {
     const map = new Map<string, number>();
-    for (const e of allExpenses) {
-      if (!isInMonth(e.date)) continue;
-      map.set(e.type, (map.get(e.type) ?? 0) + e.value);
-    }
-    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
-  }, [allExpenses, isInMonth]);
+    for (const e of monthExpenses) map.set(e.type, (map.get(e.type) ?? 0) + e.value);
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }, [monthExpenses]);
 
-  const summaryTotal = useMemo(
-    () => summaryByCategory.reduce((sum, [, v]) => sum + v, 0),
-    [summaryByCategory]
+  const incomeTotal = useMemo(
+    () => incomes.filter(i => isInMonth(i.date, month)).reduce((sum, i) => sum + i.value, 0),
+    [incomes, month]
   );
 
-  const monthIncomes = useMemo(
-    () => allIncomes
-      .filter(income => isInMonth(income.date))
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-    [allIncomes, isInMonth]
-  );
-
-  const totalIncomeThisMonth = useMemo(
-    () => monthIncomes.reduce((sum, inc) => sum + inc.value, 0),
-    [monthIncomes]
-  );
-
-  const onIncomeDeleted = (id: string) => {
-    setAllIncomes(prev => prev.filter(inc => inc._id !== id));
-  };
-
-  const handleDeleteIncome = async (id: string) => {
-    if (!confirm("Excluir esta receita?")) return;
-
-    const res = await fetch(`/api/income/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      onIncomeDeleted(id);
-    }
-  };
-
-  useEffect(() => {
-    const fetchData = async () => {
-      const response = await fetch('/api/expenses');
-      if (response.ok) {
-        const data: Expense[] = await response.json();
-        setAllExpenses(data);
-      }
-
-      const incomeResponse = await fetch('/api/income');
-      if (incomeResponse.ok) {
-        const incomeData: Income[] = await incomeResponse.json();
-        setAllIncomes(incomeData);
-      }
-    };
-    fetchData();
-  }, []);
+  const largest = byCategory[0]?.[1] ?? 0;
+  const count = monthExpenses.length;
+  const note = [
+    `${count} ${count === 1 ? 'lançamento' : 'lançamentos'}`,
+    voucherTotal > 0 ? `${formatBRL(voucherTotal)} em vales fora do total` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
-    <div className="space-y-6">
-      {/* Header + Switcher de Visualização */}
-      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
-        <h1 className="text-2xl font-bold">Dashboard de Gastos</h1>
-
-        <div className="flex bg-gray-200 p-1 rounded-lg self-start">
-          <button
-            onClick={() => setViewMode('purchase')}
-            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-              viewMode === 'purchase' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600'
-            }`}
-          >
-            DATA DA COMPRA
-          </button>
-          <button
-            onClick={() => setViewMode('payment')}
-            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-              viewMode === 'payment' ? 'bg-white shadow-sm text-green-600' : 'text-gray-600'
-            }`}
-          >
-            FLUXO DE CAIXA
-          </button>
-        </div>
+    <div className="mx-auto flex max-w-[960px] flex-col gap-4">
+      <div className="flex justify-center sm:justify-start">
+        <MonthSwitcher month={month} onChange={onMonthChange} />
       </div>
 
-      {/* Month picker (above totals) */}
-      <div className="w-full sm:w-48">
-        <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Mês de Referência</label>
-        <input
-          type="month"
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          className="w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+      {reviewCount > 0 && (
+        <Notice
+          tone="warning"
+          href="/review"
+          title={`${reviewCount > 99 ? '99+' : reviewCount} ${reviewCount === 1 ? 'transação do banco' : 'transações do banco'} a revisar`}
         />
-      </div>
+      )}
 
-      {/* Totals side by side (compact) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border-l-4 shadow-sm bg-white ${viewMode === 'purchase' ? 'border-blue-500' : 'border-green-500'}`}>
-          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-            {viewMode === 'purchase' ? 'Gastos' : 'A Pagar'}
-          </p>
-          <p className="text-lg sm:text-xl font-black mt-1 text-gray-900">
-            R$ {totalThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-          </p>
+      {status === 'error' && (
+        <Notice tone="error" title="Não foi possível carregar os lançamentos">
+          Verifique a conexão e recarregue a página.
+        </Notice>
+      )}
+
+      {status === 'loading' && (
+        <div className="grid gap-3 sm:grid-cols-2" aria-busy="true" aria-label="Carregando">
+          <div className="h-[118px] animate-pulse rounded-card bg-surface-2" />
+          <div className="h-[118px] animate-pulse rounded-card bg-surface-2" />
+          <div className="h-48 animate-pulse rounded-card bg-surface-2 sm:col-span-2" />
         </div>
+      )}
 
-        <div className="p-4 rounded-xl border-l-4 border-purple-500 shadow-sm bg-white">
-          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Receitas</p>
-          <p className="text-lg sm:text-xl font-black mt-1 text-gray-900">
-            R$ {totalIncomeThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-          </p>
-        </div>
-
-        {viewMode === 'payment' && (
-          <div className="p-4 rounded-xl border-l-4 border-yellow-500 shadow-sm bg-white">
-            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Poupança</p>
-            <p className={`text-lg sm:text-xl font-black mt-1 ${totalIncomeThisMonth - totalThisMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              R$ {(totalIncomeThisMonth - totalThisMonth).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
+      {status === 'ready' && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SummaryCard label={`Gastos em ${monthName(month)}`} amount={total} size="xl" note={note} />
+            <SummaryCard label="Receitas" amount={incomeTotal} sign />
           </div>
-        )}
-      </div>
 
-      {/* Two columns: category summary (left) + incomes (right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Resumo por Categoria */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Resumo por Categoria</h2>
-              <p className="text-[10px] text-gray-400 italic">* Por data da compra.</p>
-            </div>
-            <button
-              onClick={() => onOpenDetails(selectedMonth, viewMode)}
-              className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
-              title="Ver detalhes"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-          <ul className="divide-y divide-gray-100">
-            {summaryByCategory.map(([type, value]) => (
-              <li key={type} className="flex items-center justify-between px-5 py-2.5">
-                <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${isValidType(type) ? 'text-blue-700 bg-blue-50' : 'text-amber-800 bg-amber-100'}`}>
-                  {!isValidType(type) && <span title="Categoria inexistente — edite os gastos para corrigir">⚠ </span>}
-                  {type}
-                </span>
-                <span className="text-sm font-black text-gray-900">
-                  R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </li>
-            ))}
-            {summaryByCategory.length > 0 && (
-              <li className="flex items-center justify-between px-5 py-2.5 bg-gray-50">
-                <span className="text-xs font-black text-gray-700 uppercase">Total</span>
-                <span className="text-sm font-black text-gray-900">
-                  R$ {summaryTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </li>
+          <Card
+            flush
+            title="Por categoria"
+            action={byCategory.length > 0 && (
+              <ButtonLink variant="ghost" size="sm" href={transactionsHref(month, 'purchase')}>Ver lançamentos</ButtonLink>
             )}
-          </ul>
-          {summaryByCategory.length === 0 && (
-            <div className="p-10 text-center text-gray-400 text-sm">Nenhum gasto encontrado.</div>
-          )}
-        </div>
-
-        {/* Receitas */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-200">
-            <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Receitas</h2>
-            <p className="text-[10px] text-gray-400 italic">* Recebidas no mês.</p>
-          </div>
-          <ul className="divide-y divide-gray-100">
-            {monthIncomes.map((income) => (
-              <li key={income._id} className="flex items-center justify-between px-5 py-2.5 gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm text-gray-900 font-semibold truncate">{income.name}</p>
-                  <p className="text-[10px] text-gray-400 uppercase font-bold">
-                    {new Date(`${income.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })} · {income.type}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm font-black text-gray-900">
-                    R$ {income.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <button
-                    onClick={() => income._id && handleDeleteIncome(income._id)}
-                    className="text-red-400 hover:text-red-600 transition-colors p-1 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
-                    title="Excluir receita"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {monthIncomes.length === 0 && (
-            <div className="p-10 text-center text-gray-400 text-sm">Nenhuma receita encontrada.</div>
-          )}
-        </div>
-      </div>
+          >
+            {byCategory.length === 0 ? (
+              <EmptyState
+                icon={Receipt}
+                title={`Nenhum gasto em ${monthName(month)}`}
+                action={<ButtonLink variant="secondary" icon={Plus} href="/new/expense">Novo gasto</ButtonLink>}
+              >
+                Lance um gasto ou importe uma fatura.
+              </EmptyState>
+            ) : (
+              <ul className="pb-2">
+                {byCategory.map(([type, value]) => (
+                  <li key={type}>
+                    <Link
+                      href={transactionsHref(month, 'purchase', type)}
+                      className={`flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2 sm:px-5 ${FOCUS_RING} focus-visible:-outline-offset-2`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="truncate">{type}</span>
+                            {!isValidType(type) && <Chip tone="warning" icon={TriangleAlert}>Categoria removida</Chip>}
+                          </span>
+                          <span className="shrink-0 font-medium tabular-nums">{formatBRL(value)}</span>
+                        </div>
+                        <ProgressBar value={value} max={largest} label={type} />
+                      </div>
+                      <ChevronRight size={18} strokeWidth={ICON_STROKE} aria-hidden="true" className="shrink-0 text-ink-muted" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </>
+      )}
     </div>
   );
 }

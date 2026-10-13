@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   currentMonth,
+  homeHref,
+  parseCategoryParam,
   parseMonthParam,
   parseViewModeParam,
   transactionsHref,
@@ -35,6 +37,16 @@ test('transactionsHref round-trips through the parsers', () => {
   assert.equal(parseMonthParam(params.get('month') ?? undefined), '2026-03');
   assert.equal(parseViewModeParam(params.get('mode') ?? undefined), 'payment');
   assert.equal(transactionsHref('2026-03', 'purchase'), '/transactions?month=2026-03');
+});
+
+test('category round-trips, encoded, and blank means none', () => {
+  const href = transactionsHref('2026-10', 'purchase', 'Saúde & bem-estar');
+  const params = new URL(href, 'http://x').searchParams;
+  assert.equal(parseCategoryParam(params.get('category') ?? undefined), 'Saúde & bem-estar');
+  assert.equal(parseCategoryParam('  '), null);
+  assert.equal(parseCategoryParam(undefined), null);
+  assert.equal(transactionsHref('2026-10', 'purchase', null), '/transactions?month=2026-10');
+  assert.equal(homeHref('2026-10'), '/?month=2026-10');
 });
 
 test('currentMonth zero-pads the local month', () => {
