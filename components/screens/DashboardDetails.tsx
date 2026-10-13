@@ -2,7 +2,7 @@
 
 import { Expense } from "@/types";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import EditExpenseModal from "../components/EditExpenseModal";
+import EditExpenseModal from "@/components/EditExpenseModal";
 import { useCategories } from "@/hooks/useCategories";
 
 type Props = {

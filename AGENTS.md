@@ -34,7 +34,7 @@ reporting the real output.
 
 | Path | What lives there |
 |---|---|
-| `app/` | pages and API routes; `app/page.tsx` is a state-driven single-page shell (no router) |
+| `app/` | `app/(app)/` UI routes sharing one shell (`components/shell/`), `app/api/` API routes |
 | `app/api/*` | internal, unauthenticated API — what the UI calls |
 | `app/api/v1/*` | public, `API_KEY`-authenticated API for external callers |
 | `lib/api/` | boundary: `respond.ts`, `auth.ts`, `validate.ts`, `schemas/` (Zod) |
@@ -42,7 +42,7 @@ reporting the real output.
 | `lib/models/` | Mongoose schemas |
 | `lib/utils/` | domain helpers, each a single source of truth. `cycleUtils`, `dateUtils`, `pluggyUtils` and `billUtils` are pure; `categoryUtils` reads the DB (it calls `connectToDatabase()` itself) and `receiptUtils` calls GPT and upserts `Store` |
 | `lib/migrations/` | append-only, ordered data migrations |
-| `components/`, `hooks/` | shared React components and hooks |
+| `components/`, `hooks/` | `screens/` (one component per screen), `shell/` (app shell; `nav.ts` is the nav's single source), shared components and hooks |
 | `scripts/` | tsx CLI helpers (openapi generation, migrations, Telegram bridge, Pluggy sync) |
 | `tests/` | `node:test` unit tests |
 | `bruno/` | API test collection |

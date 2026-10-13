@@ -1,28 +1,91 @@
 @import "tailwindcss";
 
-/* This app is light-only: there is not a single `dark:` utility in the codebase,
-   and every surface is a hard-coded light colour (`bg-white`, `bg-gray-50`,
-   `bg-blue-50`). A `prefers-color-scheme: dark` override therefore only flipped
-   --foreground to a near-white, which repainted every element that *inherits*
-   its colour — the `Revisar Itens` heading, the `Voltar` button (Tailwind's
-   preflight sets `color: inherit` on button/input/select) and the import form's
-   fields — to light grey on a still-white background. Elements with an explicit
-   `text-gray-*` class were unaffected, which is why the damage looked arbitrary.
-   It reproduces on any device whose OS is set to dark mode — it surfaced on a
-   phone only because the desktop browser happened to be in light mode.
+/* Design tokens — the "Expenses" design system (Pedra direction). Names and values mirror
+   its tokens.json; change them there and here together.
 
-   `color-scheme: light` is the other half: without it the UA renders form
-   controls, scrollbars and autofill with dark-mode chrome on a dark-mode
-   device, independently of these variables. */
+   Light and dark values are both defined, but dark is NOT applied from
+   `prefers-color-scheme` yet: the screens under components/screens still paint hard-coded
+   light surfaces (`bg-white`, `bg-gray-50`), and flipping only the tokens would repeat the
+   light-grey-text-on-white bug described in CLAUDE.md ("Colour scheme"). Dark is opt-in via
+   `data-theme="dark"` on <html> until every screen uses tokens; then the block below moves
+   under `@media (prefers-color-scheme: dark)` and `color-scheme` becomes `light dark`. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --surface-0: #f6f4f0;
+  --surface-1: #ffffff;
+  --surface-2: #efece6;
+  --scrim: rgba(28, 26, 23, 0.45);
+  --ink: #1c1a17;
+  --ink-muted: #6b655c;
+  --ink-disabled: #a8a196;
+  --border: #e6e1d8;
+  --border-strong: #8f887d;
+  --accent: #2f6b4f;
+  --accent-hover: #255a41;
+  --on-accent: #ffffff;
+  --accent-soft: #e4efe8;
+  --negative: #a23b2a;
+  --negative-soft: #f7e6e1;
+  --warning: #80520c;
+  --warning-soft: #f6ecd9;
+  --shadow-overlay: 0 12px 32px rgba(28, 26, 23, 0.14), 0 2px 6px rgba(28, 26, 23, 0.08);
+
+  /* Legacy names still read by the body rule below. */
+  --background: var(--surface-0);
+  --foreground: var(--ink);
   color-scheme: light;
 }
 
+:root[data-theme="dark"] {
+  --surface-0: #151412;
+  --surface-1: #1e1c19;
+  --surface-2: #272420;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --ink: #ede9e2;
+  --ink-muted: #a39c90;
+  --ink-disabled: #5e584f;
+  --border: #2e2b27;
+  --border-strong: #6e675d;
+  --accent: #7cc79e;
+  --accent-hover: #93d4b0;
+  --on-accent: #13241a;
+  --accent-soft: #22342a;
+  --negative: #f0907e;
+  --negative-soft: #3a221d;
+  --warning: #e3b567;
+  --warning-soft: #3a2e1a;
+  --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px #2e2b27;
+  color-scheme: dark;
+}
+
+/* Utilities: bg-surface-1, text-ink, border-border, bg-accent, text-on-accent, … The radius
+   names are namespaced (rounded-chip/control/card) instead of overriding Tailwind's
+   rounded-sm/md/lg, which the not-yet-migrated screens still use with their old values. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-scrim: var(--scrim);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-disabled: var(--ink-disabled);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--accent);
+  --color-negative: var(--negative);
+  --color-negative-soft: var(--negative-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-focus: var(--accent);
+  --radius-chip: 6px;
+  --radius-control: 10px;
+  --radius-card: 16px;
+  --shadow-overlay: var(--shadow-overlay);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
