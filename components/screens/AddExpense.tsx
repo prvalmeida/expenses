@@ -3,6 +3,13 @@
 import { useState } from 'react';
 import ExpenseTypeSelect from '@/components/ExpenseTypeSelect';
 import { CardBrand, ExpenseForm } from '@/types';
+import { Button } from '@/components/ui/Button';
+import { Card, Notice } from '@/components/ui/display';
+import { Select, TextField } from '@/components/ui/controls';
+import { PAYMENT_OPTIONS } from '@/lib/utils/money';
+import { todayLocal } from '@/lib/utils/monthUtils';
+
+const CARD_OPTIONS = Object.values(CardBrand).map(v => ({ value: v, label: v }));
 
 export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => void }) {
   const [expense, setExpense] = useState<ExpenseForm>({
@@ -12,9 +19,11 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
     subtype: '',
     paymentType: '',
     cardBrand: undefined,
-    date: '',
+    date: todayLocal(),
     installments: 1
   });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -55,7 +64,7 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (expense.paymentType === 'credit' && !expense.cardBrand) {
-      alert("Favor passar as informações do cartão");
+      setError('Escolha o cartão usado na compra.');
       return;
     }
 
@@ -78,6 +87,8 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
       }),
     };
 
+    setSaving(true);
+    setError(null);
     try {
       const res = await fetch('/api/expenses', {
         method: 'POST',
@@ -86,144 +97,88 @@ export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => v
       });
 
       if (res.ok) {
-        setExpense({
-          name: '',
-          value: 0,
-          type: '',
-          paymentType: '',
-          cardBrand: undefined,
-          date: '',
-          installments: 1
-        });
         onExpenseAdded();
       } else {
-        const { error } = await res.json();
-        console.error('Failed to create expense:', error);
-        alert(`Erro ao salvar o gasto. ${error ?? ''}`);
+        const { error: message } = await res.json().catch(() => ({ error: null }));
+        console.error('Failed to create expense:', message);
+        setError(`Não foi possível salvar o gasto.${message ? ` ${message}` : ''}`);
       }
-    } catch (error) {
-      console.error("Network error:", error);
+    } catch (err) {
+      console.error('Network error:', err);
+      setError('Sem conexão com o servidor. Tente de novo.');
+    } finally {
+      setSaving(false);
     }
   };
 
-  return (
-    <div className="max-w-md mx-auto p-4 border rounded-lg shadow-md">
-      <h2 className="text-xl font-bold mb-4">Novo Gasto</h2>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="name" className="block text-sm font-medium mb-1">Nome</label>
-          <input
-            type="text"
-            id="name"
-            name="name"
-            value={expense.name}
-            onChange={handleChange}
-            className="w-full p-2 border rounded"
-            required
-          />
-        </div>
-        <div>
-          <label htmlFor="value" className="block text-sm font-medium mb-1">
-            Valor
-          </label>
-          <div className="relative">
-            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-              <span className="text-gray-500">R$</span>
-            </div>
+  const isCredit = expense.paymentType === 'credit';
 
-            <input
+  return (
+    <div className="mx-auto flex max-w-[560px] flex-col gap-4">
+      <h1 className="text-[22px] font-semibold leading-7 tracking-[-0.01em]">Novo gasto</h1>
+      <Card>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {error && <Notice tone="error" title={error} />}
+          <TextField label="Descrição" name="name" value={expense.name} onChange={handleChange} placeholder="Padaria Barcelos" required />
+          <div className={`grid gap-4 ${isCredit ? 'grid-cols-2' : ''}`}>
+            <TextField
+              label={isCredit ? 'Valor total' : 'Valor'}
+              prefix="R$"
               type="number"
-              id="value"
+              inputMode="decimal"
               name="value"
               value={expense.value}
               onChange={handleChange}
-              className="w-full p-2 pl-10 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
               min="0"
               step="0.01"
               required
             />
+            {isCredit && (
+              <TextField
+                label="Parcelas"
+                type="number"
+                inputMode="numeric"
+                name="installments"
+                value={expense.installments ?? ''}
+                onChange={handleChange}
+                min="1"
+                required
+              />
+            )}
           </div>
-        </div>
-        <div>
-          <label htmlFor="type" className="block text-sm font-medium mb-1">Tipo</label>
-          <ExpenseTypeSelect
-            expense={expense}
-            onChange={handleChange}
-          />
-        </div>
-        <div>
-          <label htmlFor="paymentType" className="block text-sm font-medium mb-1">Tipo de Pagamento</label>
-          <select
-            id="paymentType"
+          <ExpenseTypeSelect expense={expense} onChange={handleChange} />
+          <Select
+            label="Forma de pagamento"
             name="paymentType"
             value={expense.paymentType}
             onChange={handleChange}
-            className="w-full p-2 border rounded"
             required
-          >
-            <option value="">Selecione o tipo de pagamento</option>
-            <option value="credit">Crédito</option>
-            <option value="debit">Débito</option>
-            <option value="pix">PIX</option>
-            <option value="cash">Dinheiro</option>
-            <option value="food-voucher">Vale Alimentação</option>
-            <option value="meal-voucher">Vale Refeição</option>
-            <option value="fuel-voucher">Vale Combustível</option>
-          </select>
-        </div>
-        {expense.paymentType === "credit" ? 
-          (
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="installments" className="block text-sm font-medium mb-1">Número de Parcelas</label>
-                <input
-                  type="number"
-                  id="installments"
-                  name="installments"
-                  value={expense.installments ?? ''}
-                  onChange={handleChange}
-                  className="w-full p-2 border rounded"
-                  min="1"
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="cardBrand" className="block text-sm font-medium mb-1">Cartão Utilizado</label>
-                <select
-                  id="cardBrand"
-                  name="cardBrand"
-                  value={expense.cardBrand}
-                  onChange={handleChange}
-                  className="w-full p-2 border rounded"
-                  required
-                >
-                  <option value="">Selecione o cartão utilizado</option>
-                  {Object.entries(CardBrand).map(([key, value]) => (
-                    <option key={key} value={value}>
-                      {value}
-                    </option>
-                  ))}                
-                </select>
-              </div>
-            </div>
-          ) : null
-        }
-        <div>
-          <label htmlFor="date" className="block text-sm font-medium mb-1">Data</label>
-          <input
+            placeholder="Escolha a forma de pagamento"
+            options={PAYMENT_OPTIONS}
+          />
+          {isCredit && (
+            <Select
+              label="Cartão"
+              name="cardBrand"
+              value={expense.cardBrand ?? ''}
+              onChange={handleChange}
+              required
+              placeholder="Escolha o cartão"
+              options={CARD_OPTIONS}
+            />
+          )}
+          <TextField
+            label="Data da compra"
             type="date"
-            id="date"
             name="date"
             value={expense.date}
             onChange={handleChange}
-            className="w-full p-2 border rounded"
             required
+            hint={isCredit ? 'No cartão, cada parcela conta no fluxo de caixa do mês da fatura.' : undefined}
           />
-        </div>
-        <button type="submit" className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600">
-          Criar
-        </button>
-      </form>
+          <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Salvando…' : 'Salvar gasto'}</Button>
+        </form>
+      </Card>
     </div>
   );
 }

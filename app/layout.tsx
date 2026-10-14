@@ -23,11 +23,15 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f6f4f0",
-  // The UI is light-only (no `dark:` utilities anywhere), so the preference is
-  // declared in the document head as well as in CSS: the meta tag applies before
-  // the stylesheet loads and stops a dark-mode device flashing UA dark chrome.
-  colorScheme: "light",
+  // The browser chrome follows the page: surface-0 in each palette.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f6f4f0" },
+    { media: "(prefers-color-scheme: dark)", color: "#151412" },
+  ],
+  // Declared in the head as well as in CSS: the meta tag applies before the stylesheet
+  // loads, so a dark-mode device gets dark form controls and scrollbars on first paint
+  // instead of flashing light ones.
+  colorScheme: "light dark",
 };
 
 export default function RootLayout({

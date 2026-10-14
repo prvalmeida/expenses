@@ -33,6 +33,10 @@ const PAYMENT_LABELS: Record<Expense['paymentType'], string> = {
   'fuel-voucher': 'Vale-combustível',
 };
 
+/** Options for every payment-method select, in the order the forms show them. */
+export const PAYMENT_OPTIONS: { value: Expense['paymentType']; label: string }[] =
+  (Object.keys(PAYMENT_LABELS) as Expense['paymentType'][]).map(value => ({ value, label: PAYMENT_LABELS[value] }));
+
 export function paymentLabel(paymentType: Expense['paymentType']): string {
   return PAYMENT_LABELS[paymentType] ?? paymentType;
 }

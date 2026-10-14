@@ -7,6 +7,7 @@ import Sheet from '@/components/shell/Sheet';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/display';
 import { Select, TextField } from '@/components/ui/controls';
+import { PAYMENT_OPTIONS } from '@/lib/utils/money';
 
 type EditForm = ExpenseForm & { effectiveDate: string };
 
@@ -17,15 +18,6 @@ interface Props {
   onClose: () => void;
 }
 
-const PAYMENT_OPTIONS = [
-  { value: 'credit', label: 'Crédito' },
-  { value: 'debit', label: 'Débito' },
-  { value: 'pix', label: 'Pix' },
-  { value: 'cash', label: 'Dinheiro' },
-  { value: 'food-voucher', label: 'Vale-alimentação' },
-  { value: 'meal-voucher', label: 'Vale-refeição' },
-  { value: 'fuel-voucher', label: 'Vale-combustível' },
-];
 
 const CARD_OPTIONS = Object.values(CardBrand).map(v => ({ value: v, label: v }));
 

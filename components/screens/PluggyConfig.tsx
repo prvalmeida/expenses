@@ -24,11 +24,11 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  UPDATED: 'text-green-700 bg-green-50',
-  UPDATING: 'text-blue-700 bg-blue-50',
-  LOGIN_ERROR: 'text-red-700 bg-red-50',
-  WAITING_USER_ACTION: 'text-amber-700 bg-amber-50',
-  OUTDATED: 'text-amber-700 bg-amber-50',
+  UPDATED: 'text-positive bg-accent-soft',
+  UPDATING: 'text-accent bg-accent-soft',
+  LOGIN_ERROR: 'text-negative bg-negative-soft',
+  WAITING_USER_ACTION: 'text-warning bg-warning-soft',
+  OUTDATED: 'text-warning bg-warning-soft',
 };
 
 function statusLabel(status: string) {
@@ -36,7 +36,7 @@ function statusLabel(status: string) {
 }
 
 function statusColor(status: string) {
-  return STATUS_COLORS[status] ?? 'text-gray-700 bg-gray-50';
+  return STATUS_COLORS[status] ?? 'text-ink bg-surface-2';
 }
 
 interface PluggyItemRow {
@@ -384,20 +384,20 @@ export default function PluggyConfig() {
             disabled={saving || !enableable}
             title={enableable ? undefined : 'Selecione o cartão para habilitar'}
             className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-40 ${
-              form.enabled ? 'bg-blue-500' : 'bg-gray-300'
+              form.enabled ? 'bg-accent' : 'bg-border-strong'
             }`}
           >
             <span
-              className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+              className={`inline-block h-4 w-4 rounded-full bg-surface-1 transition-transform ${
                 form.enabled ? 'translate-x-4' : 'translate-x-0.5'
               }`}
             />
           </button>
 
           <div className="flex-1 min-w-0">
-            <span className="text-sm font-semibold text-gray-800">{account.name}</span>
-            {account.number && <span className="text-xs text-gray-400 ml-1">···{account.number}</span>}
-            <span className="ml-2 text-[10px] font-black uppercase text-gray-400">
+            <span className="text-sm font-semibold text-ink">{account.name}</span>
+            {account.number && <span className="text-xs text-ink-muted ml-1">···{account.number}</span>}
+            <span className="ml-2 text-xs font-semibold uppercase text-ink-muted">
               {account.kind === 'CREDIT' ? 'Cartão' : 'Conta'}
             </span>
           </div>
@@ -411,7 +411,7 @@ export default function PluggyConfig() {
                 saveAccount(account, { cardBrand: e.target.value, ...(!form.cardBrand && { enabled: true }) })
               }
               disabled={saving}
-              className="p-1.5 border rounded text-xs"
+              className="p-1.5 border border-border-strong rounded text-xs"
             >
               {!form.cardBrand && <option value="">Selecione o cartão...</option>}
               {Object.entries(CardBrand).map(([key, value]) => (
@@ -426,7 +426,7 @@ export default function PluggyConfig() {
                 value={form.defaultPaymentType}
                 onChange={e => saveAccount(account, { defaultPaymentType: e.target.value })}
                 disabled={saving}
-                className="p-1.5 border rounded text-xs"
+                className="p-1.5 border border-border-strong rounded text-xs"
               >
                 <option value="">Pagamento padrão...</option>
                 {BANK_PAYMENT_TYPE_OPTIONS.map(o => (<option key={o.value} value={o.value}>{o.label}</option>))}
@@ -435,7 +435,7 @@ export default function PluggyConfig() {
                 value={form.defaultIncomeType}
                 onChange={e => saveAccount(account, { defaultIncomeType: e.target.value })}
                 disabled={saving}
-                className="p-1.5 border rounded text-xs"
+                className="p-1.5 border border-border-strong rounded text-xs"
               >
                 <option value="">Sem receita automática</option>
                 {[...incomeTypes].sort().map(t => (<option key={t} value={t}>{t}</option>))}
@@ -443,16 +443,16 @@ export default function PluggyConfig() {
             </>
           )}
 
-          <span className="text-[10px] font-bold uppercase sm:w-16 shrink-0 sm:text-right" aria-live="polite">
+          <span className="text-xs font-bold uppercase sm:w-16 shrink-0 sm:text-right" aria-live="polite">
             {saving ? (
-              <span className="text-gray-400">Salvando...</span>
+              <span className="text-ink-muted">Salvando...</span>
             ) : saved ? (
-              <span className="text-green-600">Salvo</span>
+              <span className="text-positive">Salvo</span>
             ) : null}
           </span>
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-xs text-gray-500 sm:pl-12">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-xs text-ink-muted sm:pl-12">
           <label className="flex items-center gap-2">
             <span>Sincronizar a partir de</span>
             <input
@@ -464,10 +464,10 @@ export default function PluggyConfig() {
               onBlur={() => handleStartDateBlur(account)}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
               disabled={saving}
-              className="p-1 border rounded text-xs"
+              className="p-1 border border-border-strong rounded text-xs"
             />
           </label>
-          <span className="text-gray-400">
+          <span className="text-ink-muted">
             {account.lastSyncedAt
               ? `Última sincronização: ${new Date(account.lastSyncedAt).toLocaleString('pt-BR')}`
               : `Próxima sincronização buscará desde ${formatIsoDate(account.connectedAt)}`}
@@ -475,10 +475,10 @@ export default function PluggyConfig() {
         </div>
 
         {!enableable && (
-          <p className="text-xs text-amber-700 sm:pl-12">Selecione o cartão para habilitar.</p>
+          <p className="text-xs text-warning sm:pl-12">Selecione o cartão para habilitar.</p>
         )}
         {rowError && (
-          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{rowError}</p>
+          <p className="text-xs text-negative bg-negative-soft border border-transparent rounded px-2 py-1">{rowError}</p>
         )}
       </li>
     );
@@ -486,42 +486,42 @@ export default function PluggyConfig() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Conexões Pluggy</h1>
+      <h1 className="text-[22px] font-semibold leading-7 tracking-[-0.01em]">Conexões bancárias</h1>
 
       {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+        <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2">{error}</p>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3">Conectar nova conta</h2>
+      <div className="bg-surface-1 rounded-xl border border-border p-4">
+        <h2 className="text-sm font-bold text-ink mb-3">Conectar nova conta</h2>
         <div className="flex flex-col sm:flex-row gap-2">
           <input
             type="text"
             value={connectLabel}
             onChange={e => setConnectLabel(e.target.value)}
             placeholder="Nome do responsável (ex: Pedro)"
-            className="flex-1 p-2 border rounded text-sm"
+            className="flex-1 p-2 border border-border-strong rounded text-sm"
           />
           <button
             onClick={handleConnect}
             disabled={connecting || !connectLabel.trim()}
-            className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+            className="py-2 px-4 bg-accent text-on-accent rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50"
           >
             {connecting ? 'Abrindo...' : 'Conectar via Pluggy Connect'}
           </button>
         </div>
         {connectError && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mt-3">{connectError}</p>
+          <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2 mt-3">{connectError}</p>
         )}
-        <p className="text-xs text-gray-400 mt-2">
+        <p className="text-xs text-ink-muted mt-2">
           Suas credenciais do banco vão direto para a Pluggy pelo widget — nunca passam por este servidor.
         </p>
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-400">Carregando...</p>
+        <p className="text-sm text-ink-muted">Carregando...</p>
       ) : items.length === 0 ? (
-        <p className="text-sm text-gray-400">Nenhuma conexão Pluggy ainda.</p>
+        <p className="text-sm text-ink-muted">Nenhuma conexão Pluggy ainda.</p>
       ) : (
         <div className="space-y-4">
           {items.map(item => {
@@ -531,11 +531,11 @@ export default function PluggyConfig() {
               enableableAccounts.length > 0 &&
               enableableAccounts.every(a => (forms[a.accountId] ?? formFromAccount(a)).enabled);
             return (
-              <div key={item.itemId} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-wrap gap-2">
+              <div key={item.itemId} className="bg-surface-1 rounded-xl border border-border overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <span className="text-sm font-bold text-gray-800">{item.label}</span>
-                    <span className="ml-2 text-xs text-gray-400">conector {item.connectorId}</span>
+                    <span className="text-sm font-bold text-ink">{item.label}</span>
+                    <span className="ml-2 text-xs text-ink-muted">conector {item.connectorId}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     {itemAccounts.length > 0 && (
@@ -543,24 +543,24 @@ export default function PluggyConfig() {
                         type="button"
                         onClick={() => handleToggleAll(item.itemId, itemAccounts)}
                         disabled={itemAccounts.some(a => savingIds.has(a.accountId))}
-                        className="py-1 px-2 border border-blue-500 text-blue-600 rounded text-[11px] font-bold hover:bg-blue-50 disabled:opacity-50"
+                        className="py-1 px-2 border border-accent text-accent rounded text-[11px] font-bold hover:bg-accent-soft disabled:opacity-50"
                       >
                         {allEnabled ? 'Desabilitar todas' : 'Habilitar todas'}
                       </button>
                     )}
-                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${statusColor(item.status)}`}>
+                    <span className={`text-xs font-semibold uppercase px-2 py-0.5 rounded ${statusColor(item.status)}`}>
                       {statusLabel(item.status)}
                     </span>
                   </div>
                 </div>
                 {bulkNotices[item.itemId] && (
-                  <p className="px-4 py-2 text-xs text-amber-700 bg-amber-50 border-b border-amber-100">
+                  <p className="px-4 py-2 text-xs text-warning bg-warning-soft border-b border-transparent">
                     {bulkNotices[item.itemId]}
                   </p>
                 )}
-                <ul className="divide-y divide-gray-100">
+                <ul className="divide-y divide-border">
                   {itemAccounts.length === 0 ? (
-                    <li className="px-4 py-3 text-xs text-gray-400">Nenhuma conta encontrada para este item.</li>
+                    <li className="px-4 py-3 text-xs text-ink-muted">Nenhuma conta encontrada para este item.</li>
                   ) : (
                     itemAccounts.map(renderAccountRow)
                   )}
@@ -571,11 +571,11 @@ export default function PluggyConfig() {
         </div>
       )}
 
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-ink-muted">
         Desabilitar uma conta interrompe a busca e a importação, mas mantém o item, o vínculo e as transações
         já sincronizadas — não há exclusão por aqui.
       </p>
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-ink-muted">
         Em &quot;Sincronizar a partir de&quot;, use o dia seguinte ao fechamento da última fatura importada em PDF — o
         período anterior já está lançado e seria duplicado. Antecipar a data faz a próxima sincronização buscar
         desde a nova data; adiá-la move as transações pendentes anteriores a ela para &quot;Ignoradas&quot; (nada é

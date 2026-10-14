@@ -6,18 +6,9 @@ import { useCategories } from '@/hooks/useCategories';
 import { ICON_STROKE } from '@/components/shell/nav';
 import { Button, FOCUS_RING } from '@/components/ui/Button';
 import { Card, Chip, EmptyState, Notice } from '@/components/ui/display';
-import { formatBRL } from '@/lib/utils/money';
+import { formatBRL, PAYMENT_OPTIONS } from '@/lib/utils/money';
 import { shortDate } from '@/lib/utils/monthUtils';
 
-const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'credit', label: 'Crédito' },
-  { value: 'debit', label: 'Débito' },
-  { value: 'pix', label: 'Pix' },
-  { value: 'cash', label: 'Dinheiro' },
-  { value: 'food-voucher', label: 'Vale-alimentação' },
-  { value: 'meal-voucher', label: 'Vale-refeição' },
-  { value: 'fuel-voucher', label: 'Vale-combustível' },
-];
 
 const CARD_BRANDS = ['Master Santander', 'Visa Caixa', 'Elo Caixa'];
 
@@ -718,7 +709,7 @@ function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, check
             <CompactSelect
               value={row.resolvedPaymentType}
               onChange={v => onChange('resolvedPaymentType', v)}
-              options={PAYMENT_TYPE_OPTIONS}
+              options={PAYMENT_OPTIONS}
             />
           </Field>
           {row.resolvedPaymentType === 'credit' && (

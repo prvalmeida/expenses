@@ -1,5 +1,7 @@
 'use client';
 
+import { CircleCheck, FileText, Link2, ScanQrCode, TriangleAlert } from 'lucide-react';
+import { ICON_STROKE } from '@/components/shell/nav';
 import { useState } from 'react';
 import { CardBrand, ConfirmedReceiptItem, ParsedReceiptItem } from '@/types';
 import { useCategories } from '@/hooks/useCategories';
@@ -305,26 +307,26 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     const canSubmit = inputMode === 'pdf' ? !!file : receiptUrl.trim().length > 0;
 
     return (
-      <div className="max-w-md mx-auto p-4 border rounded-lg shadow-md">
-        <h2 className="text-xl font-bold mb-4">Importar Nota Fiscal</h2>
+      <div className="max-w-md mx-auto p-4 border border-border rounded-card bg-surface-1 ">
+        <h2 className="mb-4 text-[22px] font-semibold leading-7 tracking-[-0.01em]">Importar nota fiscal</h2>
 
         {/* Mode toggle */}
-        <div className="flex bg-gray-200 p-1 rounded-lg mb-4">
+        <div className="flex bg-surface-2 p-1 rounded-lg mb-4">
           <button
             onClick={() => switchMode('pdf')}
             className={`flex-1 px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
-              inputMode === 'pdf' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600'
+              inputMode === 'pdf' ? 'bg-surface-1 text-accent' : 'text-ink-muted'
             }`}
           >
-            📄 Upload PDF
+            <FileText size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> PDF da nota
           </button>
           <button
             onClick={() => switchMode('url')}
             className={`flex-1 px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
-              inputMode === 'url' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600'
+              inputMode === 'url' ? 'bg-surface-1 text-accent' : 'text-ink-muted'
             }`}
           >
-            🔗 Link da Nota
+            <Link2 size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> Link ou QR code
           </button>
         </div>
 
@@ -336,7 +338,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                 type="file"
                 accept=".pdf"
                 onChange={handleFileChange}
-                className="w-full p-2 border rounded text-sm"
+                className="w-full p-2 border border-border-strong rounded text-sm"
               />
             </div>
           ) : (
@@ -348,18 +350,19 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   value={receiptUrl}
                   onChange={e => { setReceiptUrl(e.target.value); setError(null); }}
                   placeholder="https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=..."
-                  className="flex-1 min-w-0 p-2 border rounded text-sm"
+                  className="flex-1 min-w-0 p-2 border border-border-strong rounded text-sm"
                 />
                 <button
                   type="button"
                   onClick={() => { setError(null); setScannerOpen(true); }}
                   title="Escanear QR code com a câmera"
-                  className="shrink-0 px-3 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm font-bold"
+                  aria-label="Escanear QR code com a câmera"
+                  className="shrink-0 px-3 bg-accent text-on-accent rounded hover:bg-accent-hover text-sm font-bold"
                 >
-                  📷
+                  <ScanQrCode size={20} strokeWidth={ICON_STROKE} aria-hidden="true" />
                 </button>
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">
+              <p className="text-[11px] text-ink-muted mt-1">
                 Cole o link gerado pelo QR Code da NFC-e (portais *.gov.br) ou escaneie com a câmera.
               </p>
             </div>
@@ -373,7 +376,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           )}
 
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2">
               {error}
             </p>
           )}
@@ -381,7 +384,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
           <button
             onClick={handleParse}
             disabled={!canSubmit || loading}
-            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+            className="w-full bg-accent text-on-accent p-2 rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed font-bold"
           >
             {loading ? 'Processando...' : 'Processar Nota'}
           </button>
@@ -402,8 +405,8 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
 
     return (
       <div className="max-w-2xl mx-auto p-3 sm:p-4">
-        <h2 className="text-xl font-bold mb-2">Revisar Itens</h2>
-        <div className="text-sm text-gray-600 mb-4 space-y-1">
+        <h2 className="text-xl font-bold mb-2">Revisar itens</h2>
+        <div className="text-sm text-ink-muted mb-4 space-y-1">
           <p><span className="font-semibold">Estabelecimento:</span> {parsed.store.name}</p>
           <p><span className="font-semibold">CNPJ:</span> {parsed.store.cnpj}</p>
           {parsed.date && (
@@ -436,7 +439,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             <select
               value={paymentType}
               onChange={e => { const v = e.target.value; setPaymentType(v); setCardBrand(undefined); if (v !== 'credit') setInstallments(1); }}
-              className="w-full p-2 border rounded text-sm"
+              className="w-full p-2 border border-border-strong rounded text-sm"
             >
               <option value="">Selecione...</option>
               {PAYMENT_OPTIONS.map(opt => (
@@ -451,7 +454,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                 <select
                   value={cardBrand ?? ''}
                   onChange={e => setCardBrand(e.target.value === '' ? undefined : e.target.value as CardBrand)}
-                  className="w-full p-2 border rounded text-sm"
+                  className="w-full p-2 border border-border-strong rounded text-sm"
                 >
                   <option value="">Selecione o cartão utilizado</option>
                   {Object.entries(CardBrand).map(([key, value]) => (
@@ -466,7 +469,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   min={1}
                   value={installments}
                   onChange={e => setInstallments(Math.max(1, Math.round(+e.target.value || 1)))}
-                  className="w-full p-2 border rounded text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="w-full p-2 border border-border-strong rounded text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
               </div>
             </>
@@ -476,7 +479,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             <select
               value={effectiveType(storeType) ?? ''}
               onChange={e => handleStoreTypeChange(e.target.value)}
-              className="w-full p-2 border rounded text-sm"
+              className="w-full p-2 border border-border-strong rounded text-sm"
             >
               <option value="">Selecione a categoria padrão...</option>
               {[...expenseTypes]
@@ -485,14 +488,14 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   <option key={t} value={t}>{t}</option>
                 ))}
             </select>
-            <p className="text-[11px] text-gray-400 mt-1">
+            <p className="text-[11px] text-ink-muted mt-1">
               Define o tipo padrão para itens desta loja em importações futuras.
             </p>
           </div>
         </div>
 
         {unknownCount > 0 && (
-          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
+          <p className="text-xs text-warning bg-warning-soft border border-transparent rounded px-3 py-2 mb-4">
             {unknownCount} {unknownCount === 1 ? 'item precisa' : 'itens precisam'} de classificação.
             Defina categoria e subcategoria antes de importar.
           </p>
@@ -508,30 +511,30 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             return (
             <div
               key={index}
-              className={`p-3 rounded-lg border ${
+              className={`p-3 rounded-lg border border-border ${
                 item.recognized && type === item.type && subtype === item.subtype
-                  ? 'bg-green-50 border-green-200'
-                  : 'bg-amber-50 border-amber-200'
+                  ? 'bg-accent-soft border-transparent'
+                  : 'bg-warning-soft border-transparent'
               }`}
             >
               <div className="flex justify-between items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-gray-800">{item.description}</span>
+                  <span className="text-sm font-medium text-ink">{item.description}</span>
                   {item.resolvedQty !== undefined && (
                     <div className="flex items-center gap-1 mt-0.5">
-                      <span className="text-[10px] text-gray-500 font-bold">
+                      <span className="text-xs text-ink-muted font-bold">
                         {item.resolvedQty} {item.unit ?? ''}
                       </span>
                       {item.resolvedUnitPrice !== undefined && (
                         <>
-                          <span className="text-[10px] text-gray-400">×</span>
+                          <span className="text-xs text-ink-muted">×</span>
                           <input
                             type="number"
                             value={item.resolvedUnitPrice}
                             min="0"
                             step="0.01"
                             onChange={e => handleUnitPriceChange(index, parseFloat(e.target.value) || 0)}
-                            className="w-20 p-0.5 border rounded text-[10px] text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            className="w-20 p-0.5 border border-border-strong rounded text-xs text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           />
                         </>
                       )}
@@ -544,14 +547,14 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   min="0"
                   step="0.01"
                   onChange={e => handleValueChange(index, parseFloat(e.target.value) || 0)}
-                  className="w-24 p-1 border rounded text-sm text-right font-black [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="w-24 p-1 border border-border-strong rounded text-sm text-right font-semibold [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
               </div>
               <div className="mt-2 flex gap-2">
                 <select
                   value={type ?? ''}
                   onChange={e => handleTypeChange(index, e.target.value)}
-                  className="flex-1 p-1.5 border rounded text-sm"
+                  className="flex-1 p-1.5 border border-border-strong rounded text-sm"
                 >
                   <option value="">Tipo...</option>
                   {[...expenseTypes]
@@ -564,7 +567,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   value={subtype ?? ''}
                   onChange={e => handleSubtypeChange(index, e.target.value)}
                   disabled={!type}
-                  className="flex-1 p-1.5 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 p-1.5 border border-border-strong rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Subcategoria...</option>
                   {type
@@ -577,8 +580,8 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                 </select>
               </div>
               {(typeOrphaned || subtypeOrphaned) && (
-                <p className="text-[11px] text-amber-700 mt-1">
-                  ⚠ {typeOrphaned ? 'Categoria' : 'Subcategoria'}{' '}
+                <p className="text-[11px] text-warning mt-1">
+                  <TriangleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> {typeOrphaned ? 'Categoria' : 'Subcategoria'}{' '}
                   &ldquo;{typeOrphaned ? item.resolvedType : item.resolvedSubtype}&rdquo; não existe
                   mais — selecione uma válida.
                 </p>
@@ -589,22 +592,22 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
         </div>
 
         {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-4">
+          <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2 mb-4">
             {error}
           </p>
         )}
 
-        <div className="sticky bottom-0 -mx-3 sm:-mx-4 px-3 sm:px-4 py-3 bg-white border-t border-gray-200 flex gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="sticky bottom-0 -mx-3 sm:-mx-4 px-3 sm:px-4 py-3 bg-surface-1 border-t border-border flex gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={() => setStep(1)}
-            className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+            className="flex-1 py-2 border border-border-strong rounded text-sm font-bold hover:bg-surface-2"
           >
             Voltar
           </button>
           <button
             onClick={handleImport}
             disabled={!canImport || loading}
-            className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 py-2 bg-accent text-on-accent rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Importar ${items.length} ${items.length === 1 ? 'item' : 'itens'}`}
           </button>
@@ -615,15 +618,15 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
 
   // ── Step 3: Success ─────────────────────────────────────────────────────────
   return (
-    <div className="max-w-md mx-auto p-4 border rounded-lg shadow-md text-center space-y-4">
-      <div className="text-5xl font-bold text-green-500">✓</div>
-      <h2 className="text-xl font-bold">Importação concluída!</h2>
-      <p className="text-gray-600">
+    <div className="max-w-md mx-auto p-4 border border-border rounded-card bg-surface-1 text-center space-y-4">
+      <CircleCheck size={48} strokeWidth={ICON_STROKE} aria-hidden="true" className="mx-auto text-positive" />
+      <h2 className="text-xl font-bold">Importação concluída</h2>
+      <p className="text-ink-muted">
         {importedCount} {importedCount === 1 ? 'gasto importado' : 'gastos importados'} com sucesso.
       </p>
       <button
         onClick={onImported}
-        className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 font-bold"
+        className="w-full bg-accent text-on-accent p-2 rounded hover:bg-accent-hover font-bold"
       >
         Ir para o Dashboard
       </button>

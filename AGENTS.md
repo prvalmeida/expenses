@@ -78,6 +78,10 @@ reporting the real output.
     during development, your real personal-finance data. `bruno/.env` holds only `API_KEY`
     and tells you nothing about this. Every record the collection writes is prefixed
     `BRUNO_TEST_*` so an aborted run can be swept.
+12. **UI colours come from design tokens only.** Use `bg-surface-*`, `text-ink*`,
+    `border-border*`, `bg-accent`… from `app/globals.css`; never raw Tailwind palette classes
+    or `dark:` variants (`tests/design-tokens.test.ts` fails on them). Dark mode follows the
+    device, so a hard-coded light surface breaks it.
 
 ## Environment
 

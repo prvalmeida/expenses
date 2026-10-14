@@ -3,12 +3,11 @@
 /* Design tokens — the "Expenses" design system (Pedra direction). Names and values mirror
    its tokens.json; change them there and here together.
 
-   Light and dark values are both defined, but dark is NOT applied from
-   `prefers-color-scheme` yet: the screens under components/screens still paint hard-coded
-   light surfaces (`bg-white`, `bg-gray-50`), and flipping only the tokens would repeat the
-   light-grey-text-on-white bug described in CLAUDE.md ("Colour scheme"). Dark is opt-in via
-   `data-theme="dark"` on <html> until every screen uses tokens; then the block below moves
-   under `@media (prefers-color-scheme: dark)` and `color-scheme` becomes `light dark`. */
+   Light and dark are both first-class and follow the device (`prefers-color-scheme`). That
+   is safe only because every surface in the app paints a token: a dark override that
+   flips inherited colours while some surface stays hard-coded white is exactly the bug
+   this app shipped once (light-grey text on white). tests/design-tokens.test.ts fails on
+   any raw Tailwind palette class, so that setup cannot come back unnoticed. */
 :root {
   --surface-0: #f6f4f0;
   --surface-1: #ffffff;
@@ -32,10 +31,12 @@
   /* Legacy names still read by the body rule below. */
   --background: var(--surface-0);
   --foreground: var(--ink);
-  color-scheme: light;
+  /* Form controls, scrollbars and autofill follow the active palette. */
+  color-scheme: light dark;
 }
 
-:root[data-theme="dark"] {
+@media (prefers-color-scheme: dark) {
+:root {
   --surface-0: #151412;
   --surface-1: #1e1c19;
   --surface-2: #272420;
@@ -54,7 +55,7 @@
   --warning: #e3b567;
   --warning-soft: #3a2e1a;
   --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px #2e2b27;
-  color-scheme: dark;
+}
 }
 
 /* Utilities: bg-surface-1, text-ink, border-border, bg-accent, text-on-accent, … The radius
