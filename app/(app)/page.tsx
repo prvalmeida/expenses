@@ -1,10 +1,9 @@
-'use client';
+import HomeView from './HomeView';
+import { parseMonthParam } from '@/lib/utils/routeParams';
 
-import { useRouter } from 'next/navigation';
-import Dashboard from '@/components/screens/Dashboard';
-import { transactionsHref } from '@/lib/utils/routeParams';
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default function HomePage() {
-  const router = useRouter();
-  return <Dashboard onOpenDetails={(month, mode) => router.push(transactionsHref(month, mode))} />;
+export default async function HomePage({ searchParams }: { searchParams: SearchParams }) {
+  const params = await searchParams;
+  return <HomeView month={parseMonthParam(params.month)} />;
 }

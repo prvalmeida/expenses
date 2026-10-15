@@ -32,8 +32,19 @@ export function parseViewModeParam(value: ParamValue): ViewMode {
   return first(value) === 'cashflow' ? 'payment' : 'purchase';
 }
 
-export function transactionsHref(month: string, mode: ViewMode): string {
+/** A non-empty category name, or null. Validity against the live list is the screen's job. */
+export function parseCategoryParam(value: ParamValue): string | null {
+  const v = first(value)?.trim();
+  return v ? v : null;
+}
+
+export function transactionsHref(month: string, mode: ViewMode, category?: string | null): string {
   const params = new URLSearchParams({ month });
   if (mode === 'payment') params.set('mode', 'cashflow');
+  if (category) params.set('category', category);
   return `/transactions?${params.toString()}`;
+}
+
+export function homeHref(month: string): string {
+  return `/?${new URLSearchParams({ month }).toString()}`;
 }
