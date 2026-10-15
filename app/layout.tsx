@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Expenses App",
+  title: "Expenses",
   description: "Controle de despesas e receitas pessoais",
 };
 
@@ -23,7 +23,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f9fafb",
+  themeColor: "#f6f4f0",
   // The UI is light-only (no `dark:` utilities anywhere), so the preference is
   // declared in the document head as well as in CSS: the meta tag applies before
   // the stylesheet loads and stops a dark-mode device flashing UA dark chrome.

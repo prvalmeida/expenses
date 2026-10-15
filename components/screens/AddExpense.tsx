@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import ExpenseTypeSelect from '../components/ExpenseTypeSelect';
-import { CardBrand, ExpenseForm } from '../types';
+import ExpenseTypeSelect from '@/components/ExpenseTypeSelect';
+import { CardBrand, ExpenseForm } from '@/types';
 
 export default function AddExpense({ onExpenseAdded }: { onExpenseAdded: () => void }) {
   const [expense, setExpense] = useState<ExpenseForm>({

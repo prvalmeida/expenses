@@ -104,9 +104,10 @@ one person has to operate.
   `npm run gen:openapi` (CI fails on a stale spec).
 - **Both API surfaces** — decide deliberately whether the change lands on internal `/api/*`,
   public `/api/v1/*`, or the shared service both call. Client code must never call `/api/v1/*`.
-- **Navigation** — a new view is registered in *four* places: the `ViewId` union,
-  `NAV_GROUPS` and `VIEW_TITLES` (all three in `components/NavMenu.tsx`), plus its
-  `{currentView === '…' && …}` branch in `app/page.tsx`.
+- **Navigation** — a new screen is a folder under `app/(app)/` with a thin `page.tsx` that
+  mounts its component from `components/screens/`; if it belongs in the tab bar/sidebar or
+  the + sheet, it also gets one entry in `components/shell/nav.ts` (`NAV_ITEMS` /
+  `ADD_ACTIONS`).
 - **Tests** — which `tests/*.test.ts` unit tests, and which Bruno requests under `bruno/`
   for cross-request behaviour.
 - **Docs** — `CLAUDE.md` for a new invariant, `docs/API.md` for a contract change,

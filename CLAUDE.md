@@ -136,7 +136,7 @@ All amounts match the single shared `BRL_AMOUNT` pattern (`1.234,56`) — never 
 
 **Category cascade & delete-guard:** Renaming a type/subtype cascades via `updateMany` to `Expense` (+ `Income` for income kind), `ProductMapping`, `BillMapping`, and `Store.defaultType` (subtype renames are scoped to their parent type) — subtypes travel with the renamed category, so no orphaning occurs. Renaming a subtype rejects with 409 if the target name already exists on the category. Deleting a category/subtype that still has associated records returns HTTP 409 `{ hasAssociated: true, count }` (no delete). The UI (`CategoryConfig`) then offers two distinct paths: reassign (`?reassignTo=`) or force (`?force=true`, deletes and leaves records orphaned). Reassigning a **type** merges into a *different* target via `cascadeReassignExpenseType`, which also `$unset`s any subtype not present on the target (a plain rename cannot orphan subtypes, but a merge can) — never use `cascadeRenameExpenseType` for the merge path.
 
-**Category cache revalidation:** `useCategories` keeps a module-level cache shared by all mounted consumers, so a category created in `CategoryConfig` is only seen elsewhere after a reload. Because `app/page.tsx` unmounts the current view when switching screens, a user with unsaved work (the bill-review table) has to create the category in a **second tab/window** — where no in-page `refetch` can fire. The hook therefore revalidates on `window` `focus` and on `visibilitychange` (when visible), broadcasting to every listener, so returning to the tab refreshes the selects in place.
+**Category cache revalidation:** `useCategories` keeps a module-level cache shared by all mounted consumers, so a category created in `CategoryConfig` is only seen elsewhere after a reload. Because navigating to another route unmounts the current screen, a user with unsaved work (the bill-review table) has to create the category in a **second tab/window** — where no in-page `refetch` can fire. The hook therefore revalidates on `window` `focus` and on `visibilitychange` (when visible), broadcasting to every listener, so returning to the tab refreshes the selects in place.
 
 Three entry points with deliberately different guarantees — do not collapse them into one `load(force)`:
 - `ensureCategories()` (mount) — cache, else the in-flight request, else a fetch.
@@ -206,7 +206,7 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 ### Directory structure
 
-- `app/` — Next.js App Router pages and API routes; all UI pages are co-located here as `.tsx` files
+- `app/` — Next.js App Router: UI routes in the `app/(app)/` group (thin `page.tsx` files that mount a screen), API routes under `app/api/`
 - `app/api/v1/` — the public API. `expenses/` (GET filtered+paginated, POST one purchase → N installments), `expenses/[id]/` (GET/PUT/PATCH/DELETE), `expenses/transactions/[transactionId]/` (GET/DELETE the whole installment group), `incomes/` + `incomes/[id]/`, `bills/{parse,import}/`, `receipts/{parse,import}/` (one parse endpoint takes multipart **or** `{ url }`), read-only `categories/` + `card-cycles/`, and `pluggy/{sync,items,connect-token,transactions}/` (the cron target `POST /sync` is documented in README_DOCKER.md)
 - `app/api/expenses/` — GET all, POST (one purchase, installments expanded server-side via `createExpenses`), DELETE by query param `?id=`
 - `app/api/expenses/[id]/` — GET by id, PUT (whitelisted fields only: `name`, `value`, `type`, `subtype`, `paymentType`, `cardBrand`, `date`, `effectiveDate`), DELETE (with optional `?all=true` for installments)
@@ -237,7 +237,8 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 - `lib/migrations/` — the migration registry (`index.ts`, append-only and ordered) plus one file per migration. `lib/services/migrationService.ts` runs them; `scripts/migrate.ts` (`npm run migrate`, `-- --dry-run`, `-- --status`) drives it from a checkout and `POST /api/admin/migrations` drives it in production
 - `lib/utils/receiptUtils.ts` — `interpretAndCrossReference`: calls GPT, upserts `Store`, cross-references `ProductMapping`; supermercado subtypes come from `Category` via `categoryUtils`
 - `hooks/useCategories.ts` — client hook exposing `expenseTypes`, `incomeTypes`, `subtypesFor`, `isValidType`, `isValidPair`, `refetch`; revalidates the shared cache on window `focus`/`visibilitychange` (see below)
-- `components/` — Shared React components (`ExpenseCharts`, `ExpenseTypeSelect`, `EditExpenseModal`)
+- `components/screens/` — one client component per screen, mounted by the route pages; `components/shell/` — `AppShell`, `Sidebar`, `TabBar`, `Sheet`, `AddSheet` and `nav.ts`; `components/` — shared pieces (`ExpenseTypeSelect`, `EditExpenseModal`, `QrScannerModal`)
+- `lib/utils/routeParams.ts` — the `?month=&mode=` grammar shared by the route pages and the links that build them; covered by `tests/route-params.test.ts`
 - `types/index.ts` — All shared TypeScript types; `ExpenseSubtypes`/`IncomeTypes` remain ONLY as seed data for the seed route (not the runtime source of truth), plus `CardBrand` enum and parsed/confirmed item types
 
 ### Data model highlights
@@ -250,11 +251,27 @@ Schema ↔ `types/index.ts` direction is fixed and must not be mixed per file: w
 
 ### Navigation
 
-`app/page.tsx` is a single-page shell that renders one view based on `currentView` state: `dashboard`, `dashboardDetails`, `addExpense`, `addIncome`, `cardConfig`, `categoryConfig`, `importReceipt`, `importBill`, `pluggySync`, or `pluggyConfig`. There is no client-side router — view switching is purely state-driven. The `ViewId` union and the nav entries live in `components/NavMenu.tsx`, so a new view is added in both places.
+UI routes live in the `app/(app)/` route group, which shares one shell (`app/(app)/layout.tsx` → `components/shell/AppShell.tsx`) without the group name reaching the URL. Routes are English, labels Portuguese:
+
+| Route | Screen (`components/screens/`) |
+|---|---|
+| `/` | `Dashboard` (Início) |
+| `/transactions?month=YYYY-MM&mode=cashflow` | `DashboardDetails` (Lançamentos) |
+| `/review` | `PluggySync` (Revisar) |
+| `/settings` → `/settings/{categories,cards,connections}` | index page → `CategoryConfig`, `CardConfig`, `PluggyConfig` |
+| `/new/{expense,income}`, `/import/{receipt,bill}` | `AddExpense`, `AddIncome`, `ImportReceipt`, `ImportBill` — reached from the + sheet |
+
+`components/shell/nav.ts` is the single source of truth for the four tabs (`NAV_ITEMS`) and the + sheet (`ADD_ACTIONS`); `Sidebar` (md and up) and `TabBar` (below md) both render it. A new top-level screen is a folder under `app/(app)/` plus, if it belongs in the nav, one entry there. The screens keep their callback props (`onDone`, `onExpenseAdded`…); each route's `page.tsx` turns them into `router.push`. The Revisar badge (`hooks/usePendingReviewCount.ts`) counts one page of `GET /api/pluggy/transactions?status=pending`.
+
+**The month and mode live in the URL, parsed by `lib/utils/routeParams.ts`.** `/transactions/page.tsx` reads `searchParams` on the server and passes them down; an absent month stays `null` there and resolves to the browser's current month on the client, because the server's clock and time zone are not the user's. The view is keyed on `month:mode`: `DashboardDetails` copies its initial props into state, so a client-side navigation to another month (same route, new search params) would otherwise re-render with the old month.
 
 ### Colour scheme
 
-**The app is light-only; never reintroduce a `prefers-color-scheme: dark` block.** There is not a single `dark:` utility in the codebase and every surface is a hard-coded light colour (`bg-white`, `bg-gray-50`). A dark-mode override flips only `--foreground`, so surfaces stay white while every element that *inherits* its colour goes near-white — headings, and the buttons, inputs and selects Tailwind's preflight gives `color: inherit`. Elements carrying an explicit `text-gray-*` survive, so the damage looks arbitrary rather than global. This is an OS-level preference, not a device or browser quirk: it reproduces in any browser whose OS is set to dark mode, and it shipped unnoticed only because it was first exercised on a desktop left in light mode. The preference is pinned twice on purpose, closing two different windows: `color-scheme: light` on `:root` in `globals.css` for the steady state, and `colorScheme: "light"` in the `viewport` export, which Next renders as `<meta name="color-scheme" content="light">` in the head and so applies before the stylesheet loads, stopping a dark-mode device from painting UA dark form controls, scrollbars and autofill on first paint.
+**The app is still light-only; do not apply the dark tokens from `prefers-color-scheme` until every screen uses tokens.** `globals.css` defines the design-system tokens (`--surface-*`, `--ink*`, `--accent*`, …, exposed to Tailwind as `bg-surface-1`, `text-ink`, `rounded-card` and so on) for light and, under `:root[data-theme="dark"]`, for dark. The screens in `components/screens/` still paint hard-coded light surfaces (`bg-white`, `bg-gray-50`), which is exactly the setup that shipped the earlier bug: a dark override that flips only inherited colours leaves surfaces white while headings, and the buttons, inputs and selects Tailwind's preflight gives `color: inherit`, go near-white — arbitrary-looking damage that reproduced on any device whose OS is in dark mode. Once the last screen is migrated, the dark block moves under `@media (prefers-color-scheme: dark)` and both pins below become `light dark`.
+
+The preference is pinned twice on purpose, closing two different windows: `color-scheme: light` on `:root` in `globals.css` for the steady state, and `colorScheme: "light"` in the `viewport` export, which Next renders as `<meta name="color-scheme" content="light">` in the head and so applies before the stylesheet loads, stopping a dark-mode device from painting UA dark form controls, scrollbars and autofill on first paint.
+
+Radius tokens are namespaced (`rounded-chip`/`rounded-control`/`rounded-card`) rather than overriding Tailwind's `rounded-sm/md/lg`, which the unmigrated screens still use at their old sizes.
 
 ### Responsive shell conventions
 
@@ -262,7 +279,7 @@ Four rules the mobile layout depends on, each of which failed silently once:
 
 - **The next/font variable classes belong on `<html>`, not `<body>`.** Tailwind's `@theme` maps `--font-sans: var(--font-geist-sans)` on `:root`; if `--font-geist-sans` is only defined lower down, `--font-sans` is a reference to nothing, and any `font-family` using it is invalid at computed-value time — the declaration is *dropped* and the whole app renders in the browser's default serif. For the same reason a fallback stack must sit **inside** `var(--font-sans, Arial, …)`: a list written after the closing paren is not a fallback.
 - **Safe-area padding must be restated per breakpoint.** `pb-[max(0.75rem,env(safe-area-inset-bottom))]` is unconditional and outranks `sm:p-6`'s bottom edge, so the desktop layout silently loses its bottom padding unless a `sm:pb-[…]` follows.
-- **The mobile drawer locks `document.body` scroll and traps Tab.** The document scrolls (there is no `h-screen` + inner scroll container), so a `fixed inset-0` overlay without the lock lets a drag on the scrim scroll the page underneath; and `role="dialog" aria-modal="true"` promises focus containment, so the drawer implements it and returns focus to the hamburger on close.
+- **`components/shell/Sheet.tsx` locks `document.body` scroll and traps Tab.** The document scrolls (there is no `h-screen` + inner scroll container), so a `fixed inset-0` overlay without the lock lets a drag on the scrim scroll the page underneath; and `role="dialog" aria-modal="true"` promises focus containment, so the sheet implements it and returns focus to whatever opened it. The fixed `TabBar` is cleared by `AppShell`'s `<main>` bottom padding, restated at `md` where the bar is hidden — the same per-breakpoint rule as above.
 - **A duplicated control needs its `indeterminate` state on both nodes.** Rows that render twice (a `hidden md:table` table plus a `md:hidden` card list) share one `sortedExpenses` array and one selection set; `indeterminate` is a DOM property with no React prop, so it goes through a **callback ref applied to both inputs**, never a single `useRef` — otherwise a partial selection reads as "nothing selected" on whichever breakpoint the ref missed.
 
 Modal dismiss paths (Escape, scrim click) follow the same `busy` guard as the buttons: dismissing mid-request loses the user's input and strands the error in a page-level banner the dialog was covering.
