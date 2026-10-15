@@ -1,16 +1,22 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, CircleAlert, Clock, Inbox, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
+import { ICON_STROKE } from '@/components/shell/nav';
+import { Button, FOCUS_RING } from '@/components/ui/Button';
+import { Card, Chip, EmptyState, Notice } from '@/components/ui/display';
+import { formatBRL } from '@/lib/utils/money';
+import { shortDate } from '@/lib/utils/monthUtils';
 
 const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'credit', label: 'Crédito' },
   { value: 'debit', label: 'Débito' },
-  { value: 'pix', label: 'PIX' },
+  { value: 'pix', label: 'Pix' },
   { value: 'cash', label: 'Dinheiro' },
-  { value: 'food-voucher', label: 'Vale Alimentação' },
-  { value: 'meal-voucher', label: 'Vale Refeição' },
-  { value: 'fuel-voucher', label: 'Vale Combustível' },
+  { value: 'food-voucher', label: 'Vale-alimentação' },
+  { value: 'meal-voucher', label: 'Vale-refeição' },
+  { value: 'fuel-voucher', label: 'Vale-combustível' },
 ];
 
 const CARD_BRANDS = ['Master Santander', 'Visa Caixa', 'Elo Caixa'];
@@ -46,14 +52,6 @@ type ExpenseRowState = PluggyTransactionRow & {
 type IncomeRowState = PluggyTransactionRow & {
   resolvedType: string | null;
 };
-
-function fmt(v: number) {
-  return Math.abs(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-}
-
-function displayDate(date: string) {
-  return new Date(`${date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
-}
 
 async function fetchTransactions(status: string): Promise<PluggyTransactionRow[]> {
   const res = await fetch(`/api/pluggy/transactions?status=${status}&limit=500`);
@@ -157,7 +155,7 @@ function describeSync(data: SyncResponse): string {
   return lines.join('\n');
 }
 
-export default function PluggySync({ onDone }: { onDone: () => void }) {
+export default function PluggySync() {
   const {
     expenseTypes,
     incomeTypes,
@@ -496,449 +494,374 @@ export default function PluggySync({ onDone }: { onDone: () => void }) {
   ).length;
   const unclassifiedIncomes = incomeRows.filter(r => effectiveIncomeType(r.resolvedType) === null).length;
 
-  const renderExpenseRow = (row: ExpenseRowState) => {
-    const type = effectiveType(row.resolvedType);
-    const subtype = effectiveSubtype(type, row.resolvedSubtype);
-    const typeOrphaned = type === null && row.resolvedType !== null;
-    const subtypeOrphaned = subtype === null && type !== null && row.resolvedSubtype !== null;
-    const subtypes = type ? [...subtypesFor(type)].sort() : [];
-    const needsCardBrand = row.resolvedPaymentType === 'credit' && !row.resolvedCardBrand;
-
-    return {
-      row,
-      checkbox: (
-        <input
-          type="checkbox"
-          checked={selectedExpenseIds.has(row.pluggyId)}
-          onChange={e => toggleExpenseSelected(row.pluggyId, e.target.checked)}
-        />
-      ),
-      date: displayDate(row.date),
-      // A PENDING row is still mutable at the bank: its amount can change and
-      // it can vanish entirely, which is why autoImportStaged never touches
-      // one. It is importable by hand, so the flag has to be visible — and it
-      // goes on `description` because both breakpoints (the md:table row and
-      // the mobile card) render this same value.
-      description: (
-        <>
-          {row.pluggyStatus === 'PENDING' && (
-            <span
-              title="Lançamento ainda não consolidado pelo banco — valor e data podem mudar."
-              className="mr-1 inline-block rounded bg-amber-200 px-1 text-[10px] font-bold text-amber-900 align-middle"
-            >
-              PENDENTE
-            </span>
-          )}
-          {row.description}
-        </>
-      ),
-      installment: row.installmentCurrent !== undefined && row.installmentTotal !== undefined
-        ? `${row.installmentCurrent}/${row.installmentTotal}`
-        : '—',
-      typeSelect: (
-        <>
-          <select
-            value={type ?? ''}
-            onChange={e => updateExpenseRow(row.pluggyId, 'resolvedType', e.target.value === '' ? null : e.target.value)}
-            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
-          >
-            <option value="">Selecione...</option>
-            {[...expenseTypes].sort().map(t => (<option key={t} value={t}>{t}</option>))}
-          </select>
-          {typeOrphaned && (
-            <p className="text-[10px] text-amber-700 mt-0.5">⚠ &ldquo;{row.resolvedType}&rdquo; não existe mais</p>
-          )}
-          {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) &&
-            subtype === (row.suggestedSubtype ?? null) && (
-            <p className="text-[10px] text-gray-500 mt-0.5">
-              {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
-            </p>
-          )}
-        </>
-      ),
-      subtypeSelect: (
-        <>
-          <select
-            value={subtype ?? ''}
-            onChange={e => updateExpenseRow(row.pluggyId, 'resolvedSubtype', e.target.value === '' ? null : e.target.value)}
-            disabled={!type}
-            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white disabled:opacity-40"
-          >
-            <option value="">Selecione...</option>
-            {subtypes.map(s => (<option key={s} value={s}>{s}</option>))}
-          </select>
-          {subtypeOrphaned && (
-            <p className="text-[10px] text-amber-700 mt-0.5">⚠ &ldquo;{row.resolvedSubtype}&rdquo; não existe mais</p>
-          )}
-        </>
-      ),
-      paymentSelect: (
-        <>
-          <select
-            value={row.resolvedPaymentType}
-            onChange={e => updateExpenseRow(row.pluggyId, 'resolvedPaymentType', e.target.value)}
-            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
-          >
-            {PAYMENT_TYPE_OPTIONS.map(o => (<option key={o.value} value={o.value}>{o.label}</option>))}
-          </select>
-          {row.resolvedPaymentType === 'credit' && (
-            <select
-              value={row.resolvedCardBrand}
-              onChange={e => updateExpenseRow(row.pluggyId, 'resolvedCardBrand', e.target.value)}
-              className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white mt-1"
-            >
-              <option value="">Cartão...</option>
-              {CARD_BRANDS.map(b => (<option key={b} value={b}>{b}</option>))}
-            </select>
-          )}
-          {needsCardBrand && (
-            <p className="text-[10px] text-amber-700 mt-0.5">⚠ cartão obrigatório</p>
-          )}
-        </>
-      ),
-      value: `R$ ${fmt(row.amount)}`,
-    };
-  };
+  const readyExpenses = expenseRows.filter(r => {
+    const type = effectiveType(r.resolvedType);
+    return type !== null && (r.resolvedPaymentType !== 'credit' || r.resolvedCardBrand !== '');
+  }).length;
+  const nothingPending = expenseRows.length === 0 && incomeRows.length === 0;
 
   return (
-    <div className="max-w-6xl mx-auto p-3 sm:p-4 space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-xl font-bold">Sincronizar Pluggy</h1>
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
-        >
-          {syncing ? 'Sincronizando...' : 'Sincronizar agora'}
-        </button>
+    <div className="mx-auto flex max-w-[960px] flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-[22px] font-semibold leading-7 tracking-[-0.01em]">Revisar</h1>
+          <p className="text-[13px] text-ink-muted">Transações do banco que ainda precisam de categoria.</p>
+        </div>
+        <Button icon={RefreshCw} onClick={handleSync} disabled={syncing}>
+          {syncing ? 'Sincronizando…' : 'Sincronizar agora'}
+        </Button>
       </div>
 
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
-      )}
+      {error && <Notice tone="error" title={error} />}
       {notice && (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2 whitespace-pre-line">
-          {notice}
-        </p>
+        <Notice tone="info">
+          <span className="whitespace-pre-line">{notice}</span>
+        </Notice>
       )}
 
       {loading ? (
-        <p className="text-sm text-gray-400">Carregando transações...</p>
+        <div className="flex flex-col gap-3" aria-busy="true" aria-label="Carregando">
+          <div className="h-64 animate-pulse rounded-card bg-surface-2" />
+          <div className="h-32 animate-pulse rounded-card bg-surface-2" />
+        </div>
       ) : (
         <>
-          {/* Pending expenses */}
-          <section>
-            <h2 className="text-base font-bold mb-2">Gastos pendentes ({expenseRows.length})</h2>
-            {expenseRows.length === 0 ? (
-              <p className="text-sm text-gray-400">Nenhum gasto pendente de revisão.</p>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="hidden md:table w-full min-w-[900px] text-sm border-collapse">
-                    <thead>
-                      <tr className="bg-gray-100 text-left">
-                        <th className="p-2 border border-gray-200 w-8 text-center">
-                          <input
-                            type="checkbox"
-                            ref={selectAllExpensesRef}
-                            checked={allExpensesSelected}
-                            onChange={e => selectAllExpenses(e.target.checked)}
-                          />
-                        </th>
-                        <th className="p-2 border border-gray-200 whitespace-nowrap">Data</th>
-                        <th className="p-2 border border-gray-200">Descrição</th>
-                        <th className="p-2 border border-gray-200 whitespace-nowrap">Parcela</th>
-                        <th className="p-2 border border-gray-200">Categoria</th>
-                        <th className="p-2 border border-gray-200">Subcategoria</th>
-                        <th className="p-2 border border-gray-200">Pagamento</th>
-                        <th className="p-2 border border-gray-200 text-right whitespace-nowrap">Valor</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {expenseRows.map(row => {
-                        const r = renderExpenseRow(row);
-                        return (
-                          <tr key={row.pluggyId} className={effectiveType(row.resolvedType) !== null ? 'bg-green-50' : 'bg-amber-50'}>
-                            <td className="p-1.5 border border-gray-200 text-center">{r.checkbox}</td>
-                            <td className="p-1.5 border border-gray-200 whitespace-nowrap text-xs text-gray-600">{r.date}</td>
-                            <td className="p-1.5 border border-gray-200 text-xs">{r.description}</td>
-                            <td className="p-1.5 border border-gray-200 text-xs text-center whitespace-nowrap text-gray-600">{r.installment}</td>
-                            <td className="p-1.5 border border-gray-200">{r.typeSelect}</td>
-                            <td className="p-1.5 border border-gray-200">{r.subtypeSelect}</td>
-                            <td className="p-1.5 border border-gray-200">{r.paymentSelect}</td>
-                            <td className="p-1.5 border border-gray-200 text-right text-xs whitespace-nowrap">{r.value}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+          {nothingPending && (
+            <Card>
+              <EmptyState icon={Inbox} title="Nada para revisar">
+                As transações novas do banco aparecem aqui depois de cada sincronização.
+              </EmptyState>
+            </Card>
+          )}
 
-                {/* Below md the same rows render as cards. */}
-                <ul className="md:hidden divide-y divide-gray-200 border rounded-lg overflow-hidden">
-                  <li className="flex items-center gap-3 px-3 py-2 bg-gray-50">
-                    <input
-                      type="checkbox"
-                      ref={selectAllExpensesRef}
-                      className="h-4 w-4"
-                      checked={allExpensesSelected}
-                      onChange={e => selectAllExpenses(e.target.checked)}
-                    />
-                    <span className="text-xs font-bold text-gray-500 uppercase">Selecionar todos</span>
-                  </li>
-                  {expenseRows.map(row => {
-                    const r = renderExpenseRow(row);
-                    return (
-                      <li key={row.pluggyId} className={`flex gap-3 p-3 ${effectiveType(row.resolvedType) !== null ? 'bg-green-50' : 'bg-amber-50'}`}>
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 shrink-0"
-                          checked={selectedExpenseIds.has(row.pluggyId)}
-                          onChange={e => toggleExpenseSelected(row.pluggyId, e.target.checked)}
-                        />
-                        <div className="min-w-0 flex-1 space-y-1.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-sm font-semibold text-gray-900 break-words">{r.description}</span>
-                            <span className="text-sm font-black text-gray-900 tabular-nums shrink-0">{r.value}</span>
-                          </div>
-                          <p className="text-xs text-gray-500">{r.date} · parcela {r.installment}</p>
-                          {r.typeSelect}
-                          {r.subtypeSelect}
-                          {r.paymentSelect}
+          {expenseRows.length > 0 && (
+            <Card flush title={`Gastos · ${expenseRows.length}`}>
+              <SelectAllBar
+                checked={allExpensesSelected}
+                inputRef={selectAllExpensesRef}
+                onChange={selectAllExpenses}
+                label={`${selectedExpenseIds.size} de ${expenseRows.length} selecionados · ${readyExpenses} prontos para importar`}
+              />
+              <ul>
+                {expenseRows.map(row => (
+                  <ExpenseReviewRow
+                    key={row.pluggyId}
+                    row={row}
+                    type={effectiveType(row.resolvedType)}
+                    subtype={effectiveSubtype(effectiveType(row.resolvedType), row.resolvedSubtype)}
+                    expenseTypes={expenseTypes}
+                    subtypesFor={subtypesFor}
+                    checked={selectedExpenseIds.has(row.pluggyId)}
+                    onCheck={on => toggleExpenseSelected(row.pluggyId, on)}
+                    onChange={(field, value) => updateExpenseRow(row.pluggyId, field, value)}
+                  />
+                ))}
+              </ul>
+              <SectionFooter
+                warnings={[
+                  unclassifiedExpenses > 0 &&
+                    `${unclassifiedExpenses} ${unclassifiedExpenses === 1 ? 'gasto sem categoria válida' : 'gastos sem categoria válida'} — ${unclassifiedExpenses === 1 ? 'não será importado' : 'não serão importados'}.`,
+                  expensesMissingCardBrand > 0 &&
+                    `${expensesMissingCardBrand} ${expensesMissingCardBrand === 1 ? 'gasto no crédito sem cartão' : 'gastos no crédito sem cartão'} — ${expensesMissingCardBrand === 1 ? 'não será importado' : 'não serão importados'} até você escolher o cartão.`,
+                ]}
+                action={
+                  <Button
+                    variant="primary"
+                    onClick={handleConfirmExpenses}
+                    disabled={importingExpenses || categoriesLoading || selectedExpenseIds.size === 0}
+                  >
+                    {importingExpenses ? 'Importando…' : `Importar ${selectedExpenseIds.size} ${selectedExpenseIds.size === 1 ? 'gasto' : 'gastos'}`}
+                  </Button>
+                }
+              />
+            </Card>
+          )}
+
+          {incomeRows.length > 0 && (
+            <Card flush title={`Receitas · ${incomeRows.length}`}>
+              <SelectAllBar
+                checked={allIncomesSelected}
+                inputRef={selectAllIncomesRef}
+                onChange={selectAllIncomes}
+                label={`${selectedIncomeIds.size} de ${incomeRows.length} selecionadas`}
+              />
+              <ul>
+                {incomeRows.map(row => {
+                  const type = effectiveIncomeType(row.resolvedType);
+                  return (
+                    <li key={row.pluggyId} className="flex gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5">
+                      <RowCheckbox checked={selectedIncomeIds.has(row.pluggyId)} onChange={on => toggleIncomeSelected(row.pluggyId, on)} label={row.description} />
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
+                        <RowHeading row={row} sign />
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          <Field label="Tipo" warning={type === null && row.resolvedType !== null ? `“${row.resolvedType}” não existe mais` : null} hint={suggestionHint(row, type !== null && type === (row.suggestedType ?? null))}>
+                            <CompactSelect
+                              value={type ?? ''}
+                              onChange={v => updateIncomeRow(row.pluggyId, v === '' ? null : v)}
+                              placeholder="Selecione…"
+                              options={[...incomeTypes].sort()}
+                            />
+                          </Field>
                         </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </>
-            )}
-
-            {unclassifiedExpenses > 0 && (
-              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-3">
-                ⚠ {unclassifiedExpenses} {unclassifiedExpenses === 1 ? 'gasto sem categoria válida' : 'gastos sem categoria válida'} — {unclassifiedExpenses === 1 ? 'não será importado' : 'não serão importados'}.
-              </p>
-            )}
-
-            {expensesMissingCardBrand > 0 && (
-              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-3">
-                ⚠ {expensesMissingCardBrand} {expensesMissingCardBrand === 1 ? 'gasto no crédito sem bandeira' : 'gastos no crédito sem bandeira'} — {expensesMissingCardBrand === 1 ? 'não será importado' : 'não serão importados'} até você escolher o cartão.
-              </p>
-            )}
-
-            {expenseRows.length > 0 && (
-              <div className="mt-3">
-                <button
-                  onClick={handleConfirmExpenses}
-                  disabled={importingExpenses || categoriesLoading || selectedExpenseIds.size === 0}
-                  className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {importingExpenses ? 'Importando...' : `Confirmar selecionados (${selectedExpenseIds.size})`}
-                </button>
-              </div>
-            )}
-          </section>
-
-          {/* Pending incomes */}
-          <section>
-            <h2 className="text-base font-bold mb-2">Receitas pendentes ({incomeRows.length})</h2>
-            {incomeRows.length === 0 ? (
-              <p className="text-sm text-gray-400">Nenhuma receita pendente de revisão.</p>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="hidden md:table w-full min-w-[600px] text-sm border-collapse">
-                    <thead>
-                      <tr className="bg-gray-100 text-left">
-                        <th className="p-2 border border-gray-200 w-8 text-center">
-                          <input
-                            type="checkbox"
-                            ref={selectAllIncomesRef}
-                            checked={allIncomesSelected}
-                            onChange={e => selectAllIncomes(e.target.checked)}
-                          />
-                        </th>
-                        <th className="p-2 border border-gray-200 whitespace-nowrap">Data</th>
-                        <th className="p-2 border border-gray-200">Descrição</th>
-                        <th className="p-2 border border-gray-200">Tipo</th>
-                        <th className="p-2 border border-gray-200 text-right whitespace-nowrap">Valor</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {incomeRows.map(row => {
-                        const type = effectiveIncomeType(row.resolvedType);
-                        const orphaned = type === null && row.resolvedType !== null;
-                        return (
-                          <tr key={row.pluggyId} className={type !== null ? 'bg-green-50' : 'bg-amber-50'}>
-                            <td className="p-1.5 border border-gray-200 text-center">
-                              <input
-                                type="checkbox"
-                                checked={selectedIncomeIds.has(row.pluggyId)}
-                                onChange={e => toggleIncomeSelected(row.pluggyId, e.target.checked)}
-                              />
-                            </td>
-                            <td className="p-1.5 border border-gray-200 whitespace-nowrap text-xs text-gray-600">{displayDate(row.date)}</td>
-                            <td className="p-1.5 border border-gray-200 text-xs">{row.description}</td>
-                            <td className="p-1.5 border border-gray-200">
-                              <select
-                                value={type ?? ''}
-                                onChange={e => updateIncomeRow(row.pluggyId, e.target.value === '' ? null : e.target.value)}
-                                className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
-                              >
-                                <option value="">Selecione...</option>
-                                {[...incomeTypes].sort().map(t => (<option key={t} value={t}>{t}</option>))}
-                              </select>
-                              {orphaned && (
-                                <p className="text-[10px] text-amber-700 mt-0.5">⚠ &ldquo;{row.resolvedType}&rdquo; não existe mais</p>
-                              )}
-                              {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) && (
-                                <p className="text-[10px] text-gray-500 mt-0.5">
-                                  {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
-                                </p>
-                              )}
-                            </td>
-                            <td className="p-1.5 border border-gray-200 text-right text-xs whitespace-nowrap">R$ {fmt(row.amount)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                <ul className="md:hidden divide-y divide-gray-200 border rounded-lg overflow-hidden">
-                  <li className="flex items-center gap-3 px-3 py-2 bg-gray-50">
-                    <input
-                      type="checkbox"
-                      ref={selectAllIncomesRef}
-                      className="h-4 w-4"
-                      checked={allIncomesSelected}
-                      onChange={e => selectAllIncomes(e.target.checked)}
-                    />
-                    <span className="text-xs font-bold text-gray-500 uppercase">Selecionar todos</span>
-                  </li>
-                  {incomeRows.map(row => {
-                    const type = effectiveIncomeType(row.resolvedType);
-                    return (
-                      <li key={row.pluggyId} className={`flex gap-3 p-3 ${type !== null ? 'bg-green-50' : 'bg-amber-50'}`}>
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 shrink-0"
-                          checked={selectedIncomeIds.has(row.pluggyId)}
-                          onChange={e => toggleIncomeSelected(row.pluggyId, e.target.checked)}
-                        />
-                        <div className="min-w-0 flex-1 space-y-1.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-sm font-semibold text-gray-900 break-words">{row.description}</span>
-                            <span className="text-sm font-black text-gray-900 tabular-nums shrink-0">R$ {fmt(row.amount)}</span>
-                          </div>
-                          <p className="text-xs text-gray-500">{displayDate(row.date)}</p>
-                          <select
-                            value={type ?? ''}
-                            onChange={e => updateIncomeRow(row.pluggyId, e.target.value === '' ? null : e.target.value)}
-                            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
-                          >
-                            <option value="">Selecione...</option>
-                            {[...incomeTypes].sort().map(t => (<option key={t} value={t}>{t}</option>))}
-                          </select>
-                          {row.suggestedBy !== undefined && type !== null && type === (row.suggestedType ?? null) && (
-                            <p className="text-[10px] text-gray-500 mt-0.5">
-                              {row.suggestedBy === 'ai' ? '✦ sugerido pela IA' : '✦ sugerido pelo histórico'}
-                            </p>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </>
-            )}
-
-            {unclassifiedIncomes > 0 && (
-              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-3">
-                ⚠ {unclassifiedIncomes} {unclassifiedIncomes === 1 ? 'receita sem tipo válido' : 'receitas sem tipo válido'} — {unclassifiedIncomes === 1 ? 'não será importada' : 'não serão importadas'}.
-              </p>
-            )}
-
-            {incomeRows.length > 0 && (
-              <div className="mt-3">
-                <button
-                  onClick={handleConfirmIncomes}
-                  disabled={importingIncomes || categoriesLoading || selectedIncomeIds.size === 0}
-                  className="py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {importingIncomes ? 'Importando...' : `Confirmar selecionadas (${selectedIncomeIds.size})`}
-                </button>
-              </div>
-            )}
-          </section>
-
-          {/* Ignored — collapsible, one-click un-ignore */}
-          <section>
-            <button
-              onClick={() => setIgnoredExpanded(v => !v)}
-              className="text-base font-bold flex items-center gap-2"
-            >
-              {ignoredExpanded ? '▼' : '▶'} Ignoradas ({ignoredRows.length})
-            </button>
-            {ignoredExpanded && (
-              ignoredRows.length === 0 ? (
-                <p className="text-sm text-gray-400 mt-2">Nenhuma transação ignorada.</p>
-              ) : (
-                <ul className="mt-2 divide-y divide-gray-200 border rounded-lg overflow-hidden">
-                  {ignoredRows.map(row => (
-                    <li key={row.pluggyId} className="flex items-center justify-between gap-3 p-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-gray-800 truncate">{row.description}</p>
-                        <p className="text-xs text-gray-500">{displayDate(row.date)} · R$ {fmt(row.amount)}</p>
-                        {row.statusReason && <p className="text-[10px] text-gray-400 mt-0.5">{row.statusReason}</p>}
                       </div>
-                      <button
-                        onClick={() => handleUnignore(row.pluggyId)}
-                        className="shrink-0 py-1.5 px-3 border border-gray-300 rounded text-xs font-bold hover:bg-gray-50"
-                      >
-                        Não ignorar
-                      </button>
                     </li>
-                  ))}
-                </ul>
-              )
-            )}
-          </section>
+                  );
+                })}
+              </ul>
+              <SectionFooter
+                warnings={[
+                  unclassifiedIncomes > 0 &&
+                    `${unclassifiedIncomes} ${unclassifiedIncomes === 1 ? 'receita sem tipo válido' : 'receitas sem tipo válido'} — ${unclassifiedIncomes === 1 ? 'não será importada' : 'não serão importadas'}.`,
+                ]}
+                action={
+                  <Button
+                    variant={expenseRows.length > 0 ? 'secondary' : 'primary'}
+                    onClick={handleConfirmIncomes}
+                    disabled={importingIncomes || categoriesLoading || selectedIncomeIds.size === 0}
+                  >
+                    {importingIncomes ? 'Importando…' : `Importar ${selectedIncomeIds.size} ${selectedIncomeIds.size === 1 ? 'receita' : 'receitas'}`}
+                  </Button>
+                }
+              />
+            </Card>
+          )}
 
-          {/* Anomalies — informational only, a poller must never auto-correct these */}
-          <section>
-            <button
-              onClick={() => setAnomaliesExpanded(v => !v)}
-              className="text-base font-bold flex items-center gap-2"
-            >
-              {anomaliesExpanded ? '▼' : '▶'} Anomalias ({anomalyRows.length})
-            </button>
-            {anomaliesExpanded && (
-              anomalyRows.length === 0 ? (
-                <p className="text-sm text-gray-400 mt-2">Nenhuma anomalia.</p>
-              ) : (
-                <ul className="mt-2 divide-y divide-gray-200 border border-red-200 rounded-lg overflow-hidden">
-                  {anomalyRows.map(row => (
-                    <li key={row.pluggyId} className="p-3 bg-red-50">
-                      <p className="text-sm font-semibold text-gray-800">{row.description}</p>
-                      <p className="text-xs text-gray-500">{displayDate(row.date)} · R$ {fmt(row.amount)}</p>
-                      {row.statusReason && <p className="text-xs text-red-700 mt-0.5">{row.statusReason}</p>}
-                    </li>
-                  ))}
-                </ul>
-              )
+          {/* Ignored — collapsed by default, one-click un-ignore. */}
+          <Collapsible title="Ignoradas" count={ignoredRows.length} open={ignoredExpanded} onToggle={() => setIgnoredExpanded(v => !v)}>
+            {ignoredRows.length === 0 ? (
+              <p className="px-4 pb-4 text-ink-muted sm:px-5">Nenhuma transação ignorada.</p>
+            ) : (
+              <ul>
+                {ignoredRows.map(row => (
+                  <li key={row.pluggyId} className="flex items-center gap-3 border-t border-border px-4 py-3 sm:px-5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{row.description}</p>
+                      <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}{row.statusReason ? ` · ${row.statusReason}` : ''}</p>
+                    </div>
+                    <Button size="sm" onClick={() => handleUnignore(row.pluggyId)}>Não ignorar</Button>
+                  </li>
+                ))}
+              </ul>
             )}
-          </section>
+          </Collapsible>
 
-          <div>
-            <button
-              onClick={onDone}
-              className="py-2 px-4 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
-            >
-              Voltar
-            </button>
-          </div>
+          {/* Anomalies — informational only; a poller must never auto-correct these. */}
+          <Collapsible title="Anomalias" count={anomalyRows.length} open={anomaliesExpanded} onToggle={() => setAnomaliesExpanded(v => !v)} warn={anomalyRows.length > 0}>
+            {anomalyRows.length === 0 ? (
+              <p className="px-4 pb-4 text-ink-muted sm:px-5">Nenhuma anomalia.</p>
+            ) : (
+              <ul>
+                {anomalyRows.map(row => (
+                  <li key={row.pluggyId} className="flex gap-3 border-t border-border px-4 py-3 sm:px-5">
+                    <CircleAlert size={20} strokeWidth={ICON_STROKE} aria-hidden="true" className="mt-px shrink-0 text-negative" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{row.description}</p>
+                      <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}</p>
+                      {row.statusReason && <p className="mt-0.5 text-[13px] text-negative">{row.statusReason}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Collapsible>
         </>
       )}
     </div>
+  );
+}
+
+function suggestionHint(row: PluggyTransactionRow, matchesSuggestion: boolean): string | null {
+  if (row.suggestedBy === undefined || !matchesSuggestion) return null;
+  return row.suggestedBy === 'ai' ? 'Sugerido pela IA' : 'Sugerido pelo histórico';
+}
+
+function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, checked, onCheck, onChange }: {
+  row: ExpenseRowState;
+  type: string | null;
+  subtype: string | null;
+  expenseTypes: string[];
+  subtypesFor: (type: string) => string[];
+  checked: boolean;
+  onCheck: (on: boolean) => void;
+  onChange: <K extends keyof ExpenseRowState>(field: K, value: ExpenseRowState[K]) => void;
+}) {
+  const typeOrphaned = type === null && row.resolvedType !== null;
+  const subtypeOrphaned = subtype === null && type !== null && row.resolvedSubtype !== null;
+  const needsCardBrand = row.resolvedPaymentType === 'credit' && !row.resolvedCardBrand;
+  const matchesSuggestion = type !== null && type === (row.suggestedType ?? null) && subtype === (row.suggestedSubtype ?? null);
+  return (
+    <li className="flex gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5">
+      <RowCheckbox checked={checked} onChange={onCheck} label={row.description} />
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <RowHeading row={row} />
+        {/* Two per row even on a phone: four stacked full-width selects per transaction made
+            a ten-row queue several screens long. */}
+        <div className={`grid grid-cols-2 gap-2 ${row.resolvedPaymentType === 'credit' ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+          <Field label="Categoria" warning={typeOrphaned ? `“${row.resolvedType}” não existe mais` : null} hint={suggestionHint(row, matchesSuggestion)}>
+            <CompactSelect
+              value={type ?? ''}
+              onChange={v => onChange('resolvedType', v === '' ? null : v)}
+              placeholder="Selecione…"
+              options={[...expenseTypes].sort()}
+            />
+          </Field>
+          <Field label="Subcategoria" warning={subtypeOrphaned ? `“${row.resolvedSubtype}” não existe mais` : null}>
+            <CompactSelect
+              value={subtype ?? ''}
+              onChange={v => onChange('resolvedSubtype', v === '' ? null : v)}
+              placeholder={type ? 'Selecione…' : 'Escolha a categoria'}
+              options={type ? [...subtypesFor(type)].sort() : []}
+              disabled={!type}
+            />
+          </Field>
+          <Field label="Pagamento">
+            <CompactSelect
+              value={row.resolvedPaymentType}
+              onChange={v => onChange('resolvedPaymentType', v)}
+              options={PAYMENT_TYPE_OPTIONS}
+            />
+          </Field>
+          {row.resolvedPaymentType === 'credit' && (
+            <Field label="Cartão" warning={needsCardBrand ? 'Obrigatório no crédito' : null}>
+              <CompactSelect
+                value={row.resolvedCardBrand}
+                onChange={v => onChange('resolvedCardBrand', v)}
+                placeholder="Escolha o cartão"
+                options={CARD_BRANDS}
+              />
+            </Field>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// A PENDING row is still mutable at the bank: its amount can change and it can vanish
+// entirely, which is why autoImportStaged never touches one. It is importable by hand, so
+// the flag has to be visible next to the description.
+function RowHeading({ row, sign = false }: { row: PluggyTransactionRow; sign?: boolean }) {
+  const installment = row.installmentCurrent !== undefined && row.installmentTotal !== undefined
+    ? ` · parcela ${row.installmentCurrent}/${row.installmentTotal}`
+    : '';
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="break-words font-medium">{row.description}</p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
+          {row.pluggyStatus === 'PENDING' && (
+            <span title="Lançamento ainda não consolidado pelo banco — valor e data podem mudar.">
+              <Chip tone="warning" icon={Clock}>Pendente no banco</Chip>
+            </span>
+          )}
+          <span>{shortDate(row.date)}{installment}</span>
+        </p>
+      </div>
+      <span className={`shrink-0 font-medium tabular-nums ${sign ? 'text-positive' : ''}`}>
+        {formatBRL(Math.abs(row.amount), { sign })}
+      </span>
+    </div>
+  );
+}
+
+function RowCheckbox({ checked, onChange, label }: { checked: boolean; onChange: (on: boolean) => void; label: string }) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={e => onChange(e.target.checked)}
+      aria-label={`Selecionar ${label}`}
+      className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
+    />
+  );
+}
+
+function SelectAllBar({ checked, inputRef, onChange, label }: { checked: boolean; inputRef: (el: HTMLInputElement | null) => void; onChange: (on: boolean) => void; label: string }) {
+  return (
+    <div className="flex min-h-12 items-center gap-3 border-y border-border bg-surface-2 px-4 sm:px-5">
+      <input
+        type="checkbox"
+        ref={inputRef}
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        aria-label="Selecionar todos"
+        className="h-4 w-4 accent-[var(--accent)]"
+      />
+      <span className="text-[13px] text-ink-muted">{label}</span>
+    </div>
+  );
+}
+
+function SectionFooter({ warnings, action }: { warnings: (string | false)[]; action: ReactNode }) {
+  const shown = warnings.filter((w): w is string => !!w);
+  return (
+    <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:px-5">
+      {shown.map(w => <Notice key={w} tone="warning">{w}</Notice>)}
+      <div className="flex justify-end">{action}</div>
+    </div>
+  );
+}
+
+function Field({ label, warning, hint, children }: { label: string; warning?: string | null; hint?: string | null; children: ReactNode }) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="text-xs font-medium text-ink-muted">{label}</span>
+      {children}
+      {warning && (
+        <span className="flex items-center gap-1 text-xs text-warning">
+          <TriangleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />{warning}
+        </span>
+      )}
+      {!warning && hint && (
+        <span className="flex items-center gap-1 text-xs text-ink-muted">
+          <Sparkles size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />{hint}
+        </span>
+      )}
+    </label>
+  );
+}
+
+// Denser than the form Select (10 rows × 4 selects on one screen) but still 40px tall
+// for touch, with the field text at 16px so iOS does not zoom on focus.
+function CompactSelect({ value, onChange, options, placeholder, disabled }: {
+  value: string;
+  onChange: (value: string) => void;
+  options: (string | { value: string; label: string })[];
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <span className="relative flex min-h-10 items-center rounded-control border border-border-strong bg-surface-1 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-focus has-[:disabled]:border-border has-[:disabled]:bg-surface-2">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        disabled={disabled}
+        className="h-full min-h-[38px] w-full min-w-0 cursor-pointer appearance-none bg-transparent pl-3 pr-9 text-base text-ink outline-none disabled:cursor-not-allowed disabled:text-ink-disabled sm:text-sm"
+      >
+        {placeholder !== undefined && <option value="">{placeholder}</option>}
+        {options.map(o => (typeof o === 'string'
+          ? <option key={o} value={o}>{o}</option>
+          : <option key={o.value} value={o.value}>{o.label}</option>))}
+      </select>
+      <ChevronDown size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="pointer-events-none absolute right-3 text-ink-muted" />
+    </span>
+  );
+}
+
+function Collapsible({ title, count, open, onToggle, warn = false, children }: { title: string; count: number; open: boolean; onToggle: () => void; warn?: boolean; children: ReactNode }) {
+  return (
+    <section className="overflow-hidden rounded-card border border-border bg-surface-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`flex min-h-12 w-full items-center gap-2 px-4 text-left hover:bg-surface-2 sm:px-5 ${FOCUS_RING} focus-visible:-outline-offset-2`}
+      >
+        <ChevronRight size={18} strokeWidth={ICON_STROKE} aria-hidden="true" className={`shrink-0 text-ink-muted transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span className="flex-1 font-semibold">{title}</span>
+        <Chip tone={warn ? 'warning' : 'neutral'}>{count}</Chip>
+      </button>
+      {open && <div className="pt-1">{children}</div>}
+    </section>
   );
 }

@@ -1,9 +1,12 @@
 'use client';
 
 import { CardBrand, Expense, ExpenseForm } from '@/types';
-import { useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useId, useState } from 'react';
 import ExpenseTypeSelect from './ExpenseTypeSelect';
+import Sheet from '@/components/shell/Sheet';
+import { Button } from '@/components/ui/Button';
+import { Notice } from '@/components/ui/display';
+import { Select, TextField } from '@/components/ui/controls';
 
 type EditForm = ExpenseForm & { effectiveDate: string };
 
@@ -14,8 +17,21 @@ interface Props {
   onClose: () => void;
 }
 
+const PAYMENT_OPTIONS = [
+  { value: 'credit', label: 'Crédito' },
+  { value: 'debit', label: 'Débito' },
+  { value: 'pix', label: 'Pix' },
+  { value: 'cash', label: 'Dinheiro' },
+  { value: 'food-voucher', label: 'Vale-alimentação' },
+  { value: 'meal-voucher', label: 'Vale-refeição' },
+  { value: 'fuel-voucher', label: 'Vale-combustível' },
+];
+
+const CARD_OPTIONS = Object.values(CardBrand).map(v => ({ value: v, label: v }));
+
 export default function EditExpenseModal({ expense, originalDate, onSave, onClose }: Props) {
   const isInstallment = expense.paymentType === 'credit' && (expense.totalInstallments ?? 0) > 1;
+  const formId = useId();
 
   const [form, setForm] = useState<EditForm>({
     name: expense.name,
@@ -31,6 +47,7 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
     effectiveDate: expense.effectiveDate,
   });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -52,13 +69,20 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
     });
   };
 
+  // Dismissing mid-request would lose the edit and strand its error behind a sheet that
+  // no longer exists, so every close path waits for the save to settle.
+  const close = () => {
+    if (!saving) onClose();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!expense._id) {
-      alert('ID do gasto não encontrado.');
+      setError('Não foi possível identificar este gasto. Recarregue a página.');
       return;
     }
     setSaving(true);
+    setError(null);
     try {
       if (isInstallment) {
         const res = await fetch('/api/expenses/installment-group', {
@@ -80,7 +104,7 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
           const updated: Expense[] = await res.json();
           onSave(updated);
         } else {
-          alert(`Erro ao atualizar parcelas: ${res.statusText}`);
+          setError(`Não foi possível salvar as parcelas (${res.status}). Confira os campos e tente de novo.`);
         }
       } else {
         const res = await fetch(`/api/expenses/${expense._id}`, {
@@ -101,169 +125,113 @@ export default function EditExpenseModal({ expense, originalDate, onSave, onClos
           const updated: Expense = await res.json();
           onSave(updated);
         } else {
-          alert(`Erro ao atualizar o gasto: ${res.statusText}`);
+          setError(`Não foi possível salvar o gasto (${res.status}). Confira os campos e tente de novo.`);
         }
       }
+    } catch {
+      setError('Sem conexão com o servidor. Tente de novo.');
     } finally {
       setSaving(false);
     }
   };
 
-  return createPortal(
-    <div
-      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
-      onClick={onClose}
+  return (
+    <Sheet
+      open
+      title={isInstallment ? 'Editar gasto parcelado' : 'Editar gasto'}
+      onClose={close}
+      footer={
+        <>
+          <Button className="flex-1 sm:flex-none" onClick={close} disabled={saving}>Cancelar</Button>
+          <Button className="flex-1 sm:ml-auto sm:flex-none" variant="primary" type="submit" form={formId} disabled={saving}>
+            {saving ? 'Salvando…' : 'Salvar'}
+          </Button>
+        </>
+      }
     >
-      <div
-        className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] sm:max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold">Editar Gasto</h2>
-            <button
-              onClick={onClose}
-              aria-label="Fechar"
-              className="text-gray-400 hover:text-gray-600 text-2xl leading-none min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
-            >&times;</button>
-          </div>
+      <form id={formId} onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {isInstallment && (
+          <Notice tone="info">
+            Você está editando as {expense.totalInstallments} parcelas juntas. Valor total e data inicial valem para todas.
+          </Notice>
+        )}
+        {error && <Notice tone="error" title={error} />}
+
+        <TextField label="Descrição" name="name" value={form.name} onChange={handleChange} required />
+
+        <div className={`grid gap-4 ${isInstallment ? 'grid-cols-2' : ''}`}>
+          <TextField
+            label={isInstallment ? 'Valor total' : 'Valor'}
+            prefix="R$"
+            type="number"
+            inputMode="decimal"
+            name="value"
+            value={form.value}
+            onChange={handleChange}
+            min="0"
+            step="0.01"
+            required
+          />
           {isInstallment && (
-            <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-2 mb-4">
-              Edição do grupo completo ({expense.totalInstallments}x). Valor e data afetam todas as parcelas.
-            </p>
+            <TextField
+              label="Parcelas"
+              type="number"
+              inputMode="numeric"
+              name="installments"
+              value={form.installments ?? ''}
+              onChange={handleChange}
+              min="1"
+              required
+            />
           )}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Nome</label>
-              <input
-                type="text"
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                className="w-full p-2 border rounded"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">
-                {isInstallment ? 'Valor Total' : 'Valor'}
-              </label>
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <span className="text-gray-500">R$</span>
-                </div>
-                <input
-                  type="number"
-                  name="value"
-                  value={form.value}
-                  onChange={handleChange}
-                  className="w-full p-2 pl-10 border rounded"
-                  min="0"
-                  step="0.01"
-                  required
-                />
-              </div>
-            </div>
-            {isInstallment && (
-              <div>
-                <label className="block text-sm font-medium mb-1">Número de Parcelas</label>
-                <input
-                  type="number"
-                  name="installments"
-                  value={form.installments ?? ''}
-                  onChange={handleChange}
-                  className="w-full p-2 border rounded"
-                  min="1"
-                  required
-                />
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium mb-1">Tipo</label>
-              <ExpenseTypeSelect expense={form} onChange={handleChange} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Tipo de Pagamento</label>
-              <select
-                name="paymentType"
-                value={form.paymentType}
-                onChange={handleChange}
-                className="w-full p-2 border rounded"
-                required
-              >
-                <option value="">Selecione o tipo de pagamento</option>
-                <option value="credit">Crédito</option>
-                <option value="debit">Débito</option>
-                <option value="pix">PIX</option>
-                <option value="cash">Dinheiro</option>
-                <option value="food-voucher">Vale Alimentação</option>
-                <option value="meal-voucher">Vale Refeição</option>
-                <option value="fuel-voucher">Vale Combustível</option>
-              </select>
-            </div>
-            {form.paymentType === 'credit' && (
-              <div>
-                <label className="block text-sm font-medium mb-1">Cartão Utilizado</label>
-                <select
-                  name="cardBrand"
-                  value={form.cardBrand ?? ''}
-                  onChange={handleChange}
-                  className="w-full p-2 border rounded"
-                  required
-                >
-                  <option value="">Selecione o cartão</option>
-                  {Object.entries(CardBrand).map(([key, value]) => (
-                    <option key={key} value={value}>{value}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium mb-1">
-                {isInstallment ? 'Data Inicial' : 'Data da Compra'}
-              </label>
-              <input
-                type="date"
-                name="date"
-                value={form.date}
-                onChange={handleChange}
-                className="w-full p-2 border rounded"
-                required
-              />
-            </div>
-            {form.paymentType !== 'credit' && (
-              <div>
-                <label className="block text-sm font-medium mb-1">Data Efetiva</label>
-                <input
-                  type="date"
-                  name="effectiveDate"
-                  value={form.effectiveDate}
-                  onChange={handleChange}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-              </div>
-            )}
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? 'Salvando...' : 'Salvar'}
-              </button>
-            </div>
-          </form>
         </div>
-      </div>
-    </div>,
-    document.body
+
+        <ExpenseTypeSelect expense={form} onChange={handleChange} />
+
+        <Select
+          label="Forma de pagamento"
+          name="paymentType"
+          value={form.paymentType}
+          onChange={handleChange}
+          required
+          placeholder="Escolha a forma de pagamento"
+          options={PAYMENT_OPTIONS}
+        />
+
+        {form.paymentType === 'credit' && (
+          <Select
+            label="Cartão"
+            name="cardBrand"
+            value={form.cardBrand ?? ''}
+            onChange={handleChange}
+            required
+            placeholder="Escolha o cartão"
+            options={CARD_OPTIONS}
+          />
+        )}
+
+        <div className={`grid gap-4 ${form.paymentType !== 'credit' ? 'sm:grid-cols-2' : ''}`}>
+          <TextField
+            label={isInstallment ? 'Data da primeira parcela' : 'Data da compra'}
+            type="date"
+            name="date"
+            value={form.date}
+            onChange={handleChange}
+            required
+          />
+          {form.paymentType !== 'credit' && (
+            <TextField
+              label="Data do pagamento"
+              type="date"
+              name="effectiveDate"
+              value={form.effectiveDate}
+              onChange={handleChange}
+              required
+              hint="Conta no fluxo de caixa deste dia."
+            />
+          )}
+        </div>
+      </form>
+    </Sheet>
   );
 }

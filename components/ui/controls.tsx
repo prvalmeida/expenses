@@ -1,7 +1,7 @@
 'use client';
 
-import { useId, type ReactNode, type SelectHTMLAttributes } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, TriangleAlert } from 'lucide-react';
 import { ICON_STROKE } from '@/components/shell/nav';
 import { monthLabel, shiftMonth } from '@/lib/utils/monthUtils';
 import { Button, FOCUS_RING } from './Button';
@@ -40,6 +40,32 @@ export function MonthSwitcher({ month, onChange }: { month: string; onChange: (m
         {monthLabel(month)}
       </h1>
       <Button variant="ghost" iconOnly icon={ChevronRight} aria-label="Próximo mês" onClick={() => onChange(shiftMonth(month, 1))} />
+    </div>
+  );
+}
+
+/** A field-level message under a control: an error (negative) or a warning that blocks nothing. */
+export function FieldMessage({ tone, children }: { tone: 'error' | 'warning' | 'hint'; children: ReactNode }) {
+  const color = tone === 'error' ? 'text-negative' : tone === 'warning' ? 'text-warning' : 'text-ink-muted';
+  return (
+    <p className={`flex items-start gap-1 text-xs leading-4 ${color}`}>
+      {tone !== 'hint' && <TriangleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" className="mt-px shrink-0" />}
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/** Labelled input; `prefix` renders inside the box ("R$"). Text is 16px so iOS never zooms on focus. */
+export function TextField({ label, prefix, hint, className = '', ...rest }: { label: string; prefix?: string; hint?: ReactNode } & InputHTMLAttributes<HTMLInputElement>) {
+  const id = useId();
+  return (
+    <div className={`flex min-w-0 flex-col gap-1 ${className}`}>
+      <label htmlFor={id} className="text-[13px] font-medium leading-[18px]">{label}</label>
+      <div className="flex min-h-11 items-center rounded-control border border-border-strong bg-surface-1 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-focus">
+        {prefix && <span className="pl-3 text-base text-ink-muted">{prefix}</span>}
+        <input id={id} className="h-full min-h-[42px] w-full min-w-0 bg-transparent px-3 text-base text-ink tabular-nums outline-none" {...rest} />
+      </div>
+      {hint && <FieldMessage tone="hint">{hint}</FieldMessage>}
     </div>
   );
 }
