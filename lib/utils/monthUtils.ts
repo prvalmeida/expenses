@@ -9,6 +9,15 @@ export function isInMonth(date: string | undefined, month: string): boolean {
   return !!date && date.slice(0, 7) === month;
 }
 
+/**
+ * Today as `YYYY-MM-DD` in the browser's time zone. Not `toISOString()`, which is UTC: after
+ * 21:00 in Brasília it is already tomorrow there, and a form defaulted to it files the
+ * record on the wrong day (and, on the last day, in the wrong month).
+ */
+export function todayLocal(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 /** `YYYY-MM` shifted by `delta` months, across year boundaries. */
 export function shiftMonth(month: string, delta: number): string {
   const [y, m] = month.split('-').map(Number);

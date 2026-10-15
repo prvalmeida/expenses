@@ -1,5 +1,7 @@
 'use client';
 
+import { ChevronRight } from 'lucide-react';
+import { ICON_STROKE } from '@/components/shell/nav';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCategories, type CategoryDoc } from '@/hooks/useCategories';
@@ -195,35 +197,37 @@ export default function CategoryConfig() {
     const isExpense = cat.kind === 'expense';
     const isOpen = expanded.has(cat.name);
     return (
-      <li key={cat._id ?? cat.name} className="border-b border-gray-100 last:border-b-0">
+      <li key={cat._id ?? cat.name} className="border-b border-border last:border-b-0">
         <div className="flex items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-2 min-w-0">
             {isExpense && (
               <button
                 onClick={() => toggleExpand(cat.name)}
-                className="text-gray-400 hover:text-gray-700 text-xs w-4 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center -my-2 sm:my-0"
+                className="text-ink-muted hover:text-ink text-xs w-4 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center -my-2 sm:my-0"
                 title={isOpen ? 'Recolher' : 'Expandir'}
+                aria-label={isOpen ? 'Recolher subcategorias' : 'Expandir subcategorias'}
+                aria-expanded={isOpen}
               >
-                {isOpen ? '▼' : '▶'}
+                <ChevronRight size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
               </button>
             )}
-            <span className="text-sm font-bold text-gray-800 uppercase truncate">{cat.name}</span>
+            <span className="text-sm font-bold text-ink uppercase truncate">{cat.name}</span>
             {isExpense && (
-              <span className="text-[10px] text-gray-400 font-bold">{cat.subtypes.length} sub</span>
+              <span className="text-xs text-ink-muted font-bold">{cat.subtypes.length} sub</span>
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => startRename({ level: 'type', kind: cat.kind, name: cat.name })}
               disabled={busy}
-              className="text-blue-400 hover:text-blue-600 text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
+              className="text-accent hover:text-accent text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
             >
               Renomear
             </button>
             <button
               onClick={() => attemptDeleteType(cat.kind, cat.name)}
               disabled={busy}
-              className="text-red-400 hover:text-red-600 text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
+              className="text-negative hover:text-negative text-xs font-bold px-2 py-1 min-h-11 sm:min-h-0 inline-flex items-center -my-2 sm:my-0"
             >
               Excluir
             </button>
@@ -232,23 +236,23 @@ export default function CategoryConfig() {
         {isExpense && isOpen && (
           <div className="px-4 pb-3 pl-10 space-y-1">
             {cat.subtypes.length === 0 && (
-              <p className="text-xs text-gray-400 italic">Nenhuma subcategoria.</p>
+              <p className="text-xs text-ink-muted italic">Nenhuma subcategoria.</p>
             )}
             {[...cat.subtypes].sort((a, b) => a.localeCompare(b)).map(sub => (
               <div key={sub} className="flex items-center justify-between py-1">
-                <span className="text-xs text-gray-700">{sub}</span>
+                <span className="text-xs text-ink">{sub}</span>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => startRename({ level: 'subtype', type: cat.name, subtype: sub })}
                     disabled={busy}
-                    className="text-blue-400 hover:text-blue-600 text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
+                    className="text-accent hover:text-accent text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
                   >
                     Renomear
                   </button>
                   <button
                     onClick={() => attemptDeleteSubtype(cat.name, sub)}
                     disabled={busy}
-                    className="text-red-400 hover:text-red-600 text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
+                    className="text-negative hover:text-negative text-[11px] font-bold px-2.5 min-h-11 sm:min-h-0 sm:px-1.5 inline-flex items-center"
                   >
                     Excluir
                   </button>
@@ -262,12 +266,12 @@ export default function CategoryConfig() {
                 onChange={e => setNewSubtype(prev => ({ ...prev, [cat.name]: e.target.value }))}
                 onKeyDown={e => { if (e.key === 'Enter') addSubtype(cat.name); }}
                 placeholder="Nova subcategoria"
-                className="flex-1 p-1.5 border rounded text-xs"
+                className="flex-1 p-1.5 border border-border-strong rounded text-xs"
               />
               <button
                 onClick={() => addSubtype(cat.name)}
                 disabled={busy}
-                className="bg-blue-500 text-white px-3 py-1 rounded text-xs font-bold hover:bg-blue-600 disabled:opacity-50"
+                className="bg-accent text-on-accent px-3 py-1 rounded text-xs font-bold hover:bg-accent-hover disabled:opacity-50"
               >
                 Adicionar
               </button>
@@ -280,33 +284,33 @@ export default function CategoryConfig() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Categorias</h1>
+      <h1 className="text-[22px] font-semibold leading-7 tracking-[-0.01em]">Categorias</h1>
 
       {error && !renameTarget && !deleteTarget && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+        <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2">{error}</p>
       )}
 
-      {loading && <p className="text-sm text-gray-400">Carregando...</p>}
+      {loading && <p className="text-sm text-ink-muted">Carregando...</p>}
 
       {/* Expense categories */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Categorias de Gasto</h2>
+      <div className="bg-surface-1 rounded-xl border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-bold text-ink">Categorias de gasto</h2>
         </div>
         <ul>{expenseCats.map(renderTypeRow)}</ul>
-        <div className="flex gap-2 p-4 border-t border-gray-100">
+        <div className="flex gap-2 p-4 border-t border-border">
           <input
             type="text"
             value={newExpenseType}
             onChange={e => setNewExpenseType(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') addType('expense', newExpenseType, () => setNewExpenseType('')); }}
             placeholder="Nova categoria de gasto"
-            className="flex-1 p-2 border rounded text-sm"
+            className="flex-1 p-2 border border-border-strong rounded text-sm"
           />
           <button
             onClick={() => addType('expense', newExpenseType, () => setNewExpenseType(''))}
             disabled={busy}
-            className="bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+            className="bg-accent text-on-accent px-4 py-2 rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50"
           >
             Adicionar
           </button>
@@ -314,24 +318,24 @@ export default function CategoryConfig() {
       </div>
 
       {/* Income categories */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Tipos de Receita</h2>
+      <div className="bg-surface-1 rounded-xl border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-bold text-ink">Tipos de receita</h2>
         </div>
         <ul>{incomeCats.map(renderTypeRow)}</ul>
-        <div className="flex gap-2 p-4 border-t border-gray-100">
+        <div className="flex gap-2 p-4 border-t border-border">
           <input
             type="text"
             value={newIncomeType}
             onChange={e => setNewIncomeType(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') addType('income', newIncomeType, () => setNewIncomeType('')); }}
             placeholder="Novo tipo de receita"
-            className="flex-1 p-2 border rounded text-sm"
+            className="flex-1 p-2 border border-border-strong rounded text-sm"
           />
           <button
             onClick={() => addType('income', newIncomeType, () => setNewIncomeType(''))}
             disabled={busy}
-            className="bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+            className="bg-accent text-on-accent px-4 py-2 rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50"
           >
             Adicionar
           </button>
@@ -339,9 +343,9 @@ export default function CategoryConfig() {
       </div>
 
       {deleteTarget && createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={closeDeleteDialog}>
+        <div className="fixed inset-0 bg-scrim flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={closeDeleteDialog}>
           <div
-            className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
+            className="bg-surface-1 rounded-t-2xl sm:rounded-xl shadow-overlay w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
           >
             <div className="p-4 sm:p-6 space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -349,17 +353,17 @@ export default function CategoryConfig() {
                 Excluir {deleteTarget.level === 'type' ? 'categoria' : 'subcategoria'} “
                 {deleteTarget.level === 'type' ? deleteTarget.name : deleteTarget.subtype}”
               </h2>
-              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              <p className="text-sm text-warning bg-warning-soft border border-transparent rounded px-3 py-2">
                 Existem {deleteTarget.count} {deleteTarget.count === 1 ? 'registro associado' : 'registros associados'}.
                 Reatribua-os a outra opção, ou exclua mesmo assim (os registros ficarão órfãos e precisarão de correção manual).
               </p>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Reatribuir para</label>
+                <label className="block text-xs font-bold text-ink mb-1 uppercase">Reatribuir para</label>
                 <select
                   value={reassignTo}
                   onChange={e => setReassignTo(e.target.value)}
-                  className="w-full p-2 border rounded text-sm"
+                  className="w-full p-2 border border-border-strong rounded text-sm"
                 >
                   <option value="">Selecione...</option>
                   {reassignOptions().map(opt => (
@@ -369,21 +373,21 @@ export default function CategoryConfig() {
               </div>
 
               {error && (
-                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+                <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2">{error}</p>
               )}
 
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={closeDeleteDialog}
                   disabled={busy}
-                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50 disabled:opacity-50"
+                  className="flex-1 py-2 border border-border-strong rounded text-sm font-bold hover:bg-surface-2 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={confirmReassign}
                   disabled={busy || !reassignTo}
-                  className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+                  className="flex-1 py-2 bg-accent text-on-accent rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50"
                 >
                   Reatribuir e excluir
                 </button>
@@ -391,7 +395,7 @@ export default function CategoryConfig() {
               <button
                 onClick={confirmForceDelete}
                 disabled={busy}
-                className="w-full py-2 bg-red-100 text-red-700 border border-red-300 rounded text-sm font-bold hover:bg-red-200 disabled:opacity-50"
+                className="w-full py-2 bg-negative-soft text-negative border border-transparent rounded text-sm font-bold hover:bg-negative-soft disabled:opacity-50"
               >
                 Excluir mesmo assim (deixar órfãos)
               </button>
@@ -403,11 +407,11 @@ export default function CategoryConfig() {
 
       {renameTarget && createPortal(
         <div
-          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
+          className="fixed inset-0 bg-scrim flex items-end sm:items-center justify-center z-50 sm:p-4"
           onClick={closeRenameDialog}
         >
           <div
-            className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
+            className="bg-surface-1 rounded-t-2xl sm:rounded-xl shadow-overlay w-full sm:max-w-md max-h-[85dvh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
           >
             <form
@@ -420,26 +424,26 @@ export default function CategoryConfig() {
               </h2>
 
               {renameTarget.level === 'subtype' && (
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-ink-muted">
                   Em <span className="font-semibold">{renameTarget.type}</span>. Os gastos, mapeamentos e lojas
                   que usam este nome são atualizados junto.
                 </p>
               )}
 
               <div>
-                <label htmlFor="rename-input" className="block text-xs font-bold text-gray-700 mb-1 uppercase">Novo nome</label>
+                <label htmlFor="rename-input" className="block text-xs font-bold text-ink mb-1 uppercase">Novo nome</label>
                 <input
                   id="rename-input"
                   autoFocus
                   type="text"
                   value={renameValue}
                   onChange={e => setRenameValue(e.target.value)}
-                  className="w-full p-2 border rounded text-sm"
+                  className="w-full p-2 border border-border-strong rounded text-sm"
                 />
               </div>
 
               {error && (
-                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+                <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2">{error}</p>
               )}
 
               <div className="flex gap-2 pt-2">
@@ -447,14 +451,14 @@ export default function CategoryConfig() {
                   type="button"
                   onClick={closeRenameDialog}
                   disabled={busy}
-                  className="flex-1 py-2 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50 disabled:opacity-50"
+                  className="flex-1 py-2 border border-border-strong rounded text-sm font-bold hover:bg-surface-2 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={busy || !renameValue.trim() || renameValue.trim() === currentName(renameTarget)}
-                  className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+                  className="flex-1 py-2 bg-accent text-on-accent rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50"
                 >
                   {busy ? 'Salvando...' : 'Renomear'}
                 </button>

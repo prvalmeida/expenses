@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { formatBRL, isVoucher, paymentLabel } from '../lib/utils/money';
-import { dayHeading, isInMonth, monthLabel, monthName, shiftMonth, shortDate } from '../lib/utils/monthUtils';
+import { dayHeading, isInMonth, monthLabel, monthName, shiftMonth, shortDate, todayLocal } from '../lib/utils/monthUtils';
+import { PAYMENT_OPTIONS } from '../lib/utils/money';
 
 // Display rules from the design system: amounts as "R$ 1.234,56", signed amounts with
 // "+" and the U+2212 minus, and month/day labels in pt-BR. Pinned here because every
@@ -51,4 +52,16 @@ test('month and day labels are pt-BR', () => {
   assert.equal(monthName('2026-10'), 'outubro');
   assert.equal(shortDate('2026-10-05'), '05/10');
   assert.equal(dayHeading('2026-10-05'), '5 de outubro');
+});
+
+test('todayLocal uses the local calendar day, not UTC', () => {
+  // 23:30 local on 31/10 is already 01/11 in UTC for any zone west of Greenwich.
+  assert.equal(todayLocal(new Date(2026, 9, 31, 23, 30)), '2026-10-31');
+  assert.equal(todayLocal(new Date(2026, 0, 5, 0, 5)), '2026-01-05');
+});
+
+test('PAYMENT_OPTIONS lists every payment type once, credit first', () => {
+  assert.equal(PAYMENT_OPTIONS.length, 7);
+  assert.equal(PAYMENT_OPTIONS[0].value, 'credit');
+  assert.equal(new Set(PAYMENT_OPTIONS.map(o => o.value)).size, 7);
 });

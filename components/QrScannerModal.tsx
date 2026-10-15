@@ -60,7 +60,7 @@ export default function QrScannerModal({
         </p>
         <button
           onClick={() => { stop(); onClose(); }}
-          className="w-full max-w-xs mx-auto py-2.5 bg-white text-gray-900 rounded-lg text-sm font-bold active:scale-[0.98] transition-transform"
+          className="w-full max-w-xs mx-auto py-2.5 bg-surface-1 text-ink rounded-lg text-sm font-bold active:scale-[0.98] transition-transform"
         >
           Cancelar
         </button>

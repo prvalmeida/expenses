@@ -1,5 +1,7 @@
 'use client';
 
+import { TriangleAlert, X } from 'lucide-react';
+import { ICON_STROKE } from '@/components/shell/nav';
 import { useEffect, useRef, useState } from 'react';
 import { CardBrand, NewBillMapping, ParsedBillItem } from '@/types';
 import { useCategories } from '@/hooks/useCategories';
@@ -204,8 +206,8 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
     const canSubmit = !!file && !!cardBrand;
 
     return (
-      <div className="max-w-md mx-auto p-4 border rounded-lg shadow-md">
-        <h2 className="text-xl font-bold mb-4">Importar Fatura</h2>
+      <div className="max-w-md mx-auto p-4 border border-border rounded-card bg-surface-1 ">
+        <h2 className="mb-4 text-[22px] font-semibold leading-7 tracking-[-0.01em]">Importar fatura</h2>
 
         <div className="space-y-4">
           <div>
@@ -219,10 +221,10 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             />
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="w-full p-2 border rounded text-sm cursor-pointer bg-white"
+              className="w-full p-2 border border-border-strong rounded text-sm cursor-pointer bg-surface-1"
             >
               {file === null
-                ? <span className="text-gray-400">Selecione um arquivo PDF…</span>
+                ? <span className="text-ink-muted">Selecione um arquivo PDF…</span>
                 : file.name}
             </div>
           </div>
@@ -232,7 +234,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             <select
               value={cardBrand}
               onChange={e => setCardBrand(e.target.value as CardBrand | '')}
-              className="w-full p-2 border rounded text-sm"
+              className="w-full p-2 border border-border-strong rounded text-sm"
             >
               <option value="">Selecione o cartão...</option>
               {Object.entries(CardBrand).map(([key, value]) => (
@@ -242,7 +244,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           </div>
 
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2">
               {error}
             </p>
           )}
@@ -250,9 +252,9 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           <button
             onClick={handleProcess}
             disabled={!canSubmit || loading}
-            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+            className="w-full bg-accent text-on-accent p-2 rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed font-bold"
           >
-            {loading ? 'Processando...' : 'Processar Fatura'}
+            {loading ? 'Processando...' : 'Processar fatura'}
           </button>
         </div>
       </div>
@@ -273,9 +275,9 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
     return (
       <tr
         key={index}
-        className={type !== null ? 'bg-green-50' : 'bg-amber-50'}
+        className={type !== null ? 'bg-accent-soft' : 'bg-warning-soft'}
       >
-        <td className="p-1.5 border border-gray-200 text-center">
+        <td className="p-1.5 border border-border text-center">
           <input
             type="checkbox"
             checked={selectedIndices.has(index)}
@@ -289,25 +291,25 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             }}
           />
         </td>
-        <td className="p-1.5 border border-gray-200 whitespace-nowrap text-xs text-gray-600">
+        <td className="p-1.5 border border-border whitespace-nowrap text-xs text-ink-muted">
           {item.date
             ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
             : '—'}
         </td>
-        <td className="p-1.5 border border-gray-200">
+        <td className="p-1.5 border border-border">
           <input
             type="text"
             value={item.resolvedDescription}
             onChange={e => updateItem(index, 'resolvedDescription', e.target.value)}
-            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
+            className="w-full p-0.5 border border-border-strong rounded text-xs bg-transparent focus:bg-surface-1"
           />
         </td>
-        <td className="p-1.5 border border-gray-200 text-xs text-center whitespace-nowrap text-gray-600">
+        <td className="p-1.5 border border-border text-xs text-center whitespace-nowrap text-ink-muted">
           {item.installmentCurrent !== undefined && item.installmentTotal !== undefined
             ? `${item.installmentCurrent}/${item.installmentTotal}`
             : '—'}
         </td>
-        <td className="p-1.5 border border-gray-200">
+        <td className="p-1.5 border border-border">
           <select
             value={type ?? ''}
             onChange={e =>
@@ -317,7 +319,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
                 e.target.value === '' ? null : e.target.value
               )
             }
-            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white"
+            className="w-full p-0.5 border border-border-strong rounded text-xs bg-transparent focus:bg-surface-1"
           >
             <option value="">Selecione...</option>
             {[...expenseTypes].sort().map(t => (
@@ -325,19 +327,19 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             ))}
           </select>
           {typeOrphaned && (
-            <p className="text-[10px] text-amber-700 mt-0.5">
-              ⚠ &ldquo;{item.resolvedType}&rdquo; não existe mais
+            <p className="text-xs text-warning mt-0.5">
+              <TriangleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> &ldquo;{item.resolvedType}&rdquo; não existe mais
             </p>
           )}
         </td>
-        <td className="p-1.5 border border-gray-200">
+        <td className="p-1.5 border border-border">
           <select
             value={subtype ?? ''}
             onChange={e =>
               updateItem(index, 'resolvedSubtype', e.target.value === '' ? null : e.target.value)
             }
             disabled={!type}
-            className="w-full p-0.5 border rounded text-xs bg-transparent focus:bg-white disabled:opacity-40"
+            className="w-full p-0.5 border border-border-strong rounded text-xs bg-transparent focus:bg-surface-1 disabled:opacity-40"
           >
             <option value="">Selecione...</option>
             {subtypes.map(s => (
@@ -345,12 +347,12 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             ))}
           </select>
           {subtypeOrphaned && (
-            <p className="text-[10px] text-amber-700 mt-0.5">
-              ⚠ &ldquo;{item.resolvedSubtype}&rdquo; não existe mais
+            <p className="text-xs text-warning mt-0.5">
+              <TriangleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> &ldquo;{item.resolvedSubtype}&rdquo; não existe mais
             </p>
           )}
         </td>
-        <td className="p-1.5 border border-gray-200">
+        <td className="p-1.5 border border-border">
           <input
             type="number"
             value={item.resolvedValue}
@@ -359,15 +361,16 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
             onChange={e =>
               updateItem(index, 'resolvedValue', parseFloat(e.target.value) || 0)
             }
-            className="w-24 min-w-24 p-0.5 border rounded text-xs text-right bg-transparent focus:bg-white [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-24 min-w-24 p-0.5 border border-border-strong rounded text-xs text-right bg-transparent focus:bg-surface-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
         </td>
-        <td className="p-1.5 border border-gray-200 text-center">
+        <td className="p-1.5 border border-border text-center">
           <button
             onClick={() => removeItem(index)}
-            className="text-red-400 hover:text-red-600 font-bold px-2 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
+            aria-label="Remover item"
+            className="text-negative hover:text-negative font-bold px-2 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 inline-flex items-center justify-center"
           >
-            ✕
+            <X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
           </button>
         </td>
       </tr>
@@ -376,13 +379,13 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="max-w-5xl mx-auto p-3 sm:p-4">
-      <h2 className="text-xl font-bold mb-2">Revisar Fatura</h2>
-      <div className="text-sm text-gray-600 mb-4 space-y-1">
+      <h2 className="text-xl font-bold mb-2">Revisar fatura</h2>
+      <div className="text-sm text-ink-muted mb-4 space-y-1">
         <p>
           <span className="font-semibold">Cartão:</span> {parsed?.cardBrand}
           <span className="ml-4 font-semibold">Novos:</span> {normalPairs.length}
           {duplicatePairs.length > 0 && (
-            <span className="ml-4 font-semibold text-amber-700">Possíveis duplicatas: {duplicatePairs.length}</span>
+            <span className="ml-4 font-semibold text-warning">Possíveis duplicatas: {duplicatePairs.length}</span>
           )}
           <span className="ml-4 font-semibold">Total:</span>{' '}
           R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -391,7 +394,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           <span className="font-semibold">Fechamento:</span>{' '}
           {closingDate
             ? new Date(`${closingDate}T12:00:00Z`).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
-            : <span className="text-amber-600">Não detectado — ciclo padrão será usado</span>}
+            : <span className="text-warning">Não detectado — ciclo padrão será usado</span>}
           {dueDate && (
             <>
               <span className="ml-4 font-semibold">Vencimento:</span>{' '}
@@ -406,8 +409,8 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
         <div className="overflow-x-auto mb-6">
           <table className="w-full min-w-[840px] text-sm border-collapse">
             <thead>
-              <tr className="bg-gray-100 text-left">
-                <th className="p-2 border border-gray-200 w-8 text-center">
+              <tr className="bg-surface-2 text-left">
+                <th className="p-2 border border-border w-8 text-center">
                   <input
                     type="checkbox"
                     ref={selectAllNormalRef}
@@ -421,13 +424,13 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
                     }}
                   />
                 </th>
-                <th className="p-2 border border-gray-200 whitespace-nowrap">Data</th>
-                <th className="p-2 border border-gray-200">Descrição</th>
-                <th className="p-2 border border-gray-200 whitespace-nowrap">Parcela</th>
-                <th className="p-2 border border-gray-200">Categoria</th>
-                <th className="p-2 border border-gray-200">Subcategoria</th>
-                <th className="p-2 border border-gray-200 text-right whitespace-nowrap">Valor</th>
-                <th className="p-2 border border-gray-200" />
+                <th className="p-2 border border-border whitespace-nowrap">Data</th>
+                <th className="p-2 border border-border">Descrição</th>
+                <th className="p-2 border border-border whitespace-nowrap">Parcela</th>
+                <th className="p-2 border border-border">Categoria</th>
+                <th className="p-2 border border-border">Subcategoria</th>
+                <th className="p-2 border border-border text-right whitespace-nowrap">Valor</th>
+                <th className="p-2 border border-border" />
               </tr>
             </thead>
             <tbody>
@@ -441,14 +444,14 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       {duplicatePairs.length > 0 && (
         <>
           <div className="flex items-center gap-3 mb-2 mt-2">
-            <h3 className="text-base font-bold text-amber-700">Possíveis duplicatas</h3>
-            <span className="text-xs text-gray-500">Já existem gastos com a mesma data e valor</span>
+            <h3 className="text-base font-bold text-warning">Possíveis duplicatas</h3>
+            <span className="text-xs text-ink-muted">Já existem gastos com a mesma data e valor</span>
           </div>
-          <div className="overflow-x-auto mb-6 border border-amber-200 rounded">
+          <div className="overflow-x-auto mb-6 border border-transparent rounded">
             <table className="w-full min-w-[840px] text-sm border-collapse">
               <thead>
-                <tr className="bg-amber-50 text-left">
-                  <th className="p-2 border border-amber-200 w-8 text-center">
+                <tr className="bg-warning-soft text-left">
+                  <th className="p-2 border border-transparent w-8 text-center">
                     <input
                       type="checkbox"
                       ref={selectAllDuplicatesRef}
@@ -462,13 +465,13 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
                       }}
                     />
                   </th>
-                  <th className="p-2 border border-amber-200 whitespace-nowrap">Data</th>
-                  <th className="p-2 border border-amber-200">Descrição</th>
-                  <th className="p-2 border border-amber-200 whitespace-nowrap">Parcela</th>
-                  <th className="p-2 border border-amber-200">Categoria</th>
-                  <th className="p-2 border border-amber-200">Subcategoria</th>
-                  <th className="p-2 border border-amber-200 text-right whitespace-nowrap">Valor</th>
-                  <th className="p-2 border border-amber-200" />
+                  <th className="p-2 border border-transparent whitespace-nowrap">Data</th>
+                  <th className="p-2 border border-transparent">Descrição</th>
+                  <th className="p-2 border border-transparent whitespace-nowrap">Parcela</th>
+                  <th className="p-2 border border-transparent">Categoria</th>
+                  <th className="p-2 border border-transparent">Subcategoria</th>
+                  <th className="p-2 border border-transparent text-right whitespace-nowrap">Valor</th>
+                  <th className="p-2 border border-transparent" />
                 </tr>
               </thead>
               <tbody>
@@ -480,36 +483,36 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
       )}
 
       {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-4">
+        <p className="text-sm text-negative bg-negative-soft border border-transparent rounded px-3 py-2 mb-4">
           {error}
         </p>
       )}
 
       {notice && (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded px-3 py-2 mb-4">
+        <p className="text-sm text-warning bg-warning-soft border border-transparent rounded px-3 py-2 mb-4">
           {notice}
         </p>
       )}
 
       {unclassifiedCount > 0 && (
-        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
-          ⚠ {unclassifiedCount} {unclassifiedCount === 1 ? 'item sem categoria válida' : 'itens sem categoria válida'} — {unclassifiedCount === 1 ? 'não será importado' : 'não serão importados'}.
+        <p className="text-sm text-warning bg-warning-soft border border-transparent rounded px-3 py-2 mb-4">
+          <TriangleAlert size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> {unclassifiedCount} {unclassifiedCount === 1 ? 'item sem categoria válida' : 'itens sem categoria válida'} — {unclassifiedCount === 1 ? 'não será importado' : 'não serão importados'}.
         </p>
       )}
 
       {/* Sticky so the confirm button stays reachable: a bill review can run
           for hundreds of pixels of scrolling. */}
-      <div className="sticky bottom-0 -mx-3 sm:-mx-4 px-3 sm:px-4 py-3 bg-white border-t border-gray-200 flex flex-col sm:flex-row gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="sticky bottom-0 -mx-3 sm:-mx-4 px-3 sm:px-4 py-3 bg-surface-1 border-t border-border flex flex-col sm:flex-row gap-2 sm:gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <button
           onClick={() => setStep(1)}
-          className="order-last sm:order-none py-2 px-4 border border-gray-300 rounded text-sm font-bold hover:bg-gray-50"
+          className="order-last sm:order-none py-2 px-4 border border-border-strong rounded text-sm font-bold hover:bg-surface-2"
         >
           Voltar
         </button>
         {selectedIndices.size > 0 && (
           <button
             onClick={removeBulkItems}
-            className="py-2 px-4 bg-red-100 text-red-700 border border-red-300 rounded text-sm font-bold hover:bg-red-200"
+            className="py-2 px-4 bg-negative-soft text-negative border border-transparent rounded text-sm font-bold hover:bg-negative-soft"
           >
             Remover selecionados ({selectedIndices.size})
           </button>
@@ -519,7 +522,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           <button
             onClick={() => handleImport(normalPairs.map(p => p.item))}
             disabled={loading || categoriesLoading}
-            className="order-first sm:order-none py-2 px-4 bg-blue-500 text-white rounded text-sm font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="order-first sm:order-none py-2 px-4 bg-accent text-on-accent rounded text-sm font-bold hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Confirmar ${normalPairs.length} ${normalPairs.length === 1 ? 'transação' : 'transações'}`}
           </button>
@@ -528,7 +531,7 @@ export default function ImportBill({ onDone }: { onDone: () => void }) {
           <button
             onClick={() => handleImport(duplicatePairs.map(p => p.item))}
             disabled={loading || categoriesLoading}
-            className="order-first sm:order-none py-2 px-4 bg-amber-500 text-white rounded text-sm font-bold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="order-first sm:order-none py-2 px-4 bg-warning text-surface-1 rounded text-sm font-bold hover:bg-warning disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Importando...' : `Importar ${duplicatePairs.length} ${duplicatePairs.length === 1 ? 'duplicata' : 'duplicatas'}`}
           </button>
