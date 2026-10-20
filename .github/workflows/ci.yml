@@ -191,6 +191,13 @@ jobs:
             echo "API_KEY=${API_KEY}"
           } > .env.local
 
+      # The runner image's Docker/Compose versions change under us; when the
+      # mongodb healthcheck misbehaves, these are the first thing to compare.
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+
       - name: Start mongodb and the app
         run: docker compose --profile prod up --build -d
 
@@ -217,9 +224,16 @@ jobs:
           printf 'API_KEY=%s\n' "${API_KEY}" > bruno/.env
           npm run test:api -- --reporter-junit ../api-test-results.xml
 
-      - name: Show app logs on failure
+      # mongodb too: a startup failure ("container expenses-mongodb-1 is
+      # unhealthy") happens before the app ever runs, and only the healthcheck
+      # history and mongod's own log say why.
+      - name: Show container logs on failure
         if: failure()
-        run: docker compose --profile prod logs web
+        run: |
+          docker compose --profile prod ps -a
+          docker inspect expenses-mongodb-1 --format '{{json .State}}' || true
+          docker compose --profile prod logs mongodb
+          docker compose --profile prod logs web
 
       - name: Tear down
         if: always()
