@@ -158,7 +158,11 @@ jobs:
 
   api-test:
     name: API contract test
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: mongo:8 (8.3.13) refuses to boot on the ubuntu-24.04
+    # image's 7.0 Azure kernel — it reads `uname -r`, not the upstream version,
+    # and trips its >= 6.19 guard (fatal 12257600). Return to ubuntu-latest once
+    # mongo:8 resolves to 8.3.14+ (SERVER-131779, actions/runner-images#15005).
+    runs-on: ubuntu-22.04
     # Opt-in only. It cannot join the lint ∥ build ∥ verify-tag → docker →
     # release graph: `lint` and `build` deliberately receive no secrets so a
     # regression where something connects at build time stays visible, and
@@ -191,10 +195,12 @@ jobs:
             echo "API_KEY=${API_KEY}"
           } > .env.local
 
-      # The runner image's Docker/Compose versions change under us; when the
-      # mongodb healthcheck misbehaves, these are the first thing to compare.
-      - name: Show Docker versions
+      # The runner image changes under us; when the mongodb healthcheck
+      # misbehaves, the kernel and Docker/Compose versions are the first thing
+      # to compare.
+      - name: Show kernel and Docker versions
         run: |
+          uname -r
           docker version
           docker compose version
 
