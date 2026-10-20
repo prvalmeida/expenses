@@ -158,7 +158,11 @@ jobs:
 
   api-test:
     name: API contract test
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: mongo:8 (8.3.13) refuses to boot on the ubuntu-24.04
+    # image's 7.0 Azure kernel — it reads `uname -r`, not the upstream version,
+    # and trips its >= 6.19 guard (fatal 12257600). Return to ubuntu-latest once
+    # mongo:8 resolves to 8.3.14+ (SERVER-131779, actions/runner-images#15005).
+    runs-on: ubuntu-22.04
     # Opt-in only. It cannot join the lint ∥ build ∥ verify-tag → docker →
     # release graph: `lint` and `build` deliberately receive no secrets so a
     # regression where something connects at build time stays visible, and
@@ -191,6 +195,15 @@ jobs:
             echo "API_KEY=${API_KEY}"
           } > .env.local
 
+      # The runner image changes under us; when the mongodb healthcheck
+      # misbehaves, the kernel and Docker/Compose versions are the first thing
+      # to compare.
+      - name: Show kernel and Docker versions
+        run: |
+          uname -r
+          docker version
+          docker compose version
+
       - name: Start mongodb and the app
         run: docker compose --profile prod up --build -d
 
@@ -217,9 +230,16 @@ jobs:
           printf 'API_KEY=%s\n' "${API_KEY}" > bruno/.env
           npm run test:api -- --reporter-junit ../api-test-results.xml
 
-      - name: Show app logs on failure
+      # mongodb too: a startup failure ("container expenses-mongodb-1 is
+      # unhealthy") happens before the app ever runs, and only the healthcheck
+      # history and mongod's own log say why.
+      - name: Show container logs on failure
         if: failure()
-        run: docker compose --profile prod logs web
+        run: |
+          docker compose --profile prod ps -a
+          docker inspect expenses-mongodb-1 --format '{{json .State}}' || true
+          docker compose --profile prod logs mongodb
+          docker compose --profile prod logs web
 
       - name: Tear down
         if: always()
