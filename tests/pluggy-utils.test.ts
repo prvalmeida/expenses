@@ -8,6 +8,7 @@ import {
   anchorPurchaseDate,
   resolveInstallmentPlan,
   installmentSeriesKeys,
+  seriesOccurrence,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
   computeSyncWindow,
@@ -661,4 +662,36 @@ test('installmentSeriesKeys: undefined for anything that is not an expandable cr
   assert.equal(installmentSeriesKeys({ ...base, cardBrand: null }), undefined);
   // No plausible current and no purchaseDate — the import parks it, so the probe must too.
   assert.equal(installmentSeriesKeys({ ...base, installmentCurrent: null }), undefined);
+});
+
+// --- seriesOccurrence: telling identical purchases apart ------------------
+
+test('seriesOccurrence: counts the resolved rows of the same series posted in the same month', () => {
+  const base = { amount: 100, purchaseDate: '2026-05-10', installmentTotal: 3, paymentType: 'credit', cardBrand: 'Visa Caixa' };
+  const a1 = { ...base, date: '2026-05-12', installmentCurrent: 1 };
+  const b1 = { ...a1 };
+  const a2 = { ...base, date: '2026-06-12', installmentCurrent: 2 };
+
+  assert.equal(seriesOccurrence(a1, []), 1);
+  // A second identical purchase posted the same month is the 2nd occurrence.
+  assert.equal(seriesOccurrence(b1, [a1]), 2);
+  // The same purchase's earlier installment is not another purchase.
+  assert.equal(seriesOccurrence(a2, [a1, b1]), 1);
+  // Another value is another series.
+  assert.equal(seriesOccurrence(b1, [{ ...a1, amount: 99 }]), 1);
+});
+
+test('seriesOccurrence: rows without installmentCurrent are told apart by posting month', () => {
+  const base = { amount: 50, purchaseDate: '2026-05-10', installmentTotal: 4, paymentType: 'credit', cardBrand: 'Elo Caixa' };
+  const may = { ...base, date: '2026-05-15' };
+  const june = { ...base, date: '2026-06-15' };
+  assert.equal(seriesOccurrence(june, [may]), 1);
+  assert.equal(seriesOccurrence(june, [may, { ...june }]), 2);
+});
+
+test('seriesOccurrence: 1 for a row that is not an installment group', () => {
+  assert.equal(
+    seriesOccurrence({ amount: 10, date: '2026-05-01', paymentType: 'pix' }, [{ amount: 10, date: '2026-05-01', paymentType: 'pix' }]),
+    1
+  );
 });

@@ -2,6 +2,7 @@ import { PluggyTransactionApi } from '../pluggy/client';
 import { isPlausibleInstallment } from './billUtils';
 import { MAX_INSTALLMENTS } from '../api/schemas/common';
 import { addMonthsClamped, installmentDates } from './dateUtils';
+import { InstallmentSeriesKey, installmentKeyId } from './installmentKeys';
 
 // Collapses interior whitespace the way billMappingKey's normalizeDescription
 // does (billUtils.ts), so a merchant description stays stable across syncs
@@ -344,8 +345,8 @@ export interface InstallmentPlan {
   date: string;
   // How many expense rows the purchase expands into.
   installments: number;
-  // Whether the expansion is an installment group, which is what makes
-  // insertExpenseDocuments dedupe against an already-imported series.
+  // Whether the expansion is an installment group — the only kind of row the
+  // stored-series probe (installmentSeriesKeys) looks up.
   isGroup: boolean;
 }
 
@@ -398,25 +399,8 @@ export function resolveInstallmentPlan(row: {
   };
 }
 
-// One stored installment of a series, as the already-imported check looks it
-// up in Expense.
-export interface InstallmentSeriesKey {
-  value: number;
-  date: string;
-  cardBrand: string;
-  installment: number;
-  totalInstallments: number;
-}
-
-// The installments a staged credit row would expand into, keyed for the
-// "series already stored?" probe — or undefined when the row is not an
-// expandable credit installment group. The description is deliberately not
-// part of the key: a series imported from a fatura PDF carries the parser's
-// recovered text, never Pluggy's description, and a series imported from an
-// earlier Pluggy row may since have been renamed in Lançamentos. Card, value,
-// per-installment date and installment position together already pin one
-// purchase.
-export function installmentSeriesKeys(row: {
+// The row shape the series helpers read.
+export interface SeriesRow {
   amount: number;
   date: string;
   purchaseDate?: string | null;
@@ -424,7 +408,14 @@ export function installmentSeriesKeys(row: {
   installmentTotal?: number | null;
   paymentType?: string | null;
   cardBrand?: string | null;
-}): InstallmentSeriesKey[] | undefined {
+}
+
+// The installments a staged credit row would expand into, keyed for the
+// "series already stored?" probe — or undefined when the row is not an
+// expandable credit installment group. The key carries no description (see
+// installmentKeys.ts), so it identifies a series up to identical purchases;
+// seriesOccurrence tells those apart.
+export function installmentSeriesKeys(row: SeriesRow): InstallmentSeriesKey[] | undefined {
   if (row.paymentType !== 'credit' || !row.cardBrand) return undefined;
   const resolved = resolveInstallmentPlan(row);
   if ('reason' in resolved || !resolved.plan.isGroup) return undefined;
@@ -437,6 +428,28 @@ export function installmentSeriesKeys(row: {
     installment: i + 1,
     totalInstallments: plan.installments,
   }));
+}
+
+// Which of several identical purchases (same card, value, purchase date and
+// installment count) `row` is, 1-based, given the staged rows that already
+// left the queue (imported, or skipped as already stored). Each identical
+// purchase posts its own row every month, so the resolved rows of the same
+// series posted in `row`'s month are the purchases already accounted for, and
+// `row` is the next one. Rows posted in another month are the same purchases'
+// other installments, not more purchases — the posting month tells them apart
+// even on rows that carry no installmentCurrent, which installmentCurrent
+// itself could not.
+export function seriesOccurrence(row: SeriesRow, resolved: SeriesRow[]): number {
+  const own = installmentSeriesKeys(row)?.[0];
+  if (!own) return 1;
+  const ownId = installmentKeyId(own);
+  const month = row.date.slice(0, 7);
+  const earlier = resolved.filter(other => {
+    if (other.date.slice(0, 7) !== month) return false;
+    const key = installmentSeriesKeys(other)?.[0];
+    return key !== undefined && installmentKeyId(key) === ownId;
+  });
+  return earlier.length + 1;
 }
 
 export function shouldIgnore(
