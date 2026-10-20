@@ -7,6 +7,7 @@ import {
   deriveInstallments,
   anchorPurchaseDate,
   resolveInstallmentPlan,
+  installmentSeriesKeys,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
   computeSyncWindow,
@@ -625,4 +626,39 @@ test('validSuggestionAnswers: only pairs that exist in the live category list su
   });
 
   assert.deepEqual(validSuggestionAnswers({}, categories), {});
+});
+
+// --- installmentSeriesKeys: the "series already stored?" probe ------------
+
+test('installmentSeriesKeys: every installment of the series, from the same anchor as the import', () => {
+  const keys = installmentSeriesKeys({
+    amount: 120.5,
+    date: '2026-09-10',
+    purchaseDate: '2026-07-31',
+    installmentCurrent: 3,
+    installmentTotal: 3,
+    paymentType: 'credit',
+    cardBrand: 'Visa Caixa',
+  });
+  assert.deepEqual(keys, [
+    { value: 120.5, date: '2026-07-31', cardBrand: 'Visa Caixa', installment: 1, totalInstallments: 3 },
+    { value: 120.5, date: '2026-08-31', cardBrand: 'Visa Caixa', installment: 2, totalInstallments: 3 },
+    { value: 120.5, date: '2026-09-30', cardBrand: 'Visa Caixa', installment: 3, totalInstallments: 3 },
+  ]);
+});
+
+test('installmentSeriesKeys: a later installment row yields the same keys as the first', () => {
+  const base = { amount: 50, installmentTotal: 4, paymentType: 'credit', cardBrand: 'Elo Caixa' };
+  const first = installmentSeriesKeys({ ...base, date: '2026-05-12', purchaseDate: '2026-05-10', installmentCurrent: 1 });
+  const third = installmentSeriesKeys({ ...base, date: '2026-07-12', purchaseDate: '2026-05-10', installmentCurrent: 3 });
+  assert.deepEqual(third, first);
+});
+
+test('installmentSeriesKeys: undefined for anything that is not an expandable credit group', () => {
+  const base = { amount: 50, date: '2026-05-12', installmentCurrent: 1, installmentTotal: 4, paymentType: 'credit', cardBrand: 'Elo Caixa' };
+  assert.equal(installmentSeriesKeys({ ...base, installmentTotal: 1 }), undefined);
+  assert.equal(installmentSeriesKeys({ ...base, paymentType: 'debit' }), undefined);
+  assert.equal(installmentSeriesKeys({ ...base, cardBrand: null }), undefined);
+  // No plausible current and no purchaseDate — the import parks it, so the probe must too.
+  assert.equal(installmentSeriesKeys({ ...base, installmentCurrent: null }), undefined);
 });

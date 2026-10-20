@@ -1,7 +1,7 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
 import { computeEffectiveDate } from '../utils/cycleUtils';
-import { addMonthsClamped } from '../utils/dateUtils';
+import { installmentDates } from '../utils/dateUtils';
 
 // One logical purchase. `installments` and `valueIsTotal` only mean anything for
 // a credit purchase; the schema's discriminated union is what keeps a non-credit
@@ -56,8 +56,8 @@ export async function buildExpenseDocuments(
   const transactionId = isCredit ? crypto.randomUUID() : undefined;
 
   const documents: ExpenseDocument[] = [];
-  for (let i = 1; i <= count; i++) {
-    const date = addMonthsClamped(input.date, i - 1).toISOString().split('T')[0];
+  for (const [index, date] of installmentDates(input.date, count).entries()) {
+    const i = index + 1;
     documents.push({
       name: input.name,
       value: perValue,

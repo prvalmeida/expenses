@@ -24,6 +24,7 @@ import {
   derivePaymentType,
   shouldIgnore,
   resolveInstallmentPlan,
+  installmentSeriesKeys,
   toIsoDate as narrowIsoDate,
   computeSyncWindow,
   PluggyAccountLike,
@@ -727,14 +728,14 @@ export interface AutoImportResult {
   skippedExisting: number;
 }
 
-// The skipped_existing check, within Pluggy only — reuses billService's guard
-// (billService.ts ~227-236) exactly as written: an exact match on { name,
-// value, date, cardBrand, installment, totalInstallments }, applied only to
-// expanded installment rows. It works here because both sides of the
-// comparison are produced by buildExpenseDocuments from the same anchor date,
-// which is only true once the anchor-date correction above is in place. A
-// single non-installment charge appearing twice is two charges, not a dupe —
-// so non-installment documents are never deduped.
+// The skipped_existing check, adapted from billService's guard: an exact match
+// on { value, date, cardBrand, installment, totalInstallments }, applied only
+// to expanded installment rows. Unlike the bill guard it leaves `name` out —
+// the same key skipImportedSeries probes with (see installmentSeriesKeys for
+// why the description cannot identify a series). It works because both sides
+// of the comparison are expanded from the same anchor date. A single
+// non-installment charge appearing twice is two charges, not a dupe — so
+// non-installment documents are never deduped.
 async function insertExpenseDocuments(
   documents: ExpenseDocument[],
   isInstallment: boolean
@@ -744,8 +745,7 @@ async function insertExpenseDocuments(
 
   for (const document of documents) {
     if (isInstallment) {
-      const exists = await Expense.findOne({
-        name: document.name,
+      const exists = await Expense.exists({
         value: document.value,
         date: document.date,
         cardBrand: document.cardBrand,
@@ -762,6 +762,44 @@ async function insertExpenseDocuments(
   }
 
   return { importedIds, skippedExisting };
+}
+
+// Over status: 'pending' POSTED credit rows that expand into an installment
+// group: when every installment of the series is already stored, the row is
+// marked skipped_existing so it leaves the review queue. Each monthly
+// installment arrives as its own Pluggy row, and the first one imported
+// already expanded the whole series — but autoImportExpenses only reaches the
+// dedupe in insertExpenseDocuments after a BillMapping hit, so a series that
+// was classified by hand (or imported from a fatura PDF) resurfaced in review
+// every month. This pass needs no mapping and no category: it only asks
+// whether the expenses exist. Disabled accounts are included on purpose —
+// marking a row as already stored imports nothing.
+async function skipImportedSeries(result: AutoImportResult): Promise<void> {
+  const rows = await PluggyTransaction.find({
+    status: 'pending',
+    direction: 'outflow',
+    pluggyStatus: 'POSTED',
+    paymentType: 'credit',
+    installmentTotal: { $gt: 1 },
+  });
+
+  for (const row of rows) {
+    const keys = installmentSeriesKeys(row);
+    if (!keys) continue;
+
+    let allStored = true;
+    for (const key of keys) {
+      if (!(await Expense.exists(key))) {
+        allStored = false;
+        break;
+      }
+    }
+    if (!allStored) continue;
+
+    row.status = 'skipped_existing';
+    await row.save();
+    result.skippedExisting += keys.length;
+  }
 }
 
 // Over status: 'pending' outflows whose pluggyStatus is POSTED — a PENDING
@@ -895,6 +933,7 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
     skippedExisting: 0,
   };
 
+  await skipImportedSeries(result);
   await autoImportExpenses(result);
   await autoImportIncomes(result);
 

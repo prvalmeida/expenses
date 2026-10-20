@@ -1,7 +1,7 @@
 import { PluggyTransactionApi } from '../pluggy/client';
 import { isPlausibleInstallment } from './billUtils';
 import { MAX_INSTALLMENTS } from '../api/schemas/common';
-import { addMonthsClamped } from './dateUtils';
+import { addMonthsClamped, installmentDates } from './dateUtils';
 
 // Collapses interior whitespace the way billMappingKey's normalizeDescription
 // does (billUtils.ts), so a merchant description stays stable across syncs
@@ -396,6 +396,47 @@ export function resolveInstallmentPlan(row: {
     reason:
       'Parcela sem número de parcela atual plausível e sem data de compra — não é possível ancorar a data de compra.',
   };
+}
+
+// One stored installment of a series, as the already-imported check looks it
+// up in Expense.
+export interface InstallmentSeriesKey {
+  value: number;
+  date: string;
+  cardBrand: string;
+  installment: number;
+  totalInstallments: number;
+}
+
+// The installments a staged credit row would expand into, keyed for the
+// "series already stored?" probe — or undefined when the row is not an
+// expandable credit installment group. The description is deliberately not
+// part of the key: a series imported from a fatura PDF carries the parser's
+// recovered text, never Pluggy's description, and a series imported from an
+// earlier Pluggy row may since have been renamed in Lançamentos. Card, value,
+// per-installment date and installment position together already pin one
+// purchase.
+export function installmentSeriesKeys(row: {
+  amount: number;
+  date: string;
+  purchaseDate?: string | null;
+  installmentCurrent?: number | null;
+  installmentTotal?: number | null;
+  paymentType?: string | null;
+  cardBrand?: string | null;
+}): InstallmentSeriesKey[] | undefined {
+  if (row.paymentType !== 'credit' || !row.cardBrand) return undefined;
+  const resolved = resolveInstallmentPlan(row);
+  if ('reason' in resolved || !resolved.plan.isGroup) return undefined;
+  const { plan } = resolved;
+  const cardBrand = row.cardBrand;
+  return installmentDates(plan.date, plan.installments).map((date, i) => ({
+    value: Math.abs(row.amount),
+    date,
+    cardBrand,
+    installment: i + 1,
+    totalInstallments: plan.installments,
+  }));
 }
 
 export function shouldIgnore(
