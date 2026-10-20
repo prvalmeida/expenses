@@ -1,7 +1,8 @@
 import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
 import { computeEffectiveDate } from '../utils/cycleUtils';
-import { addMonthsClamped } from '../utils/dateUtils';
+import { installmentDates } from '../utils/dateUtils';
+import { InstallmentSeriesKey, installmentKey, installmentKeyId } from '../utils/installmentKeys';
 
 // One logical purchase. `installments` and `valueIsTotal` only mean anything for
 // a credit purchase; the schema's discriminated union is what keeps a non-credit
@@ -56,8 +57,8 @@ export async function buildExpenseDocuments(
   const transactionId = isCredit ? crypto.randomUUID() : undefined;
 
   const documents: ExpenseDocument[] = [];
-  for (let i = 1; i <= count; i++) {
-    const date = addMonthsClamped(input.date, i - 1).toISOString().split('T')[0];
+  for (const [index, date] of installmentDates(input.date, count).entries()) {
+    const i = index + 1;
     documents.push({
       name: input.name,
       value: perValue,
@@ -76,6 +77,59 @@ export async function buildExpenseDocuments(
   }
 
   return documents;
+}
+
+// How many stored expenses match each installment key, in one query — the
+// guards below run per staged row inside the Pluggy sync lock, and a findOne
+// per installment was N sequential round trips per row on every sync.
+export async function countStoredInstallments(
+  keys: InstallmentSeriesKey[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (keys.length === 0) return counts;
+
+  await connectToDatabase();
+  const docs = await Expense.find({ $or: keys }, 'value date cardBrand installment totalInstallments').lean<
+    { value: number; date: string; cardBrand?: string; installment?: number; totalInstallments?: number }[]
+  >();
+  for (const doc of docs) {
+    const key = installmentKey(doc);
+    if (!key) continue;
+    const id = installmentKeyId(key);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+// Inserts the documents of one purchase, skipping each installment already
+// stored — the single dedupe both the bill import and the Pluggy import use, so
+// a series booked by one is recognised by the other in either order.
+//
+// `occurrence` is which of several identical purchases (same card, value, date
+// and installment count) this one is, 1-based: an installment is skipped only
+// when at least that many copies are already stored. The key carries no
+// `name` (see installmentKeys.ts), so without the count the second of two real
+// identical purchases would match the first's series and be silently dropped.
+export async function insertDedupedExpenseDocuments(
+  documents: ExpenseDocument[],
+  occurrence = 1
+): Promise<{ importedIds: string[]; skippedExisting: number }> {
+  const keys = documents.map(document => installmentKey(document));
+  const stored = await countStoredInstallments(keys.filter(key => key !== undefined));
+
+  const importedIds: string[] = [];
+  let skippedExisting = 0;
+  for (const [i, document] of documents.entries()) {
+    const key = keys[i];
+    if (key && (stored.get(installmentKeyId(key)) ?? 0) >= occurrence) {
+      skippedExisting++;
+      continue;
+    }
+    const created = await Expense.create(document);
+    importedIds.push(String(created._id));
+  }
+
+  return { importedIds, skippedExisting };
 }
 
 export async function createExpenses(input: CreateExpenseInput) {

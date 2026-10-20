@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, CircleAlert, Clock, Inbox, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
 import { ICON_STROKE } from '@/components/shell/nav';
@@ -172,6 +172,23 @@ export default function PluggySync() {
 
   const [selectedExpenseIds, setSelectedExpenseIds] = useState<Set<string>>(new Set());
   const [selectedIncomeIds, setSelectedIncomeIds] = useState<Set<string>>(new Set());
+  // Set by load(), consumed by the pre-check effect: the pre-check must run once
+  // per load, never again on a row edit (see the effect).
+  const [precheckPending, setPrecheckPending] = useState(false);
+  // Rows whose checkbox the user has acted on (a click, select-all, or an edit
+  // that auto-ticked it). A reload (after an import or a sync) re-runs the
+  // pre-check: a touched row keeps whatever the user made of its box, while an
+  // untouched one is re-decided from its current readiness — so a row that
+  // loaded with no suggestion and was just given a valid one by a sync gets
+  // ticked like every other suggested row, instead of staying unchecked
+  // because it had been seen before.
+  const touchedIds = useRef<Set<string>>(new Set());
+  // Rows whose classification the user changed by hand; carryEdits keeps their
+  // resolved* fields across a reload. An explicit record rather than a
+  // comparison with the suggestion: a row the user deliberately set back to
+  // the suggested pair would compare as untouched, and a sync that rewrote the
+  // suggestion would then overwrite the user's choice under a still-ticked box.
+  const editedIds = useRef<Set<string>>(new Set());
 
   // A category renamed or deleted elsewhere leaves a staged row's suggestion
   // pointing at a name that no longer exists; treat it as unclassified rather
@@ -186,6 +203,13 @@ export default function PluggySync() {
 
   const effectiveIncomeType = (type: string | null): string | null =>
     type !== null && (categoriesLoading || incomeTypes.includes(type)) ? type : null;
+
+  // "Ready to import" — an expense needs both category and subcategory
+  // resolved; an income has no subcategory, so its type alone qualifies.
+  const expenseReady = (row: ExpenseRowState): boolean => {
+    const type = effectiveType(row.resolvedType);
+    return type !== null && effectiveSubtype(type, row.resolvedSubtype) !== null;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -211,16 +235,22 @@ export default function PluggySync() {
           ...r,
           resolvedType: r.suggestedType ?? null,
         }));
-      setExpenseRows(nextExpenseRows);
-      setIncomeRows(nextIncomeRows);
+      // A row the user edited keeps their edit across a reload; it would
+      // otherwise snap back to the suggestion while its box stayed checked.
+      setExpenseRows(prev => carryEdits(prev, nextExpenseRows, editedIds.current, r => ({
+        resolvedType: r.resolvedType,
+        resolvedSubtype: r.resolvedSubtype,
+        resolvedPaymentType: r.resolvedPaymentType,
+        resolvedCardBrand: r.resolvedCardBrand,
+      })));
+      setIncomeRows(prev => carryEdits(prev, nextIncomeRows, editedIds.current, r => ({ resolvedType: r.resolvedType })));
       setIgnoredRows(ignored);
       setAnomalyRows(anomalies);
-      // Selection is reset here and re-populated by the pre-check effect
-      // below once categories resolve — the pre-check must use the effective
-      // (validated) suggestion, which load() cannot know before useCategories
-      // finishes.
-      setSelectedExpenseIds(new Set());
-      setSelectedIncomeIds(new Set());
+      // The selection is not reset here: the pre-check effect below decides
+      // the new rows once categories resolve (it must use the effective,
+      // validated suggestion, which load() cannot know before useCategories
+      // finishes) and prunes the rows that left the queue.
+      setPrecheckPending(true);
     } catch {
       setError('Erro ao carregar transações Pluggy');
     } finally {
@@ -236,47 +266,67 @@ export default function PluggySync() {
   // suggestedType/suggestedSubtype on a row, and pre-checking on the raw value
   // would tick a box the confirm gate then silently drops. Reusing the same
   // effective* predicates the confirm gate applies means a checked box always
-  // means "ready to import". An expense needs both category and subcategory
-  // resolved; an income has no subcategory, so its type alone qualifies.
+  // means "ready to import".
+  //
+  // It runs once per load, gated on precheckPending — never keyed on
+  // expenseRows/incomeRows. updateExpenseRow replaces expenseRows on every
+  // edit, so a row-keyed effect rebuilt the whole selection whenever any row
+  // was edited, re-ticking every box the user had unchecked. After the
+  // pre-check a row the user touched belongs to the user; the update handlers
+  // only add the one row an edit made ready, and a reload only re-decides rows
+  // nobody touched (touchedIds).
   useEffect(() => {
-    if (categoriesLoading) return;
-    setSelectedExpenseIds(
-      new Set(
-        expenseRows
-          .filter(r => {
-            const type = effectiveType(r.resolvedType);
-            return type !== null && effectiveSubtype(type, r.resolvedSubtype) !== null;
-          })
-          .map(r => r.pluggyId)
-      )
-    );
-    setSelectedIncomeIds(
-      new Set(incomeRows.filter(r => effectiveIncomeType(r.resolvedType) !== null).map(r => r.pluggyId))
-    );
+    if (categoriesLoading || !precheckPending) return;
+    setPrecheckPending(false);
+    // Rows that left the queue are forgotten, so the refs stay bounded.
+    const onScreen = new Set([...expenseRows, ...incomeRows].map(r => r.pluggyId));
+    for (const ref of [touchedIds, editedIds]) {
+      ref.current = new Set([...ref.current].filter(id => onScreen.has(id)));
+    }
+    const touched = touchedIds.current;
+    const keepOrPrecheck = <R extends { pluggyId: string }>(rows: R[], ready: (row: R) => boolean) =>
+      (prev: Set<string>) =>
+        new Set(rows.filter(r => (touched.has(r.pluggyId) ? prev.has(r.pluggyId) : ready(r))).map(r => r.pluggyId));
+    setSelectedExpenseIds(keepOrPrecheck(expenseRows, expenseReady));
+    setSelectedIncomeIds(keepOrPrecheck(incomeRows, r => effectiveIncomeType(r.resolvedType) !== null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoriesLoading, expenseRows, incomeRows]);
+  }, [categoriesLoading, precheckPending]);
 
   const updateExpenseRow = <K extends keyof ExpenseRowState>(
     pluggyId: string,
     field: K,
     value: ExpenseRowState[K]
   ) => {
-    setExpenseRows(prev =>
-      prev.map(row => {
-        if (row.pluggyId !== pluggyId) return row;
-        const updated = { ...row, [field]: value };
-        if (field === 'resolvedType') updated.resolvedSubtype = null;
-        if (field === 'resolvedPaymentType' && value !== 'credit') updated.resolvedCardBrand = '';
-        return updated;
-      })
-    );
+    // Applied to the latest row through a functional update, never to the
+    // render-time copy: a reload landing in the same batch would otherwise be
+    // overwritten with the stale row's server fields.
+    const apply = (row: ExpenseRowState): ExpenseRowState => {
+      const updated = { ...row, [field]: value };
+      if (field === 'resolvedType') updated.resolvedSubtype = null;
+      if (field === 'resolvedPaymentType' && value !== 'credit') updated.resolvedCardBrand = '';
+      return updated;
+    };
+    const current = expenseRows.find(row => row.pluggyId === pluggyId);
+    if (!current) return;
+    editedIds.current.add(pluggyId);
+    setExpenseRows(prev => prev.map(row => (row.pluggyId === pluggyId ? apply(row) : row)));
+    // Classifying a row is consent to import it — but only that row: touching
+    // the selection of any other row would undo the user's unchecks.
+    if (!expenseReady(current) && expenseReady(apply(current))) toggleExpenseSelected(pluggyId, true);
   };
 
   const updateIncomeRow = (pluggyId: string, type: string | null) => {
+    const current = incomeRows.find(row => row.pluggyId === pluggyId);
+    if (!current) return;
+    editedIds.current.add(pluggyId);
     setIncomeRows(prev => prev.map(row => (row.pluggyId === pluggyId ? { ...row, resolvedType: type } : row)));
+    if (effectiveIncomeType(current.resolvedType) === null && effectiveIncomeType(type) !== null) {
+      toggleIncomeSelected(pluggyId, true);
+    }
   };
 
   const toggleExpenseSelected = (pluggyId: string, checked: boolean) => {
+    touchedIds.current.add(pluggyId);
     setSelectedExpenseIds(prev => {
       const next = new Set(prev);
       if (checked) next.add(pluggyId);
@@ -286,6 +336,7 @@ export default function PluggySync() {
   };
 
   const toggleIncomeSelected = (pluggyId: string, checked: boolean) => {
+    touchedIds.current.add(pluggyId);
     setSelectedIncomeIds(prev => {
       const next = new Set(prev);
       if (checked) next.add(pluggyId);
@@ -311,10 +362,14 @@ export default function PluggySync() {
     [someIncomesSelected]
   );
 
-  const selectAllExpenses = (checked: boolean) =>
+  const selectAllExpenses = (checked: boolean) => {
+    for (const r of expenseRows) touchedIds.current.add(r.pluggyId);
     setSelectedExpenseIds(checked ? new Set(expenseRows.map(r => r.pluggyId)) : new Set());
-  const selectAllIncomes = (checked: boolean) =>
+  };
+  const selectAllIncomes = (checked: boolean) => {
+    for (const r of incomeRows) touchedIds.current.add(r.pluggyId);
     setSelectedIncomeIds(checked ? new Set(incomeRows.map(r => r.pluggyId)) : new Set());
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -664,6 +719,22 @@ export default function PluggySync() {
 function suggestionHint(row: PluggyTransactionRow, matchesSuggestion: boolean): string | null {
   if (row.suggestedBy === undefined || !matchesSuggestion) return null;
   return row.suggestedBy === 'ai' ? 'Sugerido pela IA' : 'Sugerido pelo histórico';
+}
+
+// Merges a fresh load over the rows on screen: server fields always come from
+// the fresh row, but a row the user edited keeps its resolved* fields. An
+// unedited row takes the fresh suggestion — a sync may have just written one.
+function carryEdits<R extends { pluggyId: string }>(
+  prev: R[],
+  next: R[],
+  editedIds: ReadonlySet<string>,
+  edits: (row: R) => Partial<R>
+): R[] {
+  const editedById = new Map(prev.filter(r => editedIds.has(r.pluggyId)).map(r => [r.pluggyId, r]));
+  return next.map(r => {
+    const old = editedById.get(r.pluggyId);
+    return old ? { ...r, ...edits(old) } : r;
+  });
 }
 
 function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, checked, onCheck, onChange }: {

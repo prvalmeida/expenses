@@ -1,7 +1,8 @@
 import { PluggyTransactionApi } from '../pluggy/client';
 import { isPlausibleInstallment } from './billUtils';
 import { MAX_INSTALLMENTS } from '../api/schemas/common';
-import { addMonthsClamped } from './dateUtils';
+import { addMonthsClamped, installmentDates } from './dateUtils';
+import { InstallmentSeriesKey, installmentKeyId } from './installmentKeys';
 
 // Collapses interior whitespace the way billMappingKey's normalizeDescription
 // does (billUtils.ts), so a merchant description stays stable across syncs
@@ -344,8 +345,8 @@ export interface InstallmentPlan {
   date: string;
   // How many expense rows the purchase expands into.
   installments: number;
-  // Whether the expansion is an installment group, which is what makes
-  // insertExpenseDocuments dedupe against an already-imported series.
+  // Whether the expansion is an installment group — the only kind of row the
+  // stored-series probe (installmentSeriesKeys) looks up.
   isGroup: boolean;
 }
 
@@ -396,6 +397,59 @@ export function resolveInstallmentPlan(row: {
     reason:
       'Parcela sem número de parcela atual plausível e sem data de compra — não é possível ancorar a data de compra.',
   };
+}
+
+// The row shape the series helpers read.
+export interface SeriesRow {
+  amount: number;
+  date: string;
+  purchaseDate?: string | null;
+  installmentCurrent?: number | null;
+  installmentTotal?: number | null;
+  paymentType?: string | null;
+  cardBrand?: string | null;
+}
+
+// The installments a staged credit row would expand into, keyed for the
+// "series already stored?" probe — or undefined when the row is not an
+// expandable credit installment group. The key carries no description (see
+// installmentKeys.ts), so it identifies a series up to identical purchases;
+// seriesOccurrence tells those apart.
+export function installmentSeriesKeys(row: SeriesRow): InstallmentSeriesKey[] | undefined {
+  if (row.paymentType !== 'credit' || !row.cardBrand) return undefined;
+  const resolved = resolveInstallmentPlan(row);
+  if ('reason' in resolved || !resolved.plan.isGroup) return undefined;
+  const { plan } = resolved;
+  const cardBrand = row.cardBrand;
+  return installmentDates(plan.date, plan.installments).map((date, i) => ({
+    value: Math.abs(row.amount),
+    date,
+    cardBrand,
+    installment: i + 1,
+    totalInstallments: plan.installments,
+  }));
+}
+
+// Which of several identical purchases (same card, value, purchase date and
+// installment count) `row` is, 1-based, given the staged rows that already
+// left the queue (imported, or skipped as already stored). Each identical
+// purchase posts its own row every month, so the resolved rows of the same
+// series posted in `row`'s month are the purchases already accounted for, and
+// `row` is the next one. Rows posted in another month are the same purchases'
+// other installments, not more purchases — the posting month tells them apart
+// even on rows that carry no installmentCurrent, which installmentCurrent
+// itself could not.
+export function seriesOccurrence(row: SeriesRow, resolved: SeriesRow[]): number {
+  const own = installmentSeriesKeys(row)?.[0];
+  if (!own) return 1;
+  const ownId = installmentKeyId(own);
+  const month = row.date.slice(0, 7);
+  const earlier = resolved.filter(other => {
+    if (other.date.slice(0, 7) !== month) return false;
+    const key = installmentSeriesKeys(other)?.[0];
+    return key !== undefined && installmentKeyId(key) === ownId;
+  });
+  return earlier.length + 1;
 }
 
 export function shouldIgnore(

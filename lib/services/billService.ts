@@ -6,7 +6,8 @@ import { BillMapping } from '../models/BillMapping';
 import { CardCycle } from '../models/CardCycle';
 import { parseBillText, extractClosingDate, extractFullDueDate, billMappingKey } from '../utils/billUtils';
 import { getExpenseCategories } from '../utils/categoryUtils';
-import { buildExpenseDocuments } from './expenseService';
+import { buildExpenseDocuments, insertDedupedExpenseDocuments } from './expenseService';
+import { installmentKey, installmentKeyId } from '../utils/installmentKeys';
 import { ApiError } from '../api/respond';
 
 export interface ParseBillInput {
@@ -194,6 +195,9 @@ export async function importBillItems({
   const subtypesByType = new Map(categories.map(c => [c.name, new Set(c.subtypes)]));
 
   const result: ImportBillResult = { imported: 0, skippedInvalid: 0, skippedExisting: 0 };
+  // How many rows of this statement already claimed each series (by its first
+  // installment's key).
+  const seriesSeen = new Map<string, number>();
 
   for (const item of items) {
     // The schema no longer enum-validates type, so this is the only guard: an
@@ -225,26 +229,19 @@ export async function importBillItems({
       valueIsTotal: false,
     });
 
-    for (const document of documents) {
-      // Only the expanded installments are deduped: overlapping bills re-report
-      // the same parcela, while a single charge appearing twice is two charges.
-      if (isInstallment) {
-        const exists = await Expense.findOne({
-          name: document.name,
-          value: document.value,
-          date: document.date,
-          cardBrand,
-          installment: document.installment,
-          totalInstallments: document.totalInstallments,
-        });
-        if (exists) {
-          result.skippedExisting++;
-          continue;
-        }
-      }
-      await Expense.create(document);
-      result.imported++;
+    // Two identical parcelas on one statement are two purchases: the n-th of
+    // them only counts as stored once n copies of its series exist.
+    const seriesKey = installmentKey(documents[0]);
+    let occurrence = 1;
+    if (seriesKey) {
+      const id = installmentKeyId(seriesKey);
+      occurrence = (seriesSeen.get(id) ?? 0) + 1;
+      seriesSeen.set(id, occurrence);
     }
+
+    const { importedIds, skippedExisting } = await insertDedupedExpenseDocuments(documents, occurrence);
+    result.imported += importedIds.length;
+    result.skippedExisting += skippedExisting;
   }
 
   return result;

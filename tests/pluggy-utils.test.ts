@@ -7,6 +7,8 @@ import {
   deriveInstallments,
   anchorPurchaseDate,
   resolveInstallmentPlan,
+  installmentSeriesKeys,
+  seriesOccurrence,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
   computeSyncWindow,
@@ -625,4 +627,71 @@ test('validSuggestionAnswers: only pairs that exist in the live category list su
   });
 
   assert.deepEqual(validSuggestionAnswers({}, categories), {});
+});
+
+// --- installmentSeriesKeys: the "series already stored?" probe ------------
+
+test('installmentSeriesKeys: every installment of the series, from the same anchor as the import', () => {
+  const keys = installmentSeriesKeys({
+    amount: 120.5,
+    date: '2026-09-10',
+    purchaseDate: '2026-07-31',
+    installmentCurrent: 3,
+    installmentTotal: 3,
+    paymentType: 'credit',
+    cardBrand: 'Visa Caixa',
+  });
+  assert.deepEqual(keys, [
+    { value: 120.5, date: '2026-07-31', cardBrand: 'Visa Caixa', installment: 1, totalInstallments: 3 },
+    { value: 120.5, date: '2026-08-31', cardBrand: 'Visa Caixa', installment: 2, totalInstallments: 3 },
+    { value: 120.5, date: '2026-09-30', cardBrand: 'Visa Caixa', installment: 3, totalInstallments: 3 },
+  ]);
+});
+
+test('installmentSeriesKeys: a later installment row yields the same keys as the first', () => {
+  const base = { amount: 50, installmentTotal: 4, paymentType: 'credit', cardBrand: 'Elo Caixa' };
+  const first = installmentSeriesKeys({ ...base, date: '2026-05-12', purchaseDate: '2026-05-10', installmentCurrent: 1 });
+  const third = installmentSeriesKeys({ ...base, date: '2026-07-12', purchaseDate: '2026-05-10', installmentCurrent: 3 });
+  assert.deepEqual(third, first);
+});
+
+test('installmentSeriesKeys: undefined for anything that is not an expandable credit group', () => {
+  const base = { amount: 50, date: '2026-05-12', installmentCurrent: 1, installmentTotal: 4, paymentType: 'credit', cardBrand: 'Elo Caixa' };
+  assert.equal(installmentSeriesKeys({ ...base, installmentTotal: 1 }), undefined);
+  assert.equal(installmentSeriesKeys({ ...base, paymentType: 'debit' }), undefined);
+  assert.equal(installmentSeriesKeys({ ...base, cardBrand: null }), undefined);
+  // No plausible current and no purchaseDate — the import parks it, so the probe must too.
+  assert.equal(installmentSeriesKeys({ ...base, installmentCurrent: null }), undefined);
+});
+
+// --- seriesOccurrence: telling identical purchases apart ------------------
+
+test('seriesOccurrence: counts the resolved rows of the same series posted in the same month', () => {
+  const base = { amount: 100, purchaseDate: '2026-05-10', installmentTotal: 3, paymentType: 'credit', cardBrand: 'Visa Caixa' };
+  const a1 = { ...base, date: '2026-05-12', installmentCurrent: 1 };
+  const b1 = { ...a1 };
+  const a2 = { ...base, date: '2026-06-12', installmentCurrent: 2 };
+
+  assert.equal(seriesOccurrence(a1, []), 1);
+  // A second identical purchase posted the same month is the 2nd occurrence.
+  assert.equal(seriesOccurrence(b1, [a1]), 2);
+  // The same purchase's earlier installment is not another purchase.
+  assert.equal(seriesOccurrence(a2, [a1, b1]), 1);
+  // Another value is another series.
+  assert.equal(seriesOccurrence(b1, [{ ...a1, amount: 99 }]), 1);
+});
+
+test('seriesOccurrence: rows without installmentCurrent are told apart by posting month', () => {
+  const base = { amount: 50, purchaseDate: '2026-05-10', installmentTotal: 4, paymentType: 'credit', cardBrand: 'Elo Caixa' };
+  const may = { ...base, date: '2026-05-15' };
+  const june = { ...base, date: '2026-06-15' };
+  assert.equal(seriesOccurrence(june, [may]), 1);
+  assert.equal(seriesOccurrence(june, [may, { ...june }]), 2);
+});
+
+test('seriesOccurrence: 1 for a row that is not an installment group', () => {
+  assert.equal(
+    seriesOccurrence({ amount: 10, date: '2026-05-01', paymentType: 'pix' }, [{ amount: 10, date: '2026-05-01', paymentType: 'pix' }]),
+    1
+  );
 });

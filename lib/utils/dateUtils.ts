@@ -11,3 +11,15 @@ export function addMonthsClamped(dateStr: string, months: number): Date {
   const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
   return new Date(Date.UTC(targetYear, targetMonth, Math.min(day, lastDay)));
 }
+
+/**
+ * The purchase date of each installment of a series anchored on `anchor`,
+ * installment 1 first. The one place the per-installment date is derived —
+ * buildExpenseDocuments expands a purchase with it and the Pluggy
+ * already-imported check probes for the same dates, so the two cannot drift.
+ */
+export function installmentDates(anchor: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) =>
+    addMonthsClamped(anchor, i).toISOString().split('T')[0]
+  );
+}

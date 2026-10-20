@@ -24,6 +24,9 @@ import {
   derivePaymentType,
   shouldIgnore,
   resolveInstallmentPlan,
+  installmentSeriesKeys,
+  seriesOccurrence,
+  SeriesRow,
   toIsoDate as narrowIsoDate,
   computeSyncWindow,
   PluggyAccountLike,
@@ -38,7 +41,8 @@ import {
   validateExpensePair,
   validateIncomeType,
 } from '../utils/categoryUtils';
-import { buildExpenseDocuments, ExpenseDocument } from './expenseService';
+import { buildExpenseDocuments, countStoredInstallments, insertDedupedExpenseDocuments } from './expenseService';
+import { seriesStored } from '../utils/installmentKeys';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -727,41 +731,59 @@ export interface AutoImportResult {
   skippedExisting: number;
 }
 
-// The skipped_existing check, within Pluggy only — reuses billService's guard
-// (billService.ts ~227-236) exactly as written: an exact match on { name,
-// value, date, cardBrand, installment, totalInstallments }, applied only to
-// expanded installment rows. It works here because both sides of the
-// comparison are produced by buildExpenseDocuments from the same anchor date,
-// which is only true once the anchor-date correction above is in place. A
-// single non-installment charge appearing twice is two charges, not a dupe —
-// so non-installment documents are never deduped.
-async function insertExpenseDocuments(
-  documents: ExpenseDocument[],
-  isInstallment: boolean
-): Promise<{ importedIds: string[]; skippedExisting: number }> {
-  const importedIds: string[] = [];
-  let skippedExisting = 0;
+// Which of several identical purchases `row` is, counted against the rows that
+// already left the queue — the `occurrence` insertDedupedExpenseDocuments and
+// the stored-series probe take (see seriesOccurrence). Only POSTED rows count:
+// a row imported by hand while still PENDING is usually the same purchase
+// Pluggy later re-posts under a new id, and counting it would make that
+// re-post look like a second purchase and book the series twice.
+async function occurrenceOf(row: InstanceType<typeof PluggyTransaction>): Promise<number> {
+  if (!row.installmentTotal || row.installmentTotal <= 1) return 1;
+  const resolved = await PluggyTransaction.find(
+    {
+      pluggyId: { $ne: row.pluggyId },
+      status: { $in: ['imported', 'skipped_existing'] },
+      pluggyStatus: 'POSTED',
+      cardBrand: row.cardBrand,
+      amount: row.amount,
+      installmentTotal: row.installmentTotal,
+    },
+    'amount date purchaseDate installmentCurrent installmentTotal paymentType cardBrand'
+  ).lean<SeriesRow[]>();
+  return seriesOccurrence(row, resolved);
+}
 
-  for (const document of documents) {
-    if (isInstallment) {
-      const exists = await Expense.findOne({
-        name: document.name,
-        value: document.value,
-        date: document.date,
-        cardBrand: document.cardBrand,
-        installment: document.installment,
-        totalInstallments: document.totalInstallments,
-      });
-      if (exists) {
-        skippedExisting++;
-        continue;
-      }
-    }
-    const created = await Expense.create(document);
-    importedIds.push(String(created._id));
+// Over status: 'pending' POSTED credit rows that expand into an installment
+// group: when the row's whole series is already stored, the row is marked
+// skipped_existing so it leaves the review queue. Each monthly installment
+// arrives as its own Pluggy row, and the first one imported already expanded
+// the whole series — but autoImportExpenses only reaches the dedupe after a
+// BillMapping hit, so a series that was classified by hand (or imported from a
+// fatura PDF) resurfaced in review every month. This pass needs no mapping and
+// no category: it only asks whether the expenses exist — as many copies of
+// them as there are identical purchases, so the second of two real identical
+// purchases is never mistaken for the first. Disabled accounts are included on
+// purpose — marking a row as already stored imports nothing.
+async function skipImportedSeries(result: AutoImportResult): Promise<void> {
+  const rows = await PluggyTransaction.find({
+    status: 'pending',
+    direction: 'outflow',
+    pluggyStatus: 'POSTED',
+    paymentType: 'credit',
+    installmentTotal: { $gt: 1 },
+  });
+
+  for (const row of rows) {
+    const keys = installmentSeriesKeys(row);
+    if (!keys) continue;
+
+    const occurrence = await occurrenceOf(row);
+    if (!seriesStored(keys, await countStoredInstallments(keys), occurrence)) continue;
+
+    row.status = 'skipped_existing';
+    await row.save();
+    result.skippedExisting++;
   }
-
-  return { importedIds, skippedExisting };
 }
 
 // Over status: 'pending' outflows whose pluggyStatus is POSTED — a PENDING
@@ -825,8 +847,7 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
       valueIsTotal: false,
     });
 
-    const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, plan.isGroup);
-    result.skippedExisting += skippedExisting;
+    const { importedIds } = await insertDedupedExpenseDocuments(documents, await occurrenceOf(row));
 
     if (importedIds.length > 0) {
       row.status = 'imported';
@@ -836,6 +857,7 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
       // Every expanded installment already existed — this row is a re-post
       // of a purchase whose group another Pluggy row already imported.
       row.status = 'skipped_existing';
+      result.skippedExisting++;
     }
     await row.save();
   }
@@ -895,6 +917,7 @@ export async function autoImportStaged(): Promise<AutoImportResult> {
     skippedExisting: 0,
   };
 
+  await skipImportedSeries(result);
   await autoImportExpenses(result);
   await autoImportIncomes(result);
 
@@ -1276,8 +1299,7 @@ async function importStagedExpense(
     valueIsTotal: false,
   });
 
-  const { importedIds, skippedExisting } = await insertExpenseDocuments(documents, plan.isGroup);
-  result.skippedExisting += skippedExisting;
+  const { importedIds } = await insertDedupedExpenseDocuments(documents, await occurrenceOf(row));
 
   if (importedIds.length > 0) {
     row.status = 'imported';
@@ -1285,6 +1307,7 @@ async function importStagedExpense(
     result.imported++;
   } else {
     row.status = 'skipped_existing';
+    result.skippedExisting++;
   }
   await row.save();
 
