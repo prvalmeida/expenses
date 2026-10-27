@@ -101,6 +101,25 @@ export async function countStoredInstallments(
   return counts;
 }
 
+// The dates of the stored expenses at one position of a series (same card,
+// value and installment count) dated inside [dateFrom, dateTo]. `date` is
+// YYYY-MM-DD, so the range is a lexical comparison.
+export async function storedInstallmentDates(query: {
+  value: number;
+  cardBrand: string;
+  installment: number;
+  totalInstallments: number;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<string[]> {
+  await connectToDatabase();
+  const { dateFrom, dateTo, ...position } = query;
+  const docs = await Expense.find({ ...position, date: { $gte: dateFrom, $lte: dateTo } }, 'date').lean<
+    { date: string }[]
+  >();
+  return docs.map(doc => doc.date);
+}
+
 // Inserts the documents of one purchase, skipping each installment already
 // stored — the single dedupe both the bill import and the Pluggy import use, so
 // a series booked by one is recognised by the other in either order.

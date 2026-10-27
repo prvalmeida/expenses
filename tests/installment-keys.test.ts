@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { installmentKey, installmentKeyId, seriesStored } from '../lib/utils/installmentKeys';
+import { installmentKey, installmentKeyId, storedCopies } from '../lib/utils/installmentKeys';
 
 const doc = { value: 100, date: '2026-05-10', cardBrand: 'Visa Caixa', installment: 1, totalInstallments: 3 };
 
@@ -14,19 +14,20 @@ test('installmentKey: only a credit installment of a real group has a key', () =
   assert.equal(installmentKey({ ...doc, cardBrand: undefined }), undefined);
 });
 
-test('seriesStored: the n-th identical purchase needs n stored copies of every installment', () => {
+test('storedCopies: the n-th identical purchase needs n stored copies of every installment', () => {
   const keys = [1, 2, 3].map(installment => ({ ...doc, installment }));
   const one = new Map(keys.map(k => [installmentKeyId(k), 1]));
   const two = new Map(keys.map(k => [installmentKeyId(k), 2]));
 
-  assert.equal(seriesStored(keys, one, 1), true);
+  assert.equal(storedCopies(keys, one), 1);
   // Two different purchases with the same card, value, date and count: the
   // second is NOT already stored just because the first is.
-  assert.equal(seriesStored(keys, one, 2), false);
-  assert.equal(seriesStored(keys, two, 2), true);
+  assert.equal(storedCopies(keys, two), 2);
 
-  const partial = new Map(one);
+  const partial = new Map(two);
+  partial.set(installmentKeyId(keys[2]), 1);
+  assert.equal(storedCopies(keys, partial), 1);
   partial.delete(installmentKeyId(keys[2]));
-  assert.equal(seriesStored(keys, partial, 1), false);
-  assert.equal(seriesStored([], one, 1), false);
+  assert.equal(storedCopies(keys, partial), 0);
+  assert.equal(storedCopies([], one), 0);
 });

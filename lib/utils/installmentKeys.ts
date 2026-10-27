@@ -43,12 +43,10 @@ export function installmentKeyId(key: InstallmentSeriesKey): string {
   return `${key.cardBrand}|${key.date}|${key.value}|${key.installment}/${key.totalInstallments}`;
 }
 
-// Whether every key is stored at least `occurrence` times — i.e. whether the
-// series of the occurrence-th identical purchase is already fully booked.
-export function seriesStored(
-  keys: InstallmentSeriesKey[],
-  stored: ReadonlyMap<string, number>,
-  occurrence: number
-): boolean {
-  return keys.length > 0 && keys.every(key => (stored.get(installmentKeyId(key)) ?? 0) >= occurrence);
+// How many complete copies of a series are stored — the fewest copies of any
+// one installment. The series of the occurrence-th identical purchase is
+// already fully booked when this is at least `occurrence`.
+export function storedCopies(keys: InstallmentSeriesKey[], stored: ReadonlyMap<string, number>): number {
+  if (keys.length === 0) return 0;
+  return Math.min(...keys.map(key => stored.get(installmentKeyId(key)) ?? 0));
 }

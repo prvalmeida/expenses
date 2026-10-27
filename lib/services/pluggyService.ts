@@ -25,6 +25,8 @@ import {
   shouldIgnore,
   resolveInstallmentPlan,
   installmentSeriesKeys,
+  ownInstallmentProbe,
+  impliedSeriesAnchor,
   seriesOccurrence,
   SeriesRow,
   toIsoDate as narrowIsoDate,
@@ -41,8 +43,13 @@ import {
   validateExpensePair,
   validateIncomeType,
 } from '../utils/categoryUtils';
-import { buildExpenseDocuments, countStoredInstallments, insertDedupedExpenseDocuments } from './expenseService';
-import { seriesStored } from '../utils/installmentKeys';
+import {
+  buildExpenseDocuments,
+  countStoredInstallments,
+  insertDedupedExpenseDocuments,
+  storedInstallmentDates,
+} from './expenseService';
+import { storedCopies } from '../utils/installmentKeys';
 import { ApiError } from '../api/respond';
 
 function today(): string {
@@ -778,12 +785,35 @@ async function skipImportedSeries(result: AutoImportResult): Promise<void> {
     if (!keys) continue;
 
     const occurrence = await occurrenceOf(row);
-    if (!seriesStored(keys, await countStoredInstallments(keys), occurrence)) continue;
+    if ((await storedSeriesCopies(row, keys[0].date)) < occurrence) continue;
 
     row.status = 'skipped_existing';
     await row.save();
     result.skippedExisting++;
   }
+}
+
+// How many complete copies of `row`'s series are stored: the copies on the
+// plan's own anchor plus those on every anchor a stored installment in the
+// row's position implies (see ownInstallmentProbe) — without the latter, a row
+// with no purchaseDate never matched a series stored on its real purchase day.
+// Each identical purchase stored on its own day is a separate copy, so the
+// counts add up across anchors against the same occurrence.
+async function storedSeriesCopies(row: SeriesRow, planAnchor: string): Promise<number> {
+  const anchors = new Set([planAnchor]);
+  const probe = ownInstallmentProbe(row);
+  if (probe) {
+    for (const date of await storedInstallmentDates(probe)) {
+      anchors.add(impliedSeriesAnchor(date, probe.installment));
+    }
+  }
+
+  let copies = 0;
+  for (const anchor of anchors) {
+    const keys = installmentSeriesKeys(row, anchor) ?? [];
+    copies += storedCopies(keys, await countStoredInstallments(keys));
+  }
+  return copies;
 }
 
 // Over status: 'pending' outflows whose pluggyStatus is POSTED — a PENDING

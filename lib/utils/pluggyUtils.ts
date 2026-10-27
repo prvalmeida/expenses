@@ -327,7 +327,7 @@ export function anchorPurchaseDate(
   if (reported) return reported;
 
   if (!installments) return row.date;
-  return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
+  return impliedSeriesAnchor(row.date, installments.current);
 }
 
 // The reported purchase date, when it is usable. Both values are YYYY-MM-DD,
@@ -414,20 +414,73 @@ export interface SeriesRow {
 // "series already stored?" probe — or undefined when the row is not an
 // expandable credit installment group. The key carries no description (see
 // installmentKeys.ts), so it identifies a series up to identical purchases;
-// seriesOccurrence tells those apart.
-export function installmentSeriesKeys(row: SeriesRow): InstallmentSeriesKey[] | undefined {
+// seriesOccurrence tells those apart. `anchor` overrides the plan's anchor for
+// probing a series stored on another start date (see ownInstallmentProbe).
+export function installmentSeriesKeys(row: SeriesRow, anchor?: string): InstallmentSeriesKey[] | undefined {
   if (row.paymentType !== 'credit' || !row.cardBrand) return undefined;
   const resolved = resolveInstallmentPlan(row);
   if ('reason' in resolved || !resolved.plan.isGroup) return undefined;
   const { plan } = resolved;
   const cardBrand = row.cardBrand;
-  return installmentDates(plan.date, plan.installments).map((date, i) => ({
+  return installmentDates(anchor ?? plan.date, plan.installments).map((date, i) => ({
     value: Math.abs(row.amount),
     date,
     cardBrand,
     installment: i + 1,
     totalInstallments: plan.installments,
   }));
+}
+
+// How far before a row's posting date the stored copy of its own installment
+// may be dated. An installment posts on the statement of the cycle its date
+// falls in, so the gap is at most about one billing cycle (29 days on live
+// Caixa rows); the slack absorbs a hand-entered purchase date a few days off.
+export const OWN_INSTALLMENT_WINDOW_DAYS = 45;
+
+export interface OwnInstallmentProbe {
+  value: number;
+  cardBrand: string;
+  installment: number;
+  totalInstallments: number;
+  dateFrom: string;
+  dateTo: string;
+}
+
+// The stored expenses that could be this row's own installment, as a query.
+// The exact probe (installmentSeriesKeys) anchors on resolveInstallmentPlan,
+// which for a row without a usable purchaseDate is the posting date backed off
+// by whole months — a reconstructed month, not the purchase day — so a series
+// stored on its real dates (fatura PDF, receipt import, the form) never matched
+// it and the row came back to Revisar every month. The row's own position
+// (installmentCurrent) dated inside the window before its posting date finds
+// that series wherever it starts; impliedSeriesAnchor turns each hit back into
+// an anchor for the exact probe, so the whole series is still checked.
+export function ownInstallmentProbe(row: SeriesRow): OwnInstallmentProbe | undefined {
+  if (row.paymentType !== 'credit' || !row.cardBrand) return undefined;
+  const installments = deriveInstallments({
+    installmentCurrent: row.installmentCurrent ?? undefined,
+    installmentTotal: row.installmentTotal ?? undefined,
+  });
+  if (!installments) return undefined;
+
+  const from = new Date(`${row.date}T00:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - OWN_INSTALLMENT_WINDOW_DAYS);
+  return {
+    value: Math.abs(row.amount),
+    cardBrand: row.cardBrand,
+    installment: installments.current,
+    totalInstallments: installments.total,
+    dateFrom: from.toISOString().split('T')[0],
+    dateTo: row.date,
+  };
+}
+
+// The series anchor (installment 1's date) a stored installment implies. A
+// series anchored on a day its later months lack (the 31st) is clamped forward
+// and reads back a few days early here — the exact probe then misses and the
+// row stays in review, the safe direction.
+export function impliedSeriesAnchor(storedDate: string, installment: number): string {
+  return addMonthsClamped(storedDate, -(installment - 1)).toISOString().split('T')[0];
 }
 
 // Which of several identical purchases (same card, value, purchase date and

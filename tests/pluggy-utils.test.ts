@@ -8,6 +8,8 @@ import {
   anchorPurchaseDate,
   resolveInstallmentPlan,
   installmentSeriesKeys,
+  ownInstallmentProbe,
+  impliedSeriesAnchor,
   seriesOccurrence,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
@@ -662,6 +664,59 @@ test('installmentSeriesKeys: undefined for anything that is not an expandable cr
   assert.equal(installmentSeriesKeys({ ...base, cardBrand: null }), undefined);
   // No plausible current and no purchaseDate — the import parks it, so the probe must too.
   assert.equal(installmentSeriesKeys({ ...base, installmentCurrent: null }), undefined);
+});
+
+// --- ownInstallmentProbe: finding a series stored on its real dates -------
+
+// A live Caixa row with no purchaseDate: 3/3 posted on the August statement.
+// The month arithmetic anchors it on 2026-06-14; the series was stored from the
+// receipt on 2026-05-16, 06-16 and 07-16, so the exact probe never matched it.
+const unanchoredRow = {
+  amount: 99.34,
+  date: '2026-08-14',
+  installmentCurrent: 3,
+  installmentTotal: 3,
+  paymentType: 'credit',
+  cardBrand: 'Elo Caixa',
+};
+
+test('ownInstallmentProbe: the row position, dated inside the window before posting', () => {
+  assert.deepEqual(ownInstallmentProbe(unanchoredRow), {
+    value: 99.34,
+    cardBrand: 'Elo Caixa',
+    installment: 3,
+    totalInstallments: 3,
+    dateFrom: '2026-06-30',
+    dateTo: '2026-08-14',
+  });
+});
+
+test('ownInstallmentProbe: the stored copy implies the anchor the exact probe needs', () => {
+  const probe = ownInstallmentProbe(unanchoredRow)!;
+  const stored = '2026-07-16';
+  assert.ok(stored >= probe.dateFrom && stored <= probe.dateTo);
+
+  const anchor = impliedSeriesAnchor(stored, probe.installment);
+  assert.equal(anchor, '2026-05-16');
+  assert.deepEqual(
+    installmentSeriesKeys(unanchoredRow, anchor)?.map(key => key.date),
+    ['2026-05-16', '2026-06-16', '2026-07-16']
+  );
+  // Without the override the keys sit on the reconstructed month.
+  assert.equal(installmentSeriesKeys(unanchoredRow)?.[0].date, '2026-06-14');
+});
+
+test('ownInstallmentProbe: undefined without a plausible position or a card', () => {
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, installmentCurrent: null }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, installmentCurrent: 4 }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, installmentTotal: 1 }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, cardBrand: null }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, paymentType: 'debit' }), undefined);
+});
+
+test('impliedSeriesAnchor: backs off by the installment position', () => {
+  assert.equal(impliedSeriesAnchor('2026-07-16', 1), '2026-07-16');
+  assert.equal(impliedSeriesAnchor('2027-01-25', 8), '2026-06-25');
 });
 
 // --- seriesOccurrence: telling identical purchases apart ------------------
