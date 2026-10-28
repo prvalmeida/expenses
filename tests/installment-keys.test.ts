@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { installmentKey, installmentKeyId, storedCopies } from '../lib/utils/installmentKeys';
+import { installmentKey, installmentKeyId, sameInstallmentValue, storedCopies } from '../lib/utils/installmentKeys';
 
 const doc = { value: 100, date: '2026-05-10', cardBrand: 'Visa Caixa', installment: 1, totalInstallments: 3 };
 
@@ -30,4 +30,13 @@ test('storedCopies: the n-th identical purchase needs n stored copies of every i
   partial.delete(installmentKeyId(keys[2]));
   assert.equal(storedCopies(keys, partial), 0);
   assert.equal(storedCopies([], one), 0);
+});
+
+test('sameInstallmentValue: an even split matches the bank parcela carrying the leftover cent', () => {
+  // 100,00 in 3x: the form stores 33,33 each, the bank posts 33,34 on one.
+  assert.equal(sameInstallmentValue(33.33, 33.34), true);
+  assert.equal(sameInstallmentValue(33.33, 33.33), true);
+  assert.equal(sameInstallmentValue(33.33, 33.35), false);
+  // Float noise is not a cent.
+  assert.equal(sameInstallmentValue(0.1 + 0.2, 0.31), true);
 });

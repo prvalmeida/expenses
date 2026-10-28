@@ -26,8 +26,13 @@ import {
   resolveInstallmentPlan,
   installmentSeriesKeys,
   ownInstallmentProbe,
-  impliedSeriesAnchor,
+  probedSeriesKeys,
   seriesOccurrence,
+  seriesClaimants,
+  storedSeriesVerdict,
+  SeriesVerdict,
+  ClaimantRow,
+  CLAIMANT_STATUSES,
   SeriesRow,
   toIsoDate as narrowIsoDate,
   computeSyncWindow,
@@ -738,27 +743,85 @@ export interface AutoImportResult {
   skippedExisting: number;
 }
 
-// Which of several identical purchases `row` is, counted against the rows that
-// already left the queue — the `occurrence` insertDedupedExpenseDocuments and
-// the stored-series probe take (see seriesOccurrence). Only POSTED rows count:
-// a row imported by hand while still PENDING is usually the same purchase
-// Pluggy later re-posts under a new id, and counting it would make that
-// re-post look like a second purchase and book the series twice.
-async function occurrenceOf(row: InstanceType<typeof PluggyTransaction>): Promise<number> {
-  if (!row.installmentTotal || row.installmentTotal <= 1) return 1;
-  const resolved = await PluggyTransaction.find(
+// The staged rows that could claim the same stored series as `row`: POSTED
+// outflows of the same card, value (give or take a cent) and installment count.
+// Only POSTED rows count: a row imported by hand while still PENDING is usually
+// the same purchase Pluggy later re-posts under a new id, and counting it would
+// make that re-post look like a second purchase and book the series twice.
+async function claimantRows(row: SeriesRow & { pluggyId: string }): Promise<ClaimantRow[]> {
+  const amount = row.amount;
+  return PluggyTransaction.find(
     {
       pluggyId: { $ne: row.pluggyId },
-      status: { $in: ['imported', 'skipped_existing'] },
+      status: { $in: CLAIMANT_STATUSES },
       pluggyStatus: 'POSTED',
+      direction: 'outflow',
       cardBrand: row.cardBrand,
-      amount: row.amount,
+      amount: { $gte: amount - 0.015, $lte: amount + 0.015 },
       installmentTotal: row.installmentTotal,
     },
-    'amount date purchaseDate installmentCurrent installmentTotal paymentType cardBrand'
-  ).lean<SeriesRow[]>();
-  return seriesOccurrence(row, resolved);
+    'amount date purchaseDate installmentCurrent installmentTotal paymentType cardBrand status'
+  ).lean<ClaimantRow[]>();
 }
+
+interface SeriesStanding {
+  verdict: SeriesVerdict;
+  // Which of several identical purchases the row is at its plan anchor — the
+  // `occurrence` insertDedupedExpenseDocuments takes when the row is booked.
+  occurrence: number;
+}
+
+// Whether `row`'s installment series is already stored (see
+// storedSeriesVerdict), from three queries whatever the number of candidate
+// series: the stored installments at the row's position in its window, every
+// candidate series' keys counted at once, and the claimant rows.
+async function seriesStanding(
+  row: SeriesRow & { pluggyId: string },
+  mode: 'automatic' | 'manual'
+): Promise<SeriesStanding> {
+  let copies: number;
+  let hits: number;
+  const probe = ownInstallmentProbe(row);
+  if (probe) {
+    const hitDates = await storedInstallmentDates(probe);
+    const candidates = probedSeriesKeys(probe, hitDates);
+    const stored = await countStoredInstallments(candidates.flat());
+    copies = candidates.reduce((sum, series) => sum + storedCopies(series, stored), 0);
+    hits = hitDates.length;
+  } else {
+    const keys = installmentSeriesKeys(row);
+    if (!keys) return { verdict: 'absent', occurrence: 1 };
+    copies = hits = storedCopies(keys, await countStoredInstallments(keys));
+  }
+
+  const others = await claimantRows(row);
+  const resolved = others.filter(other => other.status !== 'pending');
+  return {
+    verdict: storedSeriesVerdict({ copies, hits, claimants: seriesClaimants(row, others) }, mode),
+    occurrence: seriesOccurrence(row, resolved),
+  };
+}
+
+// A staged row as the series helpers read it, with the payment type and card
+// the import will actually use (the reviewer may have changed either).
+function seriesRow(
+  row: InstanceType<typeof PluggyTransaction>,
+  overrides: { paymentType?: string; cardBrand?: string } = {}
+): SeriesRow & { pluggyId: string } {
+  return {
+    pluggyId: row.pluggyId,
+    amount: row.amount,
+    date: row.date,
+    purchaseDate: row.purchaseDate,
+    installmentCurrent: row.installmentCurrent,
+    installmentTotal: row.installmentTotal,
+    paymentType: overrides.paymentType ?? row.paymentType,
+    cardBrand: overrides.cardBrand ?? row.cardBrand,
+  };
+}
+
+const SERIES_DOUBT_REASON =
+  'Pode já estar lançada: há uma compra igual no cartão e não dá para saber a qual linha ela corresponde.';
 
 // Over status: 'pending' POSTED credit rows that expand into an installment
 // group: when the row's whole series is already stored, the row is marked
@@ -768,9 +831,9 @@ async function occurrenceOf(row: InstanceType<typeof PluggyTransaction>): Promis
 // BillMapping hit, so a series that was classified by hand (or imported from a
 // fatura PDF) resurfaced in review every month. This pass needs no mapping and
 // no category: it only asks whether the expenses exist — as many copies of
-// them as there are identical purchases, so the second of two real identical
-// purchases is never mistaken for the first. Disabled accounts are included on
-// purpose — marking a row as already stored imports nothing.
+// them as there are rows with a claim on them, so the second of two real
+// identical purchases is never mistaken for the first. Disabled accounts are
+// included on purpose — marking a row as already stored imports nothing.
 async function skipImportedSeries(result: AutoImportResult): Promise<void> {
   const rows = await PluggyTransaction.find({
     status: 'pending',
@@ -781,39 +844,13 @@ async function skipImportedSeries(result: AutoImportResult): Promise<void> {
   });
 
   for (const row of rows) {
-    const keys = installmentSeriesKeys(row);
-    if (!keys) continue;
-
-    const occurrence = await occurrenceOf(row);
-    if ((await storedSeriesCopies(row, keys[0].date)) < occurrence) continue;
+    const { verdict } = await seriesStanding(seriesRow(row), 'automatic');
+    if (verdict !== 'stored') continue;
 
     row.status = 'skipped_existing';
     await row.save();
     result.skippedExisting++;
   }
-}
-
-// How many complete copies of `row`'s series are stored: the copies on the
-// plan's own anchor plus those on every anchor a stored installment in the
-// row's position implies (see ownInstallmentProbe) — without the latter, a row
-// with no purchaseDate never matched a series stored on its real purchase day.
-// Each identical purchase stored on its own day is a separate copy, so the
-// counts add up across anchors against the same occurrence.
-async function storedSeriesCopies(row: SeriesRow, planAnchor: string): Promise<number> {
-  const anchors = new Set([planAnchor]);
-  const probe = ownInstallmentProbe(row);
-  if (probe) {
-    for (const date of await storedInstallmentDates(probe)) {
-      anchors.add(impliedSeriesAnchor(date, probe.installment));
-    }
-  }
-
-  let copies = 0;
-  for (const anchor of anchors) {
-    const keys = installmentSeriesKeys(row, anchor) ?? [];
-    copies += storedCopies(keys, await countStoredInstallments(keys));
-  }
-  return copies;
 }
 
 // Over status: 'pending' outflows whose pluggyStatus is POSTED — a PENDING
@@ -865,6 +902,24 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
     }
     const { plan } = resolved;
 
+    // skipImportedSeries already cleared the rows whose series is stored; what
+    // is left may still be one of a stored series it cannot be told apart from,
+    // and booking it here would book that purchase twice with no human in the loop.
+    const standing = await seriesStanding(seriesRow(row), 'automatic');
+    if (standing.verdict === 'doubt') {
+      row.statusReason = SERIES_DOUBT_REASON;
+      await row.save();
+      result.stillPending++;
+      continue;
+    }
+    if (row.statusReason === SERIES_DOUBT_REASON) row.statusReason = undefined;
+    if (standing.verdict === 'stored') {
+      row.status = 'skipped_existing';
+      await row.save();
+      result.skippedExisting++;
+      continue;
+    }
+
     const documents = await buildExpenseDocuments({
       name: row.description,
       value: Math.abs(row.amount),
@@ -877,7 +932,7 @@ async function autoImportExpenses(result: AutoImportResult): Promise<void> {
       valueIsTotal: false,
     });
 
-    const { importedIds } = await insertDedupedExpenseDocuments(documents, await occurrenceOf(row));
+    const { importedIds } = await insertDedupedExpenseDocuments(documents, standing.occurrence);
 
     if (importedIds.length > 0) {
       row.status = 'imported';
@@ -1296,6 +1351,31 @@ export interface ImportStagedResult {
   skippedExisting: number;
 }
 
+// Confirming a classification teaches the merchant's BillMapping, whether or
+// not the row's expenses had to be booked.
+async function upsertReviewedMapping(
+  row: InstanceType<typeof PluggyTransaction>,
+  item: ImportStagedItem
+): Promise<void> {
+  if (!item.newMapping) return;
+
+  // A reclassification to a type with no subtype must CLEAR the stored one,
+  // not leave it. Mongoose drops `undefined` keys from an update, so
+  // `$set: { subtype: undefined }` is a silent no-op that keeps a stale
+  // subtype alive — and the next sync's autoImportStaged reads that mapping,
+  // finds the stale pair still valid, and auto-imports under the very
+  // subtype the reviewer just removed, with no human in the loop.
+  // billService avoids this by making its wire type `.nullable()`; here the
+  // field is `.optional()`, so the clear has to be an explicit $unset.
+  await BillMapping.updateOne(
+    { description: billMappingKey(row.description) },
+    item.subtype !== undefined
+      ? { $set: { type: item.type, subtype: item.subtype } }
+      : { $set: { type: item.type }, $unset: { subtype: '' } },
+    { upsert: true }
+  );
+}
+
 async function importStagedExpense(
   row: InstanceType<typeof PluggyTransaction>,
   item: ImportStagedItem,
@@ -1317,6 +1397,18 @@ async function importStagedExpense(
   const paymentType = item.paymentType ?? row.paymentType ?? 'debit';
   const cardBrand = item.cardBrand ?? row.cardBrand ?? undefined;
 
+  // The exact dedupe below only sees a series stored on the plan's anchor; a
+  // row without a purchaseDate anchors on a reconstructed month, so a series
+  // stored on its real dates has to be recognised here or it is booked twice.
+  const standing = await seriesStanding(seriesRow(row, { paymentType, cardBrand }), 'manual');
+  if (standing.verdict === 'stored') {
+    row.status = 'skipped_existing';
+    result.skippedExisting++;
+    await row.save();
+    await upsertReviewedMapping(row, item);
+    return;
+  }
+
   const documents = await buildExpenseDocuments({
     name: row.description,
     value: Math.abs(row.amount),
@@ -1329,7 +1421,7 @@ async function importStagedExpense(
     valueIsTotal: false,
   });
 
-  const { importedIds } = await insertDedupedExpenseDocuments(documents, await occurrenceOf(row));
+  const { importedIds } = await insertDedupedExpenseDocuments(documents, standing.occurrence);
 
   if (importedIds.length > 0) {
     row.status = 'imported';
@@ -1341,23 +1433,7 @@ async function importStagedExpense(
   }
   await row.save();
 
-  if (item.newMapping) {
-    // A reclassification to a type with no subtype must CLEAR the stored one,
-    // not leave it. Mongoose drops `undefined` keys from an update, so
-    // `$set: { subtype: undefined }` is a silent no-op that keeps a stale
-    // subtype alive — and the next sync's autoImportStaged reads that mapping,
-    // finds the stale pair still valid, and auto-imports under the very
-    // subtype the reviewer just removed, with no human in the loop.
-    // billService avoids this by making its wire type `.nullable()`; here the
-    // field is `.optional()`, so the clear has to be an explicit $unset.
-    await BillMapping.updateOne(
-      { description: billMappingKey(row.description) },
-      item.subtype !== undefined
-        ? { $set: { type: item.type, subtype: item.subtype } }
-        : { $set: { type: item.type }, $unset: { subtype: '' } },
-      { upsert: true }
-    );
-  }
+  await upsertReviewedMapping(row, item);
 }
 
 async function importStagedIncome(

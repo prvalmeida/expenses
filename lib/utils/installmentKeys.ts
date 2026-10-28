@@ -43,6 +43,23 @@ export function installmentKeyId(key: InstallmentSeriesKey): string {
   return `${key.cardBrand}|${key.date}|${key.value}|${key.installment}/${key.totalInstallments}`;
 }
 
+// The key without its value: the slot an installment occupies in a series.
+export function installmentSlotId(key: InstallmentSeriesKey): string {
+  return `${key.cardBrand}|${key.date}|${key.installment}/${key.totalInstallments}`;
+}
+
+// How far apart two installment values may be and still be the same parcela.
+// A purchase entered as a total (the form, the receipt import, POST
+// /api/v1/expenses) is split evenly by buildExpenseDocuments — 100,00 in 3x is
+// stored as 33,33 three times — while the bank puts the leftover cent on one
+// installment (33,34 + 33,33 + 33,33). Matching exactly made such a series
+// invisible to every guard, so the row it came from returned every month.
+export const INSTALLMENT_VALUE_TOLERANCE = 0.01;
+
+export function sameInstallmentValue(a: number, b: number): boolean {
+  return Math.abs(Math.round(a * 100) - Math.round(b * 100)) <= Math.round(INSTALLMENT_VALUE_TOLERANCE * 100);
+}
+
 // How many complete copies of a series are stored — the fewest copies of any
 // one installment. The series of the occurrence-th identical purchase is
 // already fully booked when this is at least `occurrence`.
