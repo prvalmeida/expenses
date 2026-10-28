@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 // Dark mode follows the device, which is only safe while every surface paints a design
 // token. A single raw palette class (`bg-white`, `text-gray-500`, `bg-blue-500`) renders
@@ -35,7 +35,8 @@ function sourceFiles(dir: string): string[] {
 test('UI code uses design tokens, never raw Tailwind palette classes', () => {
   const offenders: string[] = [];
   for (const file of SCANNED.flatMap(d => sourceFiles(join(ROOT, d)))) {
-    const rel = relative(ROOT, file);
+    // ALLOWED is keyed by POSIX path; on Windows `relative` returns backslashes.
+    const rel = relative(ROOT, file).split(sep).join('/');
     readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
       for (const [match] of line.matchAll(RAW_CLASS)) {
         const bare = match.replace(/^(?:[a-z-]+:)+/, '');
