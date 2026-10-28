@@ -2,7 +2,7 @@ import { PluggyTransactionApi } from '../pluggy/client';
 import { isPlausibleInstallment } from './billUtils';
 import { MAX_INSTALLMENTS } from '../api/schemas/common';
 import { addMonthsClamped, installmentDates } from './dateUtils';
-import { InstallmentSeriesKey, installmentKeyId } from './installmentKeys';
+import { InstallmentSeriesKey, installmentKeyId, sameInstallmentValue } from './installmentKeys';
 
 // Collapses interior whitespace the way billMappingKey's normalizeDescription
 // does (billUtils.ts), so a merchant description stays stable across syncs
@@ -327,7 +327,7 @@ export function anchorPurchaseDate(
   if (reported) return reported;
 
   if (!installments) return row.date;
-  return addMonthsClamped(row.date, -(installments.current - 1)).toISOString().split('T')[0];
+  return impliedSeriesAnchor(row.date, installments.current);
 }
 
 // The reported purchase date, when it is usable. Both values are YYYY-MM-DD,
@@ -420,14 +420,90 @@ export function installmentSeriesKeys(row: SeriesRow): InstallmentSeriesKey[] | 
   const resolved = resolveInstallmentPlan(row);
   if ('reason' in resolved || !resolved.plan.isGroup) return undefined;
   const { plan } = resolved;
-  const cardBrand = row.cardBrand;
-  return installmentDates(plan.date, plan.installments).map((date, i) => ({
-    value: Math.abs(row.amount),
+  return seriesKeysAt(Math.abs(row.amount), row.cardBrand, plan.date, plan.installments);
+}
+
+function seriesKeysAt(value: number, cardBrand: string, anchor: string, total: number): InstallmentSeriesKey[] {
+  return installmentDates(anchor, total).map((date, i) => ({
+    value,
     date,
     cardBrand,
     installment: i + 1,
-    totalInstallments: plan.installments,
+    totalInstallments: total,
   }));
+}
+
+// How far before a row's posting date the stored copy of its own installment
+// may be dated. An installment posts on the statement of the cycle its date
+// falls in, so the gap is at most about one billing cycle (29 days on live
+// Caixa rows); the slack absorbs a hand-entered purchase date a few days off.
+export const OWN_INSTALLMENT_WINDOW_DAYS = 45;
+
+function shiftDays(date: string, days: number): string {
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().split('T')[0];
+}
+
+function daysBetween(a: string, b: string): number {
+  return Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
+}
+
+export interface OwnInstallmentProbe {
+  value: number;
+  cardBrand: string;
+  installment: number;
+  totalInstallments: number;
+  dateFrom: string;
+  dateTo: string;
+}
+
+// The stored expenses that could be this row's own installment, as a query —
+// only for a row the plan cannot anchor on a real day. installmentSeriesKeys
+// anchors on resolveInstallmentPlan, which for a row without a usable
+// purchaseDate is the posting date backed off by whole months — a reconstructed
+// month, not the purchase day — so a series stored on its real dates (fatura
+// PDF, receipt import, the form) never matched it and the row came back to
+// Revisar every month. The row's own position (installmentCurrent) dated inside
+// the window before its posting date finds that series wherever it starts;
+// probedSeriesKeys turns each hit back into a whole series to check.
+//
+// A row WITH a usable purchaseDate gets undefined: its exact anchor is the real
+// day, and a window around it would only find other, identical purchases.
+export function ownInstallmentProbe(row: SeriesRow): OwnInstallmentProbe | undefined {
+  if (row.paymentType !== 'credit' || !row.cardBrand) return undefined;
+  if (reportedPurchaseDate(row)) return undefined;
+  const installments = deriveInstallments({
+    installmentCurrent: row.installmentCurrent ?? undefined,
+    installmentTotal: row.installmentTotal ?? undefined,
+  });
+  if (!installments) return undefined;
+
+  // Rows staged before migration 002 still hold a full timestamp.
+  const posted = toIsoDate(row.date);
+  return {
+    value: Math.abs(row.amount),
+    cardBrand: row.cardBrand,
+    installment: installments.current,
+    totalInstallments: installments.total,
+    dateFrom: shiftDays(posted, -OWN_INSTALLMENT_WINDOW_DAYS),
+    dateTo: posted,
+  };
+}
+
+// The candidate series a probe's hits imply: one key list per distinct anchor,
+// each to be checked whole (every installment stored, not just the one hit).
+export function probedSeriesKeys(probe: OwnInstallmentProbe, hitDates: string[]): InstallmentSeriesKey[][] {
+  const anchors = [...new Set(hitDates.map(date => impliedSeriesAnchor(date, probe.installment)))];
+  return anchors.map(anchor => seriesKeysAt(probe.value, probe.cardBrand, anchor, probe.totalInstallments));
+}
+
+// The series anchor (installment 1's date) a stored installment implies. A
+// series anchored on a day its later months lack (the 31st) is clamped forward
+// and reads back a few days early here — the exact probe then misses and the
+// row stays in review, the safe direction.
+export function impliedSeriesAnchor(storedDate: string, installment: number): string {
+  return addMonthsClamped(storedDate, -(installment - 1)).toISOString().split('T')[0];
 }
 
 // Which of several identical purchases (same card, value, purchase date and
@@ -450,6 +526,102 @@ export function seriesOccurrence(row: SeriesRow, resolved: SeriesRow[]): number 
     return key !== undefined && installmentKeyId(key) === ownId;
   });
   return earlier.length + 1;
+}
+
+// --- is this row's series already stored? ---------------------------------
+//
+// The key carries no description, so "stored" is always a count: as many
+// stored copies as there are staged rows with a claim on them. The two sides of
+// that comparison must identify a purchase the same way, or a copy belonging to
+// one row is counted for another.
+//
+// - A row with a usable purchaseDate is identified exactly: its copies are the
+//   series at its plan anchor, its claimants the resolved rows seriesOccurrence
+//   counts (same series, same posting month).
+// - A row without one is identified by its window (ownInstallmentProbe): its
+//   copies are the complete series whose installment at the row's position is
+//   dated inside the window, and its claimants are the other rows that could
+//   own one of those same series — any staged row at the same position whose
+//   own window overlaps, or a purchaseDate row whose installment at that
+//   position falls inside it. Two windows a month apart overlap, so two
+//   identical purchases on consecutive statements claim each other's series:
+//   the evidence is ambiguous and the row stays in review.
+
+// The staged statuses that can hold a claim on a stored series.
+export const CLAIMANT_STATUSES = ['pending', 'imported', 'skipped_existing'];
+
+export interface ClaimantRow extends SeriesRow {
+  status: string;
+}
+
+export interface SeriesClaimants {
+  // Rows that already left the queue — each one either booked a copy or
+  // was matched to one.
+  resolved: number;
+  // Rows still in review that could own one of the same copies.
+  pending: number;
+}
+
+// `others` are the POSTED staged rows of the same card, value (give or take a
+// cent) and installment count, excluding `row` itself.
+export function seriesClaimants(row: SeriesRow, others: ClaimantRow[]): SeriesClaimants {
+  const resolvedRows = others.filter(other => other.status === 'imported' || other.status === 'skipped_existing');
+  const probe = ownInstallmentProbe(row);
+  if (!probe) return { resolved: seriesOccurrence(row, resolvedRows) - 1, pending: 0 };
+
+  const claimants = { resolved: 0, pending: 0 };
+  for (const other of others) {
+    if (!claimsProbedSeries(other, probe)) continue;
+    if (other.status === 'pending') claimants.pending++;
+    else if (other.status === 'imported' || other.status === 'skipped_existing') claimants.resolved++;
+  }
+  return claimants;
+}
+
+function claimsProbedSeries(other: SeriesRow, probe: OwnInstallmentProbe): boolean {
+  if (other.cardBrand !== probe.cardBrand || other.installmentTotal !== probe.totalInstallments) return false;
+  if (!sameInstallmentValue(Math.abs(other.amount), probe.value)) return false;
+
+  const reported = reportedPurchaseDate(other);
+  // A row at another position is another month of a purchase — possibly this
+  // very one — so it never competes for the same installment.
+  if (other.installmentCurrent != null && other.installmentCurrent !== probe.installment) return false;
+  if (reported) {
+    const atPosition = addMonthsClamped(reported, probe.installment - 1).toISOString().split('T')[0];
+    return atPosition >= probe.dateFrom && atPosition <= probe.dateTo;
+  }
+  if (other.installmentCurrent == null) return false;
+  return daysBetween(toIsoDate(other.date), probe.dateTo) <= OWN_INSTALLMENT_WINDOW_DAYS;
+}
+
+export type SeriesVerdict = 'stored' | 'doubt' | 'absent';
+
+export interface StoredSeriesEvidence {
+  // Complete stored copies of the series the row identifies.
+  copies: number;
+  // Stored installments at the row's position the row could be, complete
+  // series or not (equal to `copies` for an exactly anchored row).
+  hits: number;
+  claimants: SeriesClaimants;
+}
+
+// The single decision both the review pass and the importers take.
+//
+// 'automatic' (skipImportedSeries, autoImportExpenses — no human in the loop):
+// stored only when there are enough copies for every claimant, pending ones
+// included, since nothing yet says which of them owns which copy. A row that
+// might be one of the stored series but cannot be told apart is 'doubt' — left
+// in review rather than booked a second time or silently cleared.
+//
+// 'manual' (importStaged — the reviewer is resolving rows one by one): only
+// the rows already resolved have taken a copy, so the row is stored when one
+// is left over for it.
+export function storedSeriesVerdict(evidence: StoredSeriesEvidence, mode: 'automatic' | 'manual'): SeriesVerdict {
+  const needResolved = 1 + evidence.claimants.resolved;
+  const need = mode === 'manual' ? needResolved : needResolved + evidence.claimants.pending;
+  if (evidence.copies >= need) return 'stored';
+  if (mode === 'automatic' && evidence.hits >= needResolved) return 'doubt';
+  return 'absent';
 }
 
 export function shouldIgnore(
