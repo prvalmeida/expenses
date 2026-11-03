@@ -47,7 +47,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
     loading: categoriesLoading,
   } = useCategories();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [inputMode, setInputMode] = useState<'pdf' | 'url'>('pdf');
+  const [inputMode, setInputMode] = useState<'pdf' | 'url'>('url');
   const [file, setFile] = useState<File | null>(null);
   const [receiptUrl, setReceiptUrl] = useState('');
   const [paymentType, setPaymentType] = useState('');
@@ -313,20 +313,20 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
         {/* Mode toggle */}
         <div className="flex bg-surface-2 p-1 rounded-lg mb-4">
           <button
-            onClick={() => switchMode('pdf')}
-            className={`flex-1 px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
-              inputMode === 'pdf' ? 'bg-surface-1 text-accent' : 'text-ink-muted'
-            }`}
-          >
-            <FileText size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> PDF da nota
-          </button>
-          <button
             onClick={() => switchMode('url')}
             className={`flex-1 px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
               inputMode === 'url' ? 'bg-surface-1 text-accent' : 'text-ink-muted'
             }`}
           >
             <Link2 size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> Link ou QR code
+          </button>
+          <button
+            onClick={() => switchMode('pdf')}
+            className={`flex-1 px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
+              inputMode === 'pdf' ? 'bg-surface-1 text-accent' : 'text-ink-muted'
+            }`}
+          >
+            <FileText size={16} strokeWidth={ICON_STROKE} aria-hidden="true" className="inline-block align-[-3px]" /> PDF da nota
           </button>
         </div>
 
@@ -342,29 +342,28 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
               />
             </div>
           ) : (
-            <div key="url">
-              <label className="block text-sm font-medium mb-1">Link do QR Code da Nota</label>
-              <div className="flex gap-2">
+            <div key="url" className="space-y-3">
+              <button
+                type="button"
+                onClick={() => { setError(null); setScannerOpen(true); }}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-accent text-on-accent rounded hover:bg-accent-hover text-sm font-bold"
+              >
+                <ScanQrCode size={20} strokeWidth={ICON_STROKE} aria-hidden="true" /> Escanear QR code
+              </button>
+              <div>
+                <label htmlFor="receipt-url" className="block text-sm font-medium mb-1">Ou cole o link do QR Code</label>
                 <input
+                  id="receipt-url"
                   type="url"
                   value={receiptUrl}
                   onChange={e => { setReceiptUrl(e.target.value); setError(null); }}
                   placeholder="https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=..."
-                  className="flex-1 min-w-0 p-2 border border-border-strong rounded text-sm"
+                  className="w-full min-w-0 p-2 border border-border-strong rounded text-sm"
                 />
-                <button
-                  type="button"
-                  onClick={() => { setError(null); setScannerOpen(true); }}
-                  title="Escanear QR code com a câmera"
-                  aria-label="Escanear QR code com a câmera"
-                  className="shrink-0 px-3 bg-accent text-on-accent rounded hover:bg-accent-hover text-sm font-bold"
-                >
-                  <ScanQrCode size={20} strokeWidth={ICON_STROKE} aria-hidden="true" />
-                </button>
+                <p className="text-[11px] text-ink-muted mt-1">
+                  Link gerado pelo QR Code da NFC-e (portais *.gov.br).
+                </p>
               </div>
-              <p className="text-[11px] text-ink-muted mt-1">
-                Cole o link gerado pelo QR Code da NFC-e (portais *.gov.br) ou escaneie com a câmera.
-              </p>
             </div>
           )}
 
