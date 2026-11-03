@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mapPluggyTransaction,
+  accountAmount,
   derivePaymentType,
   deriveDirection,
   deriveInstallments,
@@ -58,6 +59,57 @@ test('mapPluggyTransaction: narrows the timestamp and drops empty merchant names
 
   const noMerchant = mapPluggyTransaction({ ...base, date: '2026-08-14T03:00:00.000Z', merchant: null });
   assert.equal(noMerchant.merchantName, undefined);
+});
+
+test('mapPluggyTransaction: stages a foreign purchase at its BRL value', () => {
+  // The live Visa Caixa row (OPENCODE, 2026-09-29): US$ 10 charged as R$ 54,20.
+  const usd = mapPluggyTransaction({
+    id: 'tx-usd',
+    accountId: 'acc-1',
+    date: '2026-09-29T08:13:45.000Z',
+    description: 'OPENCODE',
+    currencyCode: 'USD',
+    amount: 10,
+    amountInAccountCurrency: 54.2,
+  });
+  assert.equal(usd.amount, 54.2);
+  assert.equal(usd.currencyCode, 'BRL');
+  assert.equal(usd.originalAmount, 10);
+  assert.equal(usd.originalCurrencyCode, 'USD');
+
+  // A BRL row is untouched and carries no original-* fields, even if Pluggy
+  // echoes amountInAccountCurrency on it.
+  const brl = mapPluggyTransaction({
+    id: 'tx-brl',
+    accountId: 'acc-1',
+    date: '2026-09-29',
+    description: 'PANVEL',
+    currencyCode: 'BRL',
+    amount: 34.52,
+    amountInAccountCurrency: 34.52,
+  });
+  assert.equal(brl.amount, 34.52);
+  assert.equal(brl.currencyCode, 'BRL');
+  assert.equal(brl.originalAmount, undefined);
+  assert.equal('originalCurrencyCode' in brl, false);
+});
+
+test('accountAmount: keeps the sign, refuses to guess without a conversion', () => {
+  // A refund abroad: both values negative.
+  assert.deepEqual(accountAmount({ amount: -10, currencyCode: 'usd', amountInAccountCurrency: -54.2 }), {
+    amount: -54.2,
+    currencyCode: 'BRL',
+    originalAmount: -10,
+    originalCurrencyCode: 'USD',
+  });
+  // Missing currency means BRL.
+  assert.deepEqual(accountAmount({ amount: 5 }), { amount: 5, currencyCode: 'BRL' });
+  // No conversion: the foreign code is kept so deriveStaging flags an anomaly
+  // instead of importing dollars as reais.
+  assert.deepEqual(accountAmount({ amount: 10, currencyCode: 'USD', amountInAccountCurrency: null }), {
+    amount: 10,
+    currencyCode: 'USD',
+  });
 });
 
 // --- step 8: derivePaymentType, the ladder -------------------------------

@@ -30,8 +30,14 @@ function firstNonEmpty(...values: (string | null | undefined)[]): string | undef
 
 export interface PluggyRawFields {
   date: string;
+  // Always in the ACCOUNT's currency (BRL) when Pluggy supplies the
+  // conversion — see accountAmount. `currencyCode` names the currency of
+  // `amount`, so it reads 'BRL' for a converted foreign purchase, and the
+  // original foreign value survives in originalAmount/originalCurrencyCode.
   amount: number;
   currencyCode: string;
+  originalAmount?: number;
+  originalCurrencyCode?: string;
   descriptionRaw: string;
   description: string;
   merchantName?: string;
@@ -50,6 +56,7 @@ export interface PluggyRawFields {
 // verified against a live Caixa connection on 2026-09-07 (see client.ts).
 export function mapPluggyTransaction(tx: PluggyTransactionApi): PluggyRawFields {
   const descriptionRaw = tx.description ?? '';
+  const converted = accountAmount(tx);
   return {
     // Pluggy sends a full ISO timestamp; everything downstream treats
     // PluggyTransaction.date as YYYY-MM-DD — listPluggyTransactions paginates
@@ -60,8 +67,15 @@ export function mapPluggyTransaction(tx: PluggyTransactionApi): PluggyRawFields 
     // the clock, and file the expense under a date the rest of the app cannot
     // match.
     date: toIsoDate(tx.date),
-    amount: tx.amount,
-    currencyCode: tx.currencyCode ?? 'BRL',
+    // A foreign purchase is staged at its converted BRL value: Expense.value
+    // is always reais, and staging the dollar amount imported a US$ 10
+    // charge as R$ 10,00.
+    amount: converted.amount,
+    currencyCode: converted.currencyCode,
+    ...(converted.originalAmount !== undefined && {
+      originalAmount: converted.originalAmount,
+      originalCurrencyCode: converted.originalCurrencyCode,
+    }),
     descriptionRaw,
     description: normalizeDescription(descriptionRaw),
     // Both merchant name fields come back as empty strings on some rows, which
@@ -76,6 +90,42 @@ export function mapPluggyTransaction(tx: PluggyTransactionApi): PluggyRawFields 
       : undefined,
     paymentMethod: tx.paymentData?.paymentMethod ?? undefined,
     raw: tx,
+  };
+}
+
+// Every Expense/Income the app stores is in reais; the linked accounts are
+// Brazilian. Read as a constant rather than off PluggyAccount because the
+// account payload's currency field was never verified live, and a guess here
+// would decide whether a foreign charge gets converted at all.
+export const ACCOUNT_CURRENCY = 'BRL';
+
+export interface AccountAmount {
+  amount: number;
+  currencyCode: string;
+  originalAmount?: number;
+  originalCurrencyCode?: string;
+}
+
+// `tx.amount` is in tx.currencyCode, which on a purchase abroad is the
+// merchant's currency, not the card's. Pluggy carries the card-currency value
+// in amountInAccountCurrency (same sign as amount). When a foreign row lacks
+// that conversion the raw amount is returned UNCONVERTED with its foreign
+// currencyCode, and deriveStaging turns that into an anomaly — importing a
+// dollar figure as reais is exactly the bug this exists to prevent.
+export function accountAmount(
+  tx: Pick<PluggyTransactionApi, 'amount' | 'currencyCode' | 'amountInAccountCurrency'>
+): AccountAmount {
+  const currency = (tx.currencyCode ?? ACCOUNT_CURRENCY).toUpperCase();
+  if (currency === ACCOUNT_CURRENCY) return { amount: tx.amount, currencyCode: ACCOUNT_CURRENCY };
+  const converted = tx.amountInAccountCurrency;
+  if (typeof converted !== 'number' || !Number.isFinite(converted)) {
+    return { amount: tx.amount, currencyCode: currency };
+  }
+  return {
+    amount: converted,
+    currencyCode: ACCOUNT_CURRENCY,
+    originalAmount: tx.amount,
+    originalCurrencyCode: currency,
   };
 }
 
