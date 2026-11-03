@@ -8,6 +8,7 @@ import Income from '../../../../lib/models/Income';
 import { PluggyItem } from '../../../../lib/models/PluggyItem';
 import { PluggyAccount } from '../../../../lib/models/PluggyAccount';
 import { PluggyTransaction } from '../../../../lib/models/PluggyTransaction';
+import { PluggyIgnore } from '../../../../lib/models/PluggyIgnore';
 
 export async function POST() {
   try {
@@ -22,6 +23,7 @@ export async function POST() {
       pluggyItemResult,
       pluggyAccountResult,
       pluggyTransactionResult,
+      pluggyIgnoreResult,
     ] = await Promise.all([
       Store.syncIndexes(),
       ProductMapping.syncIndexes(),
@@ -33,6 +35,7 @@ export async function POST() {
       PluggyItem.syncIndexes(),
       PluggyAccount.syncIndexes(),
       PluggyTransaction.syncIndexes(),
+      PluggyIgnore.syncIndexes(),
     ]);
 
     return NextResponse.json({
@@ -44,6 +47,7 @@ export async function POST() {
       pluggyItem: pluggyItemResult,
       pluggyAccount: pluggyAccountResult,
       pluggyTransaction: pluggyTransactionResult,
+      pluggyIgnore: pluggyIgnoreResult,
     });
   } catch (error) {
     return NextResponse.json({ error: `Falha ao sincronizar indexes: ${error}` }, { status: 500 });
