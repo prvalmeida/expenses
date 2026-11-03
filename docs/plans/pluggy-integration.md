@@ -653,3 +653,17 @@ chunks/direction are still written. A row the model could not classify gets
 merchant does not cost an API call every 6h. The history lookup is one `$in` query per direction —
 `Expense.name`/`Income.name` are unindexed. The §6 non-goal "a unified /ingest
 endpoint" and the rest stand unchanged.
+
+### Addition: manual ignore (2026-11)
+
+The review screen's "Ignorar nas próximas sincronizações" parks one `pending` row as `ignored`
+(`POST /api/pluggy/transactions/[pluggyId]/ignore` → `ignoreTransaction`). The motivating case is a
+store purchase already booked item by item from the receipt, whose card row must never come in as a
+lump sum. The decision lives in its own collection, `PluggyIgnore`, keyed by `pluggyId` plus a
+fingerprint (`accountId + description + date + amount`) so it survives Pluggy reissuing the
+transaction under a new id; the **date** in the fingerprint keeps it to that one purchase — the same
+merchant on another day still arrives. `upsertTransaction` checks it for new and `pending`/`ignored`
+rows, and a manual ignore wins over both the ignore rules and `ignoreOverridden`. "Não ignorar"
+(`unignoreTransaction`) deletes the matching `PluggyIgnore` records, or the next sync would re-ignore.
+Known limit: a row ignored while still `PENDING` at the bank whose amount or date changes when it
+posts under a new id no longer matches the fingerprint and shows up again for review.

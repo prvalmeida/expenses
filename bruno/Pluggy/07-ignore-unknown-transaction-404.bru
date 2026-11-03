@@ -1,0 +1,32 @@
+meta {
+  name: Ignore an unknown transaction answers 404
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{internalUrl}}/pluggy/transactions/does-not-exist-bruno/ignore
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}
+
+tests {
+  test("the response names the problem instead of a generic failure", function () {
+    expect(typeof res.body.error).to.equal("string");
+    expect(res.body.error.length).to.be.above(0);
+  });
+}
+
+docs {
+  The review screen's "Ignorar nas próximas sincronizações" only parks a row
+  that is currently `pending` (ignoreTransaction in pluggyService.ts). An id
+  with no pending row must answer 404 and must NOT leave a PluggyIgnore record
+  behind — ignoreTransaction reads the pending row before upserting it.
+
+  Internal route (app/api/pluggy/), so the plain `{ error: string }` envelope,
+  not the v1 `{ error: { code, message } }` shape.
+}

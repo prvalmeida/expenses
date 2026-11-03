@@ -168,6 +168,12 @@ export default function PluggySync() {
   const [ignoredRows, setIgnoredRows] = useState<PluggyTransactionRow[]>([]);
   const [anomalyRows, setAnomalyRows] = useState<PluggyTransactionRow[]>([]);
   const [ignoredExpanded, setIgnoredExpanded] = useState(false);
+  // Rows with an ignore/un-ignore request in flight. The ref is the guard (a
+  // double click fires twice before React re-renders, and the second request
+  // would 404 on a row the first already moved, showing an error for an action
+  // that succeeded); the state only drives the disabled buttons.
+  const rowBusyRef = useRef<Set<string>>(new Set());
+  const [busyRowIds, setBusyRowIds] = useState<ReadonlySet<string>>(new Set());
   const [anomaliesExpanded, setAnomaliesExpanded] = useState(false);
 
   const [selectedExpenseIds, setSelectedExpenseIds] = useState<Set<string>>(new Set());
@@ -406,7 +412,19 @@ export default function PluggySync() {
     }
   };
 
-  const handleUnignore = async (pluggyId: string) => {
+  const withRowBusy = async (pluggyId: string, action: () => Promise<void>) => {
+    if (rowBusyRef.current.has(pluggyId)) return;
+    rowBusyRef.current.add(pluggyId);
+    setBusyRowIds(new Set(rowBusyRef.current));
+    try {
+      await action();
+    } finally {
+      rowBusyRef.current.delete(pluggyId);
+      setBusyRowIds(new Set(rowBusyRef.current));
+    }
+  };
+
+  const handleUnignore = (pluggyId: string) => withRowBusy(pluggyId, async () => {
     setError(null);
     try {
       const res = await fetch(`/api/pluggy/transactions/${encodeURIComponent(pluggyId)}`, { method: 'PATCH' });
@@ -419,9 +437,9 @@ export default function PluggySync() {
     } catch {
       setError('Erro de rede ao reverter transação ignorada');
     }
-  };
+  });
 
-  const handleIgnore = async (pluggyId: string) => {
+  const handleIgnore = (pluggyId: string) => withRowBusy(pluggyId, async () => {
     setError(null);
     try {
       const res = await fetch(`/api/pluggy/transactions/${encodeURIComponent(pluggyId)}/ignore`, { method: 'POST' });
@@ -434,7 +452,7 @@ export default function PluggySync() {
     } catch {
       setError('Erro de rede ao ignorar transação');
     }
-  };
+  });
 
   const handleConfirmExpenses = async () => {
     const subset = expenseRows.filter(r => selectedExpenseIds.has(r.pluggyId));
@@ -616,6 +634,7 @@ export default function PluggySync() {
                     onCheck={on => toggleExpenseSelected(row.pluggyId, on)}
                     onChange={(field, value) => updateExpenseRow(row.pluggyId, field, value)}
                     onIgnore={() => handleIgnore(row.pluggyId)}
+                    ignoring={busyRowIds.has(row.pluggyId)}
                   />
                 ))}
               </ul>
@@ -665,7 +684,7 @@ export default function PluggySync() {
                             />
                           </Field>
                         </div>
-                        <IgnoreButton onClick={() => handleIgnore(row.pluggyId)} />
+                        <IgnoreButton onClick={() => handleIgnore(row.pluggyId)} disabled={busyRowIds.has(row.pluggyId)} />
                       </div>
                     </li>
                   );
@@ -701,7 +720,7 @@ export default function PluggySync() {
                       <p className="truncate font-medium">{row.description}</p>
                       <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}{row.statusReason ? ` · ${row.statusReason}` : ''}</p>
                     </div>
-                    <Button size="sm" onClick={() => handleUnignore(row.pluggyId)}>Não ignorar</Button>
+                    <Button size="sm" onClick={() => handleUnignore(row.pluggyId)} disabled={busyRowIds.has(row.pluggyId)}>Não ignorar</Button>
                   </li>
                 ))}
               </ul>
@@ -759,7 +778,7 @@ function carryEdits<R extends { pluggyId: string }>(
 // must never come in as a lump sum. It is keyed to the transaction (and its
 // date), so a later purchase at the same store still shows up. Reversible
 // from "Ignoradas".
-function IgnoreButton({ onClick }: { onClick: () => void }) {
+function IgnoreButton({ onClick, disabled = false }: { onClick: () => void; disabled?: boolean }) {
   return (
     <div className="flex justify-end">
       <Button
@@ -767,6 +786,7 @@ function IgnoreButton({ onClick }: { onClick: () => void }) {
         variant="ghost"
         icon={EyeOff}
         onClick={onClick}
+        disabled={disabled}
         title="Não importar esta transação nas próximas sincronizações. Compras do mesmo estabelecimento em outras datas continuam aparecendo."
       >
         Ignorar nas próximas sincronizações
@@ -775,7 +795,7 @@ function IgnoreButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, checked, onCheck, onChange, onIgnore }: {
+function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, checked, onCheck, onChange, onIgnore, ignoring }: {
   row: ExpenseRowState;
   type: string | null;
   subtype: string | null;
@@ -785,6 +805,7 @@ function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, check
   onCheck: (on: boolean) => void;
   onChange: <K extends keyof ExpenseRowState>(field: K, value: ExpenseRowState[K]) => void;
   onIgnore: () => void;
+  ignoring: boolean;
 }) {
   const typeOrphaned = type === null && row.resolvedType !== null;
   const subtypeOrphaned = subtype === null && type !== null && row.resolvedSubtype !== null;
@@ -833,7 +854,7 @@ function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, check
             </Field>
           )}
         </div>
-        <IgnoreButton onClick={onIgnore} />
+        <IgnoreButton onClick={onIgnore} disabled={ignoring} />
       </div>
     </li>
   );
