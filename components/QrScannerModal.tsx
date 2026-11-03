@@ -9,6 +9,15 @@ import { useQrScanner } from '@/hooks/useQrScanner';
 // the URL field for manual correction, so the camera stopping is the
 // right behavior either way).
 
+// The overlay draws on top of a live video feed, not on an app surface: white on
+// near-black is correct in both palettes, so these are the app's only raw palette
+// classes. tests/design-tokens.test.ts allows them between the markers and nowhere else.
+// design-tokens: allow
+const BACKDROP = 'bg-black/90';
+const GUIDE = 'border-white';
+const CAPTION = 'text-white';
+// design-tokens: end
+
 export default function QrScannerModal({
   onScanned,
   onClose,
@@ -36,7 +45,7 @@ export default function QrScannerModal({
       role="dialog"
       aria-modal="true"
       aria-label="Escanear QR code da nota"
-      className="fixed inset-0 z-50 bg-black/90 flex flex-col"
+      className={`fixed inset-0 z-50 ${BACKDROP} flex flex-col`}
     >
       <div className="relative flex-1 overflow-hidden">
         <video ref={videoRef} muted className="absolute inset-0 w-full h-full object-cover" />
@@ -44,16 +53,16 @@ export default function QrScannerModal({
         {/* QR frame guide */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="relative w-64 h-64 max-w-[70vw] max-h-[70vw]">
-            <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white rounded-tl-lg" />
-            <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white rounded-tr-lg" />
-            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white rounded-bl-lg" />
-            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white rounded-br-lg" />
+            <div className={`absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 ${GUIDE} rounded-tl-lg`} />
+            <div className={`absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 ${GUIDE} rounded-tr-lg`} />
+            <div className={`absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 ${GUIDE} rounded-bl-lg`} />
+            <div className={`absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 ${GUIDE} rounded-br-lg`} />
           </div>
         </div>
       </div>
 
       <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-3 text-center">
-        <p className="text-white text-sm font-medium">
+        <p className={`${CAPTION} text-sm font-medium`}>
           {state === 'error'
             ? error
             : 'Aponte a câmera para o QR code da nota fiscal'}
