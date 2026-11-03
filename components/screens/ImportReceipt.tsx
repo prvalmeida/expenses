@@ -518,7 +518,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
             >
               <div className="flex justify-between items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-ink">{item.description}</span>
+                  <span className="text-sm font-medium text-ink break-words">{item.description}</span>
                   {item.resolvedQty !== undefined && (
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className="text-xs text-ink-muted font-bold">
@@ -549,11 +549,15 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   className="w-24 p-1 border border-border-strong rounded text-sm text-right font-semibold [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
               </div>
-              <div className="mt-2 flex gap-2">
+              {/* grid + min-w-0: a <select>'s min-content width is its longest
+                  <option>, so in a flex row a long category/subcategory name
+                  pushed the pair past the right edge of a phone screen. */}
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 <select
                   value={type ?? ''}
                   onChange={e => handleTypeChange(index, e.target.value)}
-                  className="flex-1 p-1.5 border border-border-strong rounded text-sm"
+                  title={type ?? undefined}
+                  className="w-full min-w-0 truncate p-1.5 border border-border-strong rounded text-sm"
                 >
                   <option value="">Tipo...</option>
                   {[...expenseTypes]
@@ -566,7 +570,8 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   value={subtype ?? ''}
                   onChange={e => handleSubtypeChange(index, e.target.value)}
                   disabled={!type}
-                  className="flex-1 p-1.5 border border-border-strong rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={subtype ?? undefined}
+                  className="w-full min-w-0 truncate p-1.5 border border-border-strong rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Subcategoria...</option>
                   {type
