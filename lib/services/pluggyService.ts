@@ -6,6 +6,7 @@ import { PluggyItem } from '../models/PluggyItem';
 import { PluggyAccount } from '../models/PluggyAccount';
 import { PluggyTransaction } from '../models/PluggyTransaction';
 import { PluggySyncLock } from '../models/PluggySyncLock';
+import { PluggyIgnore } from '../models/PluggyIgnore';
 import { BillMapping } from '../models/BillMapping';
 import getOpenAI from '../openai';
 import {
@@ -287,7 +288,7 @@ function deriveStaging(
   tx: PluggyTransactionApi,
   account: PluggyAccountLike,
   linkedAccountIds: ReadonlySet<string>,
-  { skipIgnore = false }: { skipIgnore?: boolean } = {}
+  { skipIgnore = false, manuallyIgnored = false }: { skipIgnore?: boolean; manuallyIgnored?: boolean } = {}
 ): StagingDerivation {
   const { direction, anomalyReason } = deriveDirection(tx, account);
   if (!direction) {
@@ -295,6 +296,11 @@ function deriveStaging(
   }
 
   const { paymentType, cardBrand } = derivePaymentType(tx, account);
+  // A human's ignore on this exact transaction (PluggyIgnore) beats both the
+  // rules and `skipIgnore`: it is the most specific, most recent decision.
+  if (manuallyIgnored) {
+    return { direction, paymentType, cardBrand, status: 'ignored', statusReason: MANUAL_IGNORE_REASON };
+  }
   if (!skipIgnore) {
     const ignore = shouldIgnore(tx, account, direction, { linkedAccountIds });
     if (ignore.ignored) {
@@ -303,6 +309,30 @@ function deriveStaging(
   }
 
   return { direction, paymentType, cardBrand, status: 'pending' };
+}
+
+export const MANUAL_IGNORE_REASON = 'Ignorada manualmente — não será importada nas próximas sincronizações.';
+
+interface IgnoreFingerprint {
+  pluggyId: string;
+  accountId: string;
+  description: string;
+  date: string;
+  amount: number;
+}
+
+// Whether a human ignored this transaction: by its pluggyId, or — when Pluggy
+// reissued it under a new id — by the same account, description, DATE and
+// amount. The date keeps the match to that one purchase; the same store on
+// another day still comes in.
+async function isManuallyIgnored(fp: IgnoreFingerprint): Promise<boolean> {
+  const hit = await PluggyIgnore.exists({
+    $or: [
+      { pluggyId: fp.pluggyId },
+      { accountId: fp.accountId, description: fp.description, date: fp.date, amount: fp.amount },
+    ],
+  });
+  return !!hit;
 }
 
 function stagingSetFields(staging: StagingDerivation): Record<string, unknown> {
@@ -334,8 +364,18 @@ async function upsertTransaction(
     .select('status amount date ignoreOverridden')
     .lean<ExistingTransactionSnapshot | null>();
 
+  const manuallyIgnored =
+    (!existing || existing.status === 'pending' || existing.status === 'ignored') &&
+    (await isManuallyIgnored({
+      pluggyId: tx.id,
+      accountId: account.accountId,
+      description: fields.description,
+      date: fields.date,
+      amount: fields.amount,
+    }));
+
   if (!existing) {
-    const staging = deriveStaging(tx, account, linkedAccountIds);
+    const staging = deriveStaging(tx, account, linkedAccountIds, { manuallyIgnored });
     if (!dryRun) {
       const now = new Date();
       await PluggyTransaction.create({
@@ -371,7 +411,10 @@ async function upsertTransaction(
   }
 
   if (existing.status === 'pending' || existing.status === 'ignored') {
-    const staging = deriveStaging(tx, account, linkedAccountIds, { skipIgnore: existing.ignoreOverridden });
+    const staging = deriveStaging(tx, account, linkedAccountIds, {
+      skipIgnore: existing.ignoreOverridden,
+      manuallyIgnored,
+    });
     if (!dryRun) {
       const $set: Record<string, unknown> = { ...fields, ...stagingSetFields(staging), lastSeenAt: new Date() };
       const $unset: Record<string, ''> = {};
@@ -487,12 +530,60 @@ export async function syncAccount(
 // row — the ignore signal is the description/counterparty, which never
 // changes, so without the flag this override would be reverted on the next
 // sync tick.
+//
+// Also drops the manual ignore (PluggyIgnore), by id and by fingerprint, so
+// the row is not re-ignored by the next sync's isManuallyIgnored check.
 export async function unignoreTransaction(pluggyId: string) {
   await connectToDatabase();
 
-  return PluggyTransaction.findOneAndUpdate(
+  const row = await PluggyTransaction.findOneAndUpdate(
     { pluggyId, status: 'ignored' },
     { $set: { status: 'pending', ignoreOverridden: true }, $unset: { statusReason: '' } },
+    { new: true }
+  );
+  if (row) {
+    await PluggyIgnore.deleteMany({
+      $or: [
+        { pluggyId },
+        { accountId: row.accountId, description: row.description, date: row.date, amount: row.amount },
+      ],
+    });
+  }
+  return row;
+}
+
+// The review screen's "Ignorar": parks one PENDING row as ignored and records
+// the decision in PluggyIgnore so every later sync keeps it ignored (see
+// isManuallyIgnored). Only a pending row qualifies — an imported row already
+// has an Expense, and anomaly/skipped_existing rows are not in the queue.
+// The PluggyIgnore upsert runs first: if the status write then loses a race
+// with an import, the leftover record only matches this one transaction and
+// is harmless (an imported row is never re-derived).
+export async function ignoreTransaction(pluggyId: string) {
+  await connectToDatabase();
+
+  const pending = await PluggyTransaction.findOne({ pluggyId, status: 'pending' })
+    .select('pluggyId accountId description date amount')
+    .lean<IgnoreFingerprint | null>();
+  if (!pending) return null;
+
+  await PluggyIgnore.updateOne(
+    { pluggyId },
+    {
+      $set: {
+        accountId: pending.accountId,
+        description: pending.description,
+        date: pending.date,
+        amount: pending.amount,
+      },
+      $setOnInsert: { createdAt: new Date() },
+    },
+    { upsert: true }
+  );
+
+  return PluggyTransaction.findOneAndUpdate(
+    { pluggyId, status: 'pending' },
+    { $set: { status: 'ignored', statusReason: MANUAL_IGNORE_REASON } },
     { new: true }
   );
 }

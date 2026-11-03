@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, CircleAlert, Clock, Inbox, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleAlert, Clock, EyeOff, Inbox, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
 import { ICON_STROKE } from '@/components/shell/nav';
 import { Button, FOCUS_RING } from '@/components/ui/Button';
@@ -421,6 +421,21 @@ export default function PluggySync() {
     }
   };
 
+  const handleIgnore = async (pluggyId: string) => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/pluggy/transactions/${encodeURIComponent(pluggyId)}/ignore`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? 'Erro ao ignorar transação');
+        return;
+      }
+      await load();
+    } catch {
+      setError('Erro de rede ao ignorar transação');
+    }
+  };
+
   const handleConfirmExpenses = async () => {
     const subset = expenseRows.filter(r => selectedExpenseIds.has(r.pluggyId));
     const resolved = subset.map(row => {
@@ -600,6 +615,7 @@ export default function PluggySync() {
                     checked={selectedExpenseIds.has(row.pluggyId)}
                     onCheck={on => toggleExpenseSelected(row.pluggyId, on)}
                     onChange={(field, value) => updateExpenseRow(row.pluggyId, field, value)}
+                    onIgnore={() => handleIgnore(row.pluggyId)}
                   />
                 ))}
               </ul>
@@ -649,6 +665,7 @@ export default function PluggySync() {
                             />
                           </Field>
                         </div>
+                        <IgnoreButton onClick={() => handleIgnore(row.pluggyId)} />
                       </div>
                     </li>
                   );
@@ -737,7 +754,28 @@ function carryEdits<R extends { pluggyId: string }>(
   });
 }
 
-function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, checked, onCheck, onChange }: {
+// Ignores THIS transaction in every later sync — the case it exists for is a
+// store purchase already booked item by item from the receipt, whose card row
+// must never come in as a lump sum. It is keyed to the transaction (and its
+// date), so a later purchase at the same store still shows up. Reversible
+// from "Ignoradas".
+function IgnoreButton({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="flex justify-end">
+      <Button
+        size="sm"
+        variant="ghost"
+        icon={EyeOff}
+        onClick={onClick}
+        title="Não importar esta transação nas próximas sincronizações. Compras do mesmo estabelecimento em outras datas continuam aparecendo."
+      >
+        Ignorar nas próximas sincronizações
+      </Button>
+    </div>
+  );
+}
+
+function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, checked, onCheck, onChange, onIgnore }: {
   row: ExpenseRowState;
   type: string | null;
   subtype: string | null;
@@ -746,6 +784,7 @@ function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, check
   checked: boolean;
   onCheck: (on: boolean) => void;
   onChange: <K extends keyof ExpenseRowState>(field: K, value: ExpenseRowState[K]) => void;
+  onIgnore: () => void;
 }) {
   const typeOrphaned = type === null && row.resolvedType !== null;
   const subtypeOrphaned = subtype === null && type !== null && row.resolvedSubtype !== null;
@@ -794,6 +833,7 @@ function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, check
             </Field>
           )}
         </div>
+        <IgnoreButton onClick={onIgnore} />
       </div>
     </li>
   );
