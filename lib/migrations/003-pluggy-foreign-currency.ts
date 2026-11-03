@@ -18,6 +18,9 @@ function sameCents(a: number, b: number): boolean {
   return Math.round(a * 100) === Math.round(b * 100);
 }
 
+const FLAG_REASON =
+  'Compra em moeda estrangeira importada antes da conversão para R$ — confira o valor do gasto (não foi corrigido automaticamente).';
+
 export const migration: MigrationDefinition = {
   name: '003-pluggy-foreign-currency',
   description:
@@ -34,14 +37,17 @@ export const migration: MigrationDefinition = {
   // and an unmigrated row would flip to 'anomaly' instead.
   //
   // An Expense is only rewritten when the row produced exactly one and its
-  // value is still the unconverted amount — anything else (an installment
-  // split, a value a human already corrected) is counted and left alone.
+  // value is still the unconverted amount. Anything else (an installment
+  // split, a value a human already edited) is left alone BUT the row is moved
+  // to 'anomaly': restaging its amount removes the drift upsertTransaction
+  // would otherwise have flagged, so without this the possibly-wrong Expense
+  // would never surface again.
   async run({ dryRun }): Promise<Record<string, number>> {
     const rows = await PluggyTransaction.find({ currencyCode: { $ne: ACCOUNT_CURRENCY } })
       .select('amount status importedExpenseIds raw.amount raw.currencyCode raw.amountInAccountCurrency')
       .lean<ForeignRow[]>();
 
-    const result = { rows: rows.length, restaged: 0, unconvertible: 0, expensesFixed: 0, expensesSkipped: 0 };
+    const result = { rows: rows.length, restaged: 0, unconvertible: 0, expensesFixed: 0, flaggedForReview: 0 };
 
     for (const row of rows) {
       const converted = accountAmount(row.raw);
@@ -50,6 +56,7 @@ export const migration: MigrationDefinition = {
         continue;
       }
 
+      let flag = false;
       if (row.status === 'imported') {
         const ids = row.importedExpenseIds ?? [];
         const expense = ids.length === 1
@@ -61,7 +68,8 @@ export const migration: MigrationDefinition = {
           }
           result.expensesFixed++;
         } else {
-          result.expensesSkipped++;
+          flag = true;
+          result.flaggedForReview++;
         }
       }
 
@@ -74,6 +82,7 @@ export const migration: MigrationDefinition = {
               currencyCode: converted.currencyCode,
               originalAmount: converted.originalAmount,
               originalCurrencyCode: converted.originalCurrencyCode,
+              ...(flag && { status: 'anomaly', statusReason: FLAG_REASON }),
             },
           }
         );

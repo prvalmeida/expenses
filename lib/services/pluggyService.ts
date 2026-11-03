@@ -265,6 +265,7 @@ export type PluggyUpsertOutcome = 'created' | 'updated' | 'anomaly' | 'unchanged
 
 interface ExistingTransactionSnapshot {
   status: string;
+  statusReason?: string;
   amount: number;
   date: string;
   ignoreOverridden: boolean;
@@ -296,18 +297,6 @@ function deriveStaging(
     return { status: 'anomaly', statusReason: anomalyReason };
   }
 
-  // A foreign-currency row Pluggy did not convert carries an amount in the
-  // merchant's currency; staging it as pending would let it be imported as
-  // that many reais. Not an ignore — a human has to supply the real value.
-  const { currencyCode } = accountAmount(tx);
-  if (currencyCode !== ACCOUNT_CURRENCY) {
-    return {
-      direction,
-      status: 'anomaly',
-      statusReason: `Transação em ${currencyCode} sem o valor convertido em R$ — confira o valor na fatura.`,
-    };
-  }
-
   const { paymentType, cardBrand } = derivePaymentType(tx, account);
   if (!skipIgnore) {
     const ignore = shouldIgnore(tx, account, direction, { linkedAccountIds });
@@ -316,8 +305,31 @@ function deriveStaging(
     }
   }
 
+  // A foreign-currency row Pluggy did not convert carries an amount in the
+  // merchant's currency; staging it as pending would let it be imported as
+  // that many reais. Checked AFTER the ignore rules: a row that is ignored
+  // anyway (e.g. a refund abroad on a card) needs no human, so it must not
+  // land in Anomalias. The reason is prefixed with FOREIGN_UNCONVERTED_REASON
+  // so upsertTransaction can re-derive the row once the conversion shows up.
+  const { currencyCode } = accountAmount(tx);
+  if (currencyCode !== ACCOUNT_CURRENCY) {
+    return {
+      direction,
+      paymentType,
+      cardBrand,
+      status: 'anomaly',
+      statusReason: `${FOREIGN_UNCONVERTED_REASON} (${currencyCode}) — confira o valor na fatura.`,
+    };
+  }
+
   return { direction, paymentType, cardBrand, status: 'pending' };
 }
+
+// Prefix of the anomaly reason for a foreign row with no BRL value. Unlike the
+// other anomalies (a direction conflict, drift after import) it is plausibly
+// temporary — the conversion can arrive on a later read — so upsertTransaction
+// keeps re-deriving rows carrying it instead of freezing them.
+const FOREIGN_UNCONVERTED_REASON = 'Transação em moeda estrangeira sem o valor convertido em R$';
 
 function stagingSetFields(staging: StagingDerivation): Record<string, unknown> {
   return {
@@ -332,6 +344,8 @@ function stagingSetFields(staging: StagingDerivation): Record<string, unknown> {
 // - new                       -> insert as 'pending' (or 'anomaly' if the
 //   direction ladder cannot resolve without a guess).
 // - existing, pending/ignored -> refresh raw fields, re-derive, bump lastSeenAt.
+//   Same for an anomaly that only lacked a foreign-currency conversion
+//   (FOREIGN_UNCONVERTED_REASON), so it leaves Anomalias once Pluggy sends it.
 // - existing, imported        -> raw fields are NEVER touched. If amount or
 //   date drifted since import, flag 'anomaly' and leave the Expense alone —
 //   editing an already-posted expense is a decision for a human, not a poller.
@@ -345,7 +359,7 @@ async function upsertTransaction(
 ): Promise<PluggyUpsertOutcome> {
   const fields = mapPluggyTransaction(tx);
   const existing = await PluggyTransaction.findOne({ pluggyId: tx.id })
-    .select('status amount date ignoreOverridden')
+    .select('status statusReason amount date ignoreOverridden')
     .lean<ExistingTransactionSnapshot | null>();
 
   if (!existing) {
@@ -384,7 +398,9 @@ async function upsertTransaction(
     return 'anomaly';
   }
 
-  if (existing.status === 'pending' || existing.status === 'ignored') {
+  const awaitingConversion =
+    existing.status === 'anomaly' && !!existing.statusReason?.startsWith(FOREIGN_UNCONVERTED_REASON);
+  if (existing.status === 'pending' || existing.status === 'ignored' || awaitingConversion) {
     const staging = deriveStaging(tx, account, linkedAccountIds, { skipIgnore: existing.ignoreOverridden });
     if (!dryRun) {
       const $set: Record<string, unknown> = { ...fields, ...stagingSetFields(staging), lastSeenAt: new Date() };
