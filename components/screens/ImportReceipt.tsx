@@ -557,6 +557,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                 <select
                   value={type ?? ''}
                   onChange={e => handleTypeChange(index, e.target.value)}
+                  title={type ?? undefined}
                   className="w-full min-w-0 truncate p-1.5 border border-border-strong rounded text-sm"
                 >
                   <option value="">Tipo...</option>
@@ -570,6 +571,7 @@ export default function ImportReceipt({ onImported }: { onImported: () => void }
                   value={subtype ?? ''}
                   onChange={e => handleSubtypeChange(index, e.target.value)}
                   disabled={!type}
+                  title={subtype ?? undefined}
                   className="w-full min-w-0 truncate p-1.5 border border-border-strong rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Subcategoria...</option>
