@@ -23,11 +23,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  // The browser chrome follows the page: surface-0 in each palette.
+  // The browser chrome follows the page: surface-0 in each palette. The meta tag cannot
+  // read a CSS variable, so the token values are repeated here, one per scheme.
+  // design-tokens: allow
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f6f4f0" },
     { media: "(prefers-color-scheme: dark)", color: "#151412" },
   ],
+  // design-tokens: end
   // Declared in the head as well as in CSS: the meta tag applies before the stylesheet
   // loads, so a dark-mode device gets dark form controls and scrollbars on first paint
   // instead of flashing light ones.

@@ -2,7 +2,20 @@ import connectToDatabase from '../mongodb';
 import Expense from '../models/Expense';
 import { computeEffectiveDate } from '../utils/cycleUtils';
 import { installmentDates } from '../utils/dateUtils';
-import { InstallmentSeriesKey, installmentKey, installmentKeyId } from '../utils/installmentKeys';
+import {
+  INSTALLMENT_VALUE_TOLERANCE,
+  InstallmentSeriesKey,
+  installmentKey,
+  installmentKeyId,
+  installmentSlotId,
+  sameInstallmentValue,
+} from '../utils/installmentKeys';
+
+// A value range wide enough for sameInstallmentValue, with float slack.
+function valueRange(value: number) {
+  const slack = INSTALLMENT_VALUE_TOLERANCE + 0.005;
+  return { $gte: value - slack, $lte: value + slack };
+}
 
 // One logical purchase. `installments` and `valueIsTotal` only mean anything for
 // a credit purchase; the schema's discriminated union is what keeps a non-credit
@@ -79,9 +92,10 @@ export async function buildExpenseDocuments(
   return documents;
 }
 
-// How many stored expenses match each installment key, in one query — the
-// guards below run per staged row inside the Pluggy sync lock, and a findOne
-// per installment was N sequential round trips per row on every sync.
+// How many stored expenses match each installment key (by installmentKeyId), in
+// one query — the guards below run per staged row inside the Pluggy sync lock,
+// and a findOne per installment was N sequential round trips per row on every
+// sync. A value a cent off still matches (see sameInstallmentValue).
 export async function countStoredInstallments(
   keys: InstallmentSeriesKey[]
 ): Promise<Map<string, number>> {
@@ -89,16 +103,43 @@ export async function countStoredInstallments(
   if (keys.length === 0) return counts;
 
   await connectToDatabase();
-  const docs = await Expense.find({ $or: keys }, 'value date cardBrand installment totalInstallments').lean<
-    { value: number; date: string; cardBrand?: string; installment?: number; totalInstallments?: number }[]
-  >();
+  const docs = await Expense.find(
+    { $or: keys.map(key => ({ ...key, value: valueRange(key.value) })) },
+    'value date cardBrand installment totalInstallments'
+  ).lean<{ value: number; date: string; cardBrand?: string; installment?: number; totalInstallments?: number }[]>();
+
+  const storedBySlot = new Map<string, number[]>();
   for (const doc of docs) {
     const key = installmentKey(doc);
     if (!key) continue;
-    const id = installmentKeyId(key);
-    counts.set(id, (counts.get(id) ?? 0) + 1);
+    const slot = installmentSlotId(key);
+    storedBySlot.set(slot, [...(storedBySlot.get(slot) ?? []), key.value]);
+  }
+  for (const key of keys) {
+    const values = storedBySlot.get(installmentSlotId(key)) ?? [];
+    counts.set(installmentKeyId(key), values.filter(value => sameInstallmentValue(value, key.value)).length);
   }
   return counts;
+}
+
+// The dates of the stored expenses at one position of a series (same card,
+// value give or take a cent, and installment count) dated inside [dateFrom,
+// dateTo]. `date` is YYYY-MM-DD, so the range is a lexical comparison.
+export async function storedInstallmentDates(query: {
+  value: number;
+  cardBrand: string;
+  installment: number;
+  totalInstallments: number;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<string[]> {
+  await connectToDatabase();
+  const { dateFrom, dateTo, value, ...position } = query;
+  const docs = await Expense.find(
+    { ...position, value: valueRange(value), date: { $gte: dateFrom, $lte: dateTo } },
+    'value date'
+  ).lean<{ value: number; date: string }[]>();
+  return docs.filter(doc => sameInstallmentValue(doc.value, value)).map(doc => doc.date);
 }
 
 // Inserts the documents of one purchase, skipping each installment already

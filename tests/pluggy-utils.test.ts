@@ -2,13 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mapPluggyTransaction,
+  accountAmount,
   derivePaymentType,
   deriveDirection,
   deriveInstallments,
   anchorPurchaseDate,
   resolveInstallmentPlan,
   installmentSeriesKeys,
+  ownInstallmentProbe,
+  impliedSeriesAnchor,
+  probedSeriesKeys,
   seriesOccurrence,
+  seriesClaimants,
+  storedSeriesVerdict,
   shouldIgnore,
   PLUGGY_IGNORE_RULES,
   computeSyncWindow,
@@ -53,6 +59,57 @@ test('mapPluggyTransaction: narrows the timestamp and drops empty merchant names
 
   const noMerchant = mapPluggyTransaction({ ...base, date: '2026-08-14T03:00:00.000Z', merchant: null });
   assert.equal(noMerchant.merchantName, undefined);
+});
+
+test('mapPluggyTransaction: stages a foreign purchase at its BRL value', () => {
+  // The live Visa Caixa row (OPENCODE, 2026-09-29): US$ 10 charged as R$ 54,20.
+  const usd = mapPluggyTransaction({
+    id: 'tx-usd',
+    accountId: 'acc-1',
+    date: '2026-09-29T08:13:45.000Z',
+    description: 'OPENCODE',
+    currencyCode: 'USD',
+    amount: 10,
+    amountInAccountCurrency: 54.2,
+  });
+  assert.equal(usd.amount, 54.2);
+  assert.equal(usd.currencyCode, 'BRL');
+  assert.equal(usd.originalAmount, 10);
+  assert.equal(usd.originalCurrencyCode, 'USD');
+
+  // A BRL row is untouched and carries no original-* fields, even if Pluggy
+  // echoes amountInAccountCurrency on it.
+  const brl = mapPluggyTransaction({
+    id: 'tx-brl',
+    accountId: 'acc-1',
+    date: '2026-09-29',
+    description: 'PANVEL',
+    currencyCode: 'BRL',
+    amount: 34.52,
+    amountInAccountCurrency: 34.52,
+  });
+  assert.equal(brl.amount, 34.52);
+  assert.equal(brl.currencyCode, 'BRL');
+  assert.equal(brl.originalAmount, undefined);
+  assert.equal('originalCurrencyCode' in brl, false);
+});
+
+test('accountAmount: keeps the sign, refuses to guess without a conversion', () => {
+  // A refund abroad: both values negative.
+  assert.deepEqual(accountAmount({ amount: -10, currencyCode: 'usd', amountInAccountCurrency: -54.2 }), {
+    amount: -54.2,
+    currencyCode: 'BRL',
+    originalAmount: -10,
+    originalCurrencyCode: 'USD',
+  });
+  // Missing currency means BRL.
+  assert.deepEqual(accountAmount({ amount: 5 }), { amount: 5, currencyCode: 'BRL' });
+  // No conversion: the foreign code is kept so deriveStaging flags an anomaly
+  // instead of importing dollars as reais.
+  assert.deepEqual(accountAmount({ amount: 10, currencyCode: 'USD', amountInAccountCurrency: null }), {
+    amount: 10,
+    currencyCode: 'USD',
+  });
 });
 
 // --- step 8: derivePaymentType, the ladder -------------------------------
@@ -664,6 +721,78 @@ test('installmentSeriesKeys: undefined for anything that is not an expandable cr
   assert.equal(installmentSeriesKeys({ ...base, installmentCurrent: null }), undefined);
 });
 
+// --- ownInstallmentProbe: finding a series stored on its real dates -------
+
+// A live Caixa row with no purchaseDate: 3/3 posted on the August statement.
+// The month arithmetic anchors it on 2026-06-14; the series was stored from the
+// receipt on 2026-05-16, 06-16 and 07-16, so the exact probe never matched it.
+const unanchoredRow = {
+  amount: 99.34,
+  date: '2026-08-14',
+  installmentCurrent: 3,
+  installmentTotal: 3,
+  paymentType: 'credit',
+  cardBrand: 'Elo Caixa',
+};
+
+test('ownInstallmentProbe: the row position, dated inside the window before posting', () => {
+  assert.deepEqual(ownInstallmentProbe(unanchoredRow), {
+    value: 99.34,
+    cardBrand: 'Elo Caixa',
+    installment: 3,
+    totalInstallments: 3,
+    dateFrom: '2026-06-30',
+    dateTo: '2026-08-14',
+  });
+});
+
+test('probedSeriesKeys: each stored hit implies a whole series to check', () => {
+  const probe = ownInstallmentProbe(unanchoredRow)!;
+  const stored = '2026-07-16';
+  assert.ok(stored >= probe.dateFrom && stored <= probe.dateTo);
+  assert.equal(impliedSeriesAnchor(stored, probe.installment), '2026-05-16');
+
+  const series = probedSeriesKeys(probe, [stored, stored, '2026-08-01']);
+  // Two hits on one day are one candidate series (counted twice by storedCopies).
+  assert.deepEqual(
+    series.map(keys => keys.map(key => key.date)),
+    [
+      ['2026-05-16', '2026-06-16', '2026-07-16'],
+      ['2026-06-01', '2026-07-01', '2026-08-01'],
+    ]
+  );
+  assert.ok(series.flat().every(key => key.value === 99.34 && key.totalInstallments === 3));
+  // The plan's own anchor sits on the reconstructed month — what the exact
+  // probe used to look for.
+  assert.equal(installmentSeriesKeys(unanchoredRow)?.[0].date, '2026-06-14');
+});
+
+test('ownInstallmentProbe: a row with a usable purchaseDate is anchored exactly, never probed', () => {
+  // A window around a real purchase day only finds other, identical purchases.
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, purchaseDate: '2026-05-20' }), undefined);
+  // A purchaseDate after the posting date is unusable, so the row is probed.
+  assert.ok(ownInstallmentProbe({ ...unanchoredRow, purchaseDate: '2026-09-01' }));
+});
+
+test('ownInstallmentProbe: a row staged before migration 002 still holds a timestamp', () => {
+  const probe = ownInstallmentProbe({ ...unanchoredRow, date: '2026-08-14T03:00:00.000Z' });
+  assert.equal(probe?.dateFrom, '2026-06-30');
+  assert.equal(probe?.dateTo, '2026-08-14');
+});
+
+test('ownInstallmentProbe: undefined without a plausible position or a card', () => {
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, installmentCurrent: null }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, installmentCurrent: 4 }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, installmentTotal: 1 }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, cardBrand: null }), undefined);
+  assert.equal(ownInstallmentProbe({ ...unanchoredRow, paymentType: 'debit' }), undefined);
+});
+
+test('impliedSeriesAnchor: backs off by the installment position', () => {
+  assert.equal(impliedSeriesAnchor('2026-07-16', 1), '2026-07-16');
+  assert.equal(impliedSeriesAnchor('2027-01-25', 8), '2026-06-25');
+});
+
 // --- seriesOccurrence: telling identical purchases apart ------------------
 
 test('seriesOccurrence: counts the resolved rows of the same series posted in the same month', () => {
@@ -695,3 +824,90 @@ test('seriesOccurrence: 1 for a row that is not an installment group', () => {
     1
   );
 });
+
+// --- seriesClaimants + storedSeriesVerdict: is the series stored? ---------
+
+const claimant = (row: object, status: string) => ({ ...unanchoredRow, ...row, status });
+
+test('seriesClaimants: a row with a purchaseDate counts the resolved rows seriesOccurrence counts', () => {
+  const row = { ...unanchoredRow, purchaseDate: '2026-05-20', date: '2026-07-14', installmentCurrent: 3 };
+  // Another purchase on another day (reviewer scenario: A on 05-10 stored, B on
+  // 05-20 not): a different exact series, so no claim — and B is not probed,
+  // so A's copy is never counted for it.
+  const a = claimant({ purchaseDate: '2026-05-10', date: '2026-07-14' }, 'imported');
+  assert.deepEqual(seriesClaimants(row, [a]), { resolved: 0, pending: 0 });
+  // An identical purchase posted the same month and already resolved.
+  assert.deepEqual(seriesClaimants(row, [claimant({ ...row }, 'imported')]), { resolved: 1, pending: 0 });
+  // Pending rows never count against an exact row (pre-existing rule).
+  assert.deepEqual(seriesClaimants(row, [claimant({ ...row }, 'pending')]), { resolved: 0, pending: 0 });
+});
+
+test('seriesClaimants: an unanchored row is claimed against by the rows whose windows overlap its own', () => {
+  // Reviewer scenario: identical 3x purchases on 05-01 and 05-16, neither row
+  // with a purchaseDate; their 3/3 rows post on 07-30 and 08-14. The windows
+  // overlap, so each could own a series stored in the other's window.
+  const july = { ...unanchoredRow, date: '2026-07-30' };
+  const august = { ...unanchoredRow, date: '2026-08-14' };
+  assert.deepEqual(seriesClaimants(july, [claimant(august, 'pending')]), { resolved: 0, pending: 1 });
+  assert.deepEqual(seriesClaimants(august, [claimant(july, 'skipped_existing')]), { resolved: 1, pending: 0 });
+
+  // The same purchase's other installments are not competitors.
+  const sameSeries = [
+    claimant({ date: '2026-06-14', installmentCurrent: 1 }, 'imported'),
+    claimant({ date: '2026-07-14', installmentCurrent: 2 }, 'skipped_existing'),
+  ];
+  assert.deepEqual(seriesClaimants(august, sameSeries), { resolved: 0, pending: 0 });
+
+  // Two months apart: the windows no longer overlap.
+  assert.deepEqual(seriesClaimants(august, [claimant({ date: '2026-06-14' }, 'pending')]), { resolved: 0, pending: 0 });
+
+  // A purchaseDate row claims when its installment at this position falls in the window.
+  const dated = claimant({ purchaseDate: '2026-05-16', installmentCurrent: null, date: '2026-08-10' }, 'imported');
+  assert.deepEqual(seriesClaimants(august, [dated]), { resolved: 1, pending: 0 });
+  const elsewhere = claimant({ purchaseDate: '2026-04-01', installmentCurrent: null, date: '2026-06-10' }, 'imported');
+  assert.deepEqual(seriesClaimants(august, [elsewhere]), { resolved: 0, pending: 0 });
+
+  // Another card, total or value is another series; a cent off is the same.
+  assert.deepEqual(
+    seriesClaimants(august, [
+      claimant({ ...july, cardBrand: 'Visa Caixa' }, 'pending'),
+      claimant({ ...july, installmentTotal: 4, installmentCurrent: 3 }, 'pending'),
+      claimant({ ...july, amount: 99.5 }, 'pending'),
+      claimant({ ...july, amount: 99.33 }, 'pending'),
+    ]),
+    { resolved: 0, pending: 1 }
+  );
+});
+
+test('storedSeriesVerdict: the n-th identical purchase needs n stored copies', () => {
+  const evidence = (copies: number, resolved: number, pending = 0, hits = copies) => ({
+    copies,
+    hits,
+    claimants: { resolved, pending },
+  });
+  assert.equal(storedSeriesVerdict(evidence(1, 0), 'automatic'), 'stored');
+  // Two different purchases with the same card, value, date and count: the
+  // second is NOT already stored just because the first is.
+  assert.equal(storedSeriesVerdict(evidence(1, 1), 'automatic'), 'absent');
+  assert.equal(storedSeriesVerdict(evidence(1, 1), 'manual'), 'absent');
+  assert.equal(storedSeriesVerdict(evidence(2, 1), 'automatic'), 'stored');
+  assert.equal(storedSeriesVerdict(evidence(0, 0), 'automatic'), 'absent');
+});
+
+test('storedSeriesVerdict: automatic passes leave ambiguous rows in review; the reviewer resolves them in turn', () => {
+  // The july row above: one copy in its window, the august row also pending.
+  const july = { copies: 1, hits: 1, claimants: { resolved: 0, pending: 1 } };
+  assert.equal(storedSeriesVerdict(july, 'automatic'), 'doubt');
+  // The reviewer imports july first: no row has taken the copy yet.
+  assert.equal(storedSeriesVerdict(july, 'manual'), 'stored');
+  // Then august: july took the only copy, so august is booked.
+  const august = { copies: 1, hits: 1, claimants: { resolved: 1, pending: 0 } };
+  assert.equal(storedSeriesVerdict(august, 'manual'), 'absent');
+  assert.equal(storedSeriesVerdict(august, 'automatic'), 'absent');
+
+  // A partially stored series in the window is a doubt for an automatic
+  // pass — booking on the reconstructed month would duplicate what is there.
+  assert.equal(storedSeriesVerdict({ copies: 0, hits: 1, claimants: { resolved: 0, pending: 0 } }, 'automatic'), 'doubt');
+  assert.equal(storedSeriesVerdict({ copies: 0, hits: 1, claimants: { resolved: 0, pending: 0 } }, 'manual'), 'absent');
+});
+

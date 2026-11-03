@@ -51,7 +51,12 @@ export const migration: MigrationDefinition = {
             },
           },
         },
-      ]
+      ],
+      // Mongoose 9 rejects a pipeline update unless it is opted into
+      // explicitly; without this the migration threw before touching a row
+      // and never completed anywhere (production's ledger still listed it as
+      // pending), so the fix does not rewrite history.
+      { updatePipeline: true }
     );
 
     return { rows: matched, modified: modifiedCount };

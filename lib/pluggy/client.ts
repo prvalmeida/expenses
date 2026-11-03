@@ -182,7 +182,12 @@ export interface PluggyTransactionApi {
   date: string;
   description: string;
   amount: number;
+  // ISO 4217 of `amount`. A purchase abroad on a BRL card arrives as
+  // currencyCode 'USD', amount 10 — the value in DOLLARS — with the converted
+  // charge in amountInAccountCurrency (54.2, observed on a live Visa Caixa row
+  // on 2026-10-29). IOF is NOT folded into it: Caixa posts it as its own row.
   currencyCode?: string;
+  amountInAccountCurrency?: number | null;
   // Both name fields come back empty on some rows and absent on others; the
   // live payload carries `{ cnpj, name, businessName }` or `{ cnae, cnpj,
   // category, businessName }` depending on the merchant.
