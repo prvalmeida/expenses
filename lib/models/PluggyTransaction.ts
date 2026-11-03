@@ -13,7 +13,12 @@ const PluggyTransactionSchema = new mongoose.Schema(
     // --- raw, as returned by Pluggy; never edited once status is 'imported' ---
     date: { type: String, required: true },
     amount: { type: Number, required: true },
+    // Currency of `amount` — 'BRL' for a foreign purchase Pluggy converted
+    // (see accountAmount in pluggyUtils.ts); the value as charged abroad is
+    // kept in originalAmount/originalCurrencyCode for the review screen.
     currencyCode: { type: String, required: true },
+    originalAmount: { type: Number, required: false },
+    originalCurrencyCode: { type: String, required: false },
     descriptionRaw: { type: String, required: true },
     description: { type: String, required: true },
     merchantName: { type: String, required: false },

@@ -6,7 +6,7 @@ import { useCategories } from '@/hooks/useCategories';
 import { ICON_STROKE } from '@/components/shell/nav';
 import { Button, FOCUS_RING } from '@/components/ui/Button';
 import { Card, Chip, EmptyState, Notice } from '@/components/ui/display';
-import { formatBRL, PAYMENT_OPTIONS } from '@/lib/utils/money';
+import { formatBRL, formatForeign, PAYMENT_OPTIONS } from '@/lib/utils/money';
 import { shortDate } from '@/lib/utils/monthUtils';
 
 
@@ -18,6 +18,10 @@ interface PluggyTransactionRow {
   accountId: string;
   date: string;
   amount: number;
+  // Set on a purchase abroad: `amount` is already the converted BRL charge,
+  // these are the value as billed by the merchant (e.g. US$ 10,00).
+  originalAmount?: number;
+  originalCurrencyCode?: string;
   description: string;
   merchantName?: string;
   pluggyStatus: string;
@@ -682,7 +686,7 @@ export default function PluggySync() {
                   <li key={row.pluggyId} className="flex items-center gap-3 border-t border-border px-4 py-3 sm:px-5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{row.description}</p>
-                      <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}{row.statusReason ? ` · ${row.statusReason}` : ''}</p>
+                      <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}{foreignNote(row) ? ` (${foreignNote(row)})` : ''}{row.statusReason ? ` · ${row.statusReason}` : ''}</p>
                     </div>
                     <Button size="sm" onClick={() => handleUnignore(row.pluggyId)}>Não ignorar</Button>
                   </li>
@@ -702,7 +706,7 @@ export default function PluggySync() {
                     <CircleAlert size={20} strokeWidth={ICON_STROKE} aria-hidden="true" className="mt-px shrink-0 text-negative" />
                     <div className="min-w-0 flex-1">
                       <p className="font-medium">{row.description}</p>
-                      <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}</p>
+                      <p className="text-xs text-ink-muted">{shortDate(row.date)} · {formatBRL(Math.abs(row.amount))}{foreignNote(row) ? ` (${foreignNote(row)})` : ''}</p>
                       {row.statusReason && <p className="mt-0.5 text-[13px] text-negative">{row.statusReason}</p>}
                     </div>
                   </li>
@@ -799,6 +803,13 @@ function ExpenseReviewRow({ row, type, subtype, expenseTypes, subtypesFor, check
   );
 }
 
+// "US$ 10,00" for a converted foreign purchase, so the BRL figure next to it is
+// recognizably the converted charge and not a currency mix-up.
+function foreignNote(row: PluggyTransactionRow): string | null {
+  if (row.originalAmount === undefined || !row.originalCurrencyCode) return null;
+  return formatForeign(row.originalAmount, row.originalCurrencyCode);
+}
+
 // A PENDING row is still mutable at the bank: its amount can change and it can vanish
 // entirely, which is why autoImportStaged never touches one. It is importable by hand, so
 // the flag has to be visible next to the description.
@@ -819,8 +830,13 @@ function RowHeading({ row, sign = false }: { row: PluggyTransactionRow; sign?: b
           <span>{shortDate(row.date)}{installment}</span>
         </p>
       </div>
-      <span className={`shrink-0 font-medium tabular-nums ${sign ? 'text-positive' : ''}`}>
-        {formatBRL(Math.abs(row.amount), { sign })}
+      <span className="shrink-0 text-right">
+        <span className={`block font-medium tabular-nums ${sign ? 'text-positive' : ''}`}>
+          {formatBRL(Math.abs(row.amount), { sign })}
+        </span>
+        {foreignNote(row) && (
+          <span className="block text-xs text-ink-muted tabular-nums">{foreignNote(row)}</span>
+        )}
       </span>
     </div>
   );

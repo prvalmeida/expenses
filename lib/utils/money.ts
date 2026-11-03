@@ -23,6 +23,21 @@ export function formatBRL(value: number, opts: { sign?: boolean } = {}): string 
   return text;
 }
 
+/**
+ * An amount in a foreign currency, pt-BR style (`US$ 10,00`, `€ 5,00`). Only for
+ * display next to the BRL value a foreign purchase was converted to — every value
+ * the app stores is in reais. An unknown code falls back to `USD 10,00`.
+ */
+export function formatForeign(value: number, currencyCode: string): string {
+  try {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: currencyCode })
+      .format(Math.abs(value))
+      .replace(/\u202f/g, '\u00a0');
+  } catch {
+    return `${currencyCode} ${Math.abs(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+}
+
 const PAYMENT_LABELS: Record<Expense['paymentType'], string> = {
   credit: 'Crédito',
   debit: 'Débito',

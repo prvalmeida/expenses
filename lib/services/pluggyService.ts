@@ -20,6 +20,8 @@ import {
 } from '../pluggy/client';
 import {
   mapPluggyTransaction,
+  accountAmount,
+  ACCOUNT_CURRENCY,
   deriveDirection,
   derivePaymentType,
   shouldIgnore,
@@ -292,6 +294,18 @@ function deriveStaging(
   const { direction, anomalyReason } = deriveDirection(tx, account);
   if (!direction) {
     return { status: 'anomaly', statusReason: anomalyReason };
+  }
+
+  // A foreign-currency row Pluggy did not convert carries an amount in the
+  // merchant's currency; staging it as pending would let it be imported as
+  // that many reais. Not an ignore — a human has to supply the real value.
+  const { currencyCode } = accountAmount(tx);
+  if (currencyCode !== ACCOUNT_CURRENCY) {
+    return {
+      direction,
+      status: 'anomaly',
+      statusReason: `Transação em ${currencyCode} sem o valor convertido em R$ — confira o valor na fatura.`,
+    };
   }
 
   const { paymentType, cardBrand } = derivePaymentType(tx, account);
