@@ -268,6 +268,8 @@ const MAX_SYNC_PAGES = 50;
 
 export interface SyncAccountResult {
   accountId: string;
+  // Reported back so a failure can be named in the daily digest.
+  name?: string;
   fetched: number;
   created: number;
   updated: number;
@@ -754,7 +756,7 @@ export interface SyncAllAccountResult extends SyncAccountResult {
 
 export interface SyncAllResult {
   accounts: SyncAllAccountResult[];
-  items: { itemId: string; status: string }[];
+  items: { itemId: string; label?: string; status: string }[];
 }
 
 // Lock-free: refreshes every item's status, then syncs every enabled account —
@@ -762,25 +764,31 @@ export interface SyncAllResult {
 // LOGIN_ERROR bank does not stop the others. Must only be called from inside
 // withSyncLock (via runPluggySync).
 async function syncAllAccounts({ dryRun = false }: { dryRun?: boolean } = {}): Promise<SyncAllResult> {
-  const items = await PluggyItem.find({}).select('itemId').lean<{ itemId: string }[]>();
-  const itemResults: { itemId: string; status: string }[] = [];
-  for (const { itemId } of items) {
+  // `label` / `name` ride along because the sync result is what the daily
+  // Telegram digest turns into a warning line: "⚠️ Nubank: LOGIN_ERROR" is
+  // actionable, a raw itemId is not.
+  const items = await PluggyItem.find({}).select('itemId label').lean<{ itemId: string; label?: string }[]>();
+  const itemResults: { itemId: string; label?: string; status: string }[] = [];
+  for (const { itemId, label } of items) {
     try {
       const { status } = await refreshItemStatus(itemId);
-      itemResults.push({ itemId, status });
+      itemResults.push({ itemId, label, status });
     } catch (error) {
       itemResults.push({
         itemId,
+        label,
         status: `REFRESH_FAILED: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
   }
 
-  const accounts = await PluggyAccount.find({ enabled: true }).select('accountId').lean<{ accountId: string }[]>();
+  const accounts = await PluggyAccount.find({ enabled: true })
+    .select('accountId name')
+    .lean<{ accountId: string; name?: string }[]>();
   const accountResults: SyncAllAccountResult[] = [];
-  for (const { accountId } of accounts) {
+  for (const { accountId, name } of accounts) {
     try {
-      accountResults.push(await syncAccount(accountId, { dryRun }));
+      accountResults.push({ ...(await syncAccount(accountId, { dryRun })), name });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // Collected per account so one failing bank cannot stop the others — but
@@ -791,6 +799,7 @@ async function syncAllAccounts({ dryRun = false }: { dryRun?: boolean } = {}): P
       console.error(`[pluggy] sync falhou para a conta ${accountId}: ${message}`);
       accountResults.push({
         accountId,
+        name,
         fetched: 0,
         created: 0,
         updated: 0,

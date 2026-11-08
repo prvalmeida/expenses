@@ -1,0 +1,36 @@
+meta {
+  name: Digest the last 24h
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/reports/daily-digest?since={{since}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  // 24 hours ago, offset-aware — the schema rejects a bare date.
+  bru.setVar("since", new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  const data = res.body.data;
+
+  test("counts and totals describe the whole window, not the capped list", function () {
+    expect(data.counts.expenses).to.be.at.least(data.expenses.length);
+    expect(data.counts.incomes).to.be.at.least(data.incomes.length);
+    const listed = data.expenses.reduce((total, row) => total + row.value, 0);
+    expect(data.totals.expenses).to.be.at.least(Math.round(listed * 100) / 100);
+  });
+
+  test("reports the review queue", function () {
+    expect(data.pending.count).to.be.a("number");
+    expect(data.pending.total).to.be.a("number");
+  });
+}

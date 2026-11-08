@@ -1,0 +1,37 @@
+meta {
+  name: Forecast the current month
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/reports/month-forecast
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  const data = res.body.data;
+
+  test("returns the month it reports on", function () {
+    expect(data.month).to.match(/^\d{4}-\d{2}$/);
+    expect(data.today).to.match(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("keeps the projection internally consistent", function () {
+    expect(data.projected).to.equal(
+      Math.round((data.committed + data.expected.total) * 100) / 100
+    );
+    expect(data.projectedLow).to.be.at.most(data.projected);
+    expect(data.projectedHigh).to.be.at.least(data.projected);
+  });
+
+  test("carries a savings verdict", function () {
+    expect(["ok", "atencao", "risco"]).to.include(data.savings.status);
+    expect(data.savings.goal).to.be.above(0);
+  });
+}
