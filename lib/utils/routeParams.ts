@@ -38,10 +38,24 @@ export function parseCategoryParam(value: ParamValue): string | null {
   return v ? v : null;
 }
 
-export function transactionsHref(month: string, mode: ViewMode, category?: string | null): string {
+/**
+ * A subcategory only means something inside its category, so one without a category is
+ * dropped. Validity against the live list is the screen's job, as for the category.
+ */
+export function parseSubcategoryParam(value: ParamValue, category: string | null): string | null {
+  return category ? parseCategoryParam(value) : null;
+}
+
+export function transactionsHref(
+  month: string,
+  mode: ViewMode,
+  category?: string | null,
+  subcategory?: string | null
+): string {
   const params = new URLSearchParams({ month });
   if (mode === 'payment') params.set('mode', 'cashflow');
   if (category) params.set('category', category);
+  if (category && subcategory) params.set('subcategory', subcategory);
   return `/transactions?${params.toString()}`;
 }
 

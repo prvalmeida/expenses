@@ -7,7 +7,12 @@ import { currentMonth, transactionsHref, type ViewMode } from '@/lib/utils/route
 
 // The screen is controlled by the URL: a change replaces the search params (no history
 // entry per month) and the same mounted screen re-renders, so its loaded data is kept.
-export default function TransactionsView({ month, mode, category }: { month: string | null; mode: ViewMode; category: string | null }) {
+export default function TransactionsView({ month, mode, category, subcategory }: {
+  month: string | null;
+  mode: ViewMode;
+  category: string | null;
+  subcategory: string | null;
+}) {
   const router = useRouter();
   const [fallback] = useState(currentMonth);
   return (
@@ -15,7 +20,8 @@ export default function TransactionsView({ month, mode, category }: { month: str
       month={month ?? fallback}
       mode={mode}
       category={category}
-      onChange={next => router.replace(transactionsHref(next.month, next.mode, next.category), { scroll: false })}
+      subcategory={subcategory}
+      onChange={next => router.replace(transactionsHref(next.month, next.mode, next.category, next.subcategory), { scroll: false })}
     />
   );
 }

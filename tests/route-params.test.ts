@@ -5,6 +5,7 @@ import {
   homeHref,
   parseCategoryParam,
   parseMonthParam,
+  parseSubcategoryParam,
   parseViewModeParam,
   transactionsHref,
 } from '../lib/utils/routeParams';
@@ -47,6 +48,17 @@ test('category round-trips, encoded, and blank means none', () => {
   assert.equal(parseCategoryParam(undefined), null);
   assert.equal(transactionsHref('2026-10', 'purchase', null), '/transactions?month=2026-10');
   assert.equal(homeHref('2026-10'), '/?month=2026-10');
+});
+
+test('subcategory round-trips only inside a category', () => {
+  const href = transactionsHref('2026-10', 'purchase', 'Casa', 'Água & luz');
+  const params = new URL(href, 'http://x').searchParams;
+  const category = parseCategoryParam(params.get('category') ?? undefined);
+  assert.equal(parseSubcategoryParam(params.get('subcategory') ?? undefined, category), 'Água & luz');
+  assert.equal(transactionsHref('2026-10', 'purchase', null, 'Água'), '/transactions?month=2026-10');
+  assert.equal(parseSubcategoryParam('Água', null), null);
+  assert.equal(parseSubcategoryParam('  ', 'Casa'), null);
+  assert.equal(parseSubcategoryParam(undefined, 'Casa'), null);
 });
 
 test('currentMonth zero-pads the local month', () => {

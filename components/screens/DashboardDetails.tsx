@@ -14,7 +14,7 @@ import { formatBRL, isVoucher, paymentLabel } from '@/lib/utils/money';
 import { dayHeading, isInMonth, monthLabel, monthName, shiftMonth, shortDate } from '@/lib/utils/monthUtils';
 import type { ViewMode } from '@/lib/utils/routeParams';
 
-export type TransactionsQuery = { month: string; mode: ViewMode; category: string | null };
+export type TransactionsQuery = { month: string; mode: ViewMode; category: string | null; subcategory: string | null };
 
 type Props = TransactionsQuery & {
   onChange: (next: TransactionsQuery) => void;
@@ -35,11 +35,11 @@ type PendingDelete =
 
 const COMPARE_OFFSETS = Array.from({ length: 12 }, (_, i) => i + 1);
 
-// Lançamentos: every record of the month. Month, mode and category are controlled by the
-// URL (`?month=&mode=&category=`), so they survive a refresh and a shared link; sorting,
-// selection and the analysis tab are view state and stay local.
-export default function DashboardDetails({ month, mode, category, onChange }: Props) {
-  const { expenseTypes, isValidType, isValidPair } = useCategories();
+// Lançamentos: every record of the month. Month, mode, category and subcategory are
+// controlled by the URL (`?month=&mode=&category=&subcategory=`), so they survive a refresh
+// and a shared link; sorting, selection and the analysis tab are view state and stay local.
+export default function DashboardDetails({ month, mode, category, subcategory, onChange }: Props) {
+  const { expenseTypes, subtypesFor, isValidType, isValidPair } = useCategories();
   const { expenses, setExpenses, incomes, setIncomes, status } = useTransactions();
 
   const [sort, setSort] = useState<SortKey>('date');
@@ -52,7 +52,10 @@ export default function DashboardDetails({ month, mode, category, onChange }: Pr
   const [focusType, setFocusType] = useState<string | null>(null);
   const [compareOffset, setCompareOffset] = useState(1);
 
-  const set = (patch: Partial<TransactionsQuery>) => onChange({ month, mode, category, ...patch });
+  // A subcategory belongs to its category: switching category clears it rather than
+  // carrying a name the new category doesn't have into an always-empty list.
+  const set = (patch: Partial<TransactionsQuery>) =>
+    onChange({ month, mode, category, subcategory: 'category' in patch ? null : subcategory, ...patch });
 
   const isOrphan = useCallback(
     (e: Expense) => !isValidType(e.type) || (!!e.subtype && !isValidPair(e.type, e.subtype)),
@@ -92,14 +95,16 @@ export default function DashboardDetails({ month, mode, category, onChange }: Pr
 
   // --- List ---
   const visible = useMemo(() => {
-    const rows = category ? monthExpenses.filter(e => e.type === category) : monthExpenses;
+    const rows = category
+      ? monthExpenses.filter(e => e.type === category && (!subcategory || e.subtype === subcategory))
+      : monthExpenses;
     const sorted = [...rows];
     if (sort === 'date') sorted.sort((a, b) => dateOf(b).localeCompare(dateOf(a)) || a.name.localeCompare(b.name));
     if (sort === 'value') sorted.sort((a, b) => b.value - a.value);
     if (sort === 'name') sorted.sort((a, b) => a.name.localeCompare(b.name));
     if (sort === 'type') sorted.sort((a, b) => a.type.localeCompare(b.type) || dateOf(b).localeCompare(dateOf(a)));
     return sorted;
-  }, [monthExpenses, category, sort, dateOf]);
+  }, [monthExpenses, category, subcategory, sort, dateOf]);
 
   // Selection is pruned to what is on screen instead of being reset in an effect: a
   // month/mode/filter change hides rows, and hidden rows must never be bulk-deleted.
@@ -120,6 +125,17 @@ export default function DashboardDetails({ month, mode, category, onChange }: Pr
     if (category) names.add(category);
     return [...names].sort((a, b) => a.localeCompare(b)).map(n => ({ value: n, label: n }));
   }, [expenseTypes, category]);
+
+  // The category's live subcategories, plus any the month's rows still carry (renamed or
+  // deleted since) and the one in the URL — so every row on screen stays reachable and a
+  // shared link keeps its filter visible instead of silently showing "Todas".
+  const subcategoryOptions = useMemo(() => {
+    if (!category) return [];
+    const names = new Set(subtypesFor(category));
+    for (const e of monthExpenses) if (e.type === category && e.subtype) names.add(e.subtype);
+    if (subcategory) names.add(subcategory);
+    return [...names].sort((a, b) => a.localeCompare(b)).map(n => ({ value: n, label: n }));
+  }, [category, subcategory, subtypesFor, monthExpenses]);
 
   // --- Editing ---
   const startEdit = (expense: Expense) => {
@@ -288,6 +304,16 @@ export default function DashboardDetails({ month, mode, category, onChange }: Pr
                 onChange={e => set({ category: e.target.value || null })}
                 options={categoryOptions}
               />
+              <Select
+                className={`sm:w-56 ${category ? '' : 'opacity-60'}`}
+                label="Subcategoria"
+                placeholder={category ? 'Todas' : 'Escolha uma categoria'}
+                title={category ? undefined : 'Escolha uma categoria para filtrar por subcategoria'}
+                disabled={!category}
+                value={subcategory ?? ''}
+                onChange={e => set({ subcategory: e.target.value || null })}
+                options={subcategoryOptions}
+              />
               <Select className="sm:w-56" label="Ordenar por" value={sort} onChange={e => setSort(e.target.value as SortKey)} options={SORTS} />
             </div>
 
@@ -315,7 +341,11 @@ export default function DashboardDetails({ month, mode, category, onChange }: Pr
             {visible.length === 0 ? (
               <EmptyState
                 icon={Receipt}
-                title={category ? `Nenhum gasto em ${category}` : `Nenhum gasto em ${monthName(month)}`}
+                title={
+                  category
+                    ? `Nenhum gasto em ${subcategory ? `${category} · ${subcategory}` : category}`
+                    : `Nenhum gasto em ${monthName(month)}`
+                }
                 action={<ButtonLink variant="secondary" icon={Plus} href="/new/expense">Novo gasto</ButtonLink>}
               >
                 {mode === 'payment' ? 'No fluxo de caixa, compras no cartão contam no mês do vencimento.' : 'Lance um gasto ou importe uma fatura.'}
