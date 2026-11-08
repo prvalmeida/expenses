@@ -19,6 +19,8 @@ export interface DigestIncomeLike {
 }
 
 export interface DigestLike {
+  /** Full counts; the lists may be capped for display. */
+  counts?: { expenses: number; incomes: number };
   expenses: DigestExpenseLike[];
   incomes: DigestIncomeLike[];
   totals: { expenses: number; incomes: number };
@@ -109,27 +111,30 @@ export function formatDigest(input: DigestMessageInput): string {
   }
   lines.push('');
 
+  const expenseCount = digest.counts?.expenses ?? digest.expenses.length;
+  const incomeCount = digest.counts?.incomes ?? digest.incomes.length;
+
   if (digest.expenses.length === 0 && digest.incomes.length === 0) {
     lines.push('Nenhum gasto nem receita nova.');
   } else {
-    if (digest.expenses.length > 0) {
-      lines.push(`Novos gastos (${digest.expenses.length}) — ${formatBRL(digest.totals.expenses)}`);
+    if (expenseCount > 0) {
+      lines.push(`Novos gastos (${expenseCount}) — ${formatBRL(digest.totals.expenses)}`);
       for (const expense of digest.expenses.slice(0, maxExpenses)) {
         lines.push(
           `• ${shortDate(expense.date)} ${expense.name} — ${formatBRL(expense.value)} · ${place(expense)}`
         );
       }
-      const hidden = digest.expenses.length - maxExpenses;
+      const hidden = expenseCount - Math.min(digest.expenses.length, maxExpenses);
       if (hidden > 0) lines.push(`…e mais ${hidden} gasto${hidden > 1 ? 's' : ''}`);
     }
 
-    if (digest.incomes.length > 0) {
-      if (digest.expenses.length > 0) lines.push('');
-      lines.push(`Novas receitas (${digest.incomes.length}) — ${formatBRL(digest.totals.incomes)}`);
+    if (incomeCount > 0) {
+      if (expenseCount > 0) lines.push('');
+      lines.push(`Novas receitas (${incomeCount}) — ${formatBRL(digest.totals.incomes)}`);
       for (const income of digest.incomes.slice(0, maxIncomes)) {
         lines.push(`• ${shortDate(income.date)} ${income.name} — ${formatBRL(income.value)}`);
       }
-      const hidden = digest.incomes.length - maxIncomes;
+      const hidden = incomeCount - Math.min(digest.incomes.length, maxIncomes);
       if (hidden > 0) lines.push(`…e mais ${hidden} receita${hidden > 1 ? 's' : ''}`);
     }
   }

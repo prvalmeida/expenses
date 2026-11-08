@@ -158,6 +158,8 @@ export interface DigestIncome {
 
 export interface DailyDigest {
   since: string;
+  /** The full count/total — the lists below are capped for display. */
+  counts: { expenses: number; incomes: number };
   expenses: DigestExpense[];
   incomes: DigestIncome[];
   totals: { expenses: number; incomes: number };
@@ -175,25 +177,36 @@ export async function getDailyDigest({ since }: { since: Date }): Promise<DailyD
 
   const after = Types.ObjectId.createFromTime(Math.floor(since.getTime() / 1000));
 
-  const [expenseDocs, incomeDocs, pendingRows, anomalies] = await Promise.all([
-    Expense.find({ _id: { $gt: after } }, EXPENSE_PROJECTION)
-      .sort({ date: -1, _id: -1 })
-      .limit(200)
-      .lean() as unknown as Promise<
-      (ForecastExpense & { _id: Types.ObjectId; name: string; subtype?: string | null })[]
-    >,
-    Income.find({ _id: { $gt: after } }, 'name value type date')
-      .sort({ date: -1, _id: -1 })
-      .limit(200)
-      .lean() as unknown as Promise<(ForecastIncome & { _id: Types.ObjectId; name: string })[]>,
-    PluggyTransaction.find(
-      { status: 'pending', direction: 'outflow' },
-      'amount currencyCode amountInAccountCurrency'
-    ).lean() as unknown as Promise<
-      { amount: number; currencyCode: string; amountInAccountCurrency?: number }[]
-    >,
-    PluggyTransaction.countDocuments({ status: 'anomaly' }),
-  ]);
+  const [expenseDocs, incomeDocs, pendingRows, anomalies, expenseSum, incomeSum] =
+    await Promise.all([
+      Expense.find({ _id: { $gt: after } }, EXPENSE_PROJECTION)
+        .sort({ date: -1, _id: -1 })
+        .limit(MAX_DIGEST_ROWS)
+        .lean() as unknown as Promise<
+        (ForecastExpense & { _id: Types.ObjectId; name: string; subtype?: string | null })[]
+      >,
+      Income.find({ _id: { $gt: after } }, 'name value type date')
+        .sort({ date: -1, _id: -1 })
+        .limit(MAX_DIGEST_ROWS)
+        .lean() as unknown as Promise<(ForecastIncome & { _id: Types.ObjectId; name: string })[]>,
+      PluggyTransaction.find(
+        { status: 'pending', direction: 'outflow' },
+        'amount currencyCode amountInAccountCurrency'
+      ).lean() as unknown as Promise<
+        { amount: number; currencyCode: string; amountInAccountCurrency?: number }[]
+      >,
+      PluggyTransaction.countDocuments({ status: 'anomaly' }),
+      // Totals come from the database, not from the capped list above: a busy
+      // day would otherwise report a total smaller than the day's spending.
+      Expense.aggregate([
+        { $match: { _id: { $gt: after } } },
+        { $group: { _id: null, count: { $sum: 1 }, total: { $sum: '$value' } } },
+      ]),
+      Income.aggregate([
+        { $match: { _id: { $gt: after } } },
+        { $group: { _id: null, count: { $sum: 1 }, total: { $sum: '$value' } } },
+      ]),
+    ]);
 
   const expenses: DigestExpense[] = expenseDocs.map(doc => ({
     id: String(doc._id),
@@ -224,15 +237,23 @@ export async function getDailyDigest({ since }: { since: Date }): Promise<DailyD
 
   return {
     since: since.toISOString(),
+    counts: {
+      expenses: Number(expenseSum[0]?.count ?? 0),
+      incomes: Number(incomeSum[0]?.count ?? 0),
+    },
     expenses,
     incomes,
     totals: {
-      expenses: round2(expenses.reduce((total, row) => total + row.value, 0)),
-      incomes: round2(incomes.reduce((total, row) => total + row.value, 0)),
+      expenses: round2(Math.abs(Number(expenseSum[0]?.total ?? 0))),
+      incomes: round2(Math.abs(Number(incomeSum[0]?.total ?? 0))),
     },
     pending: { count: pendingRows.length, total: round2(pendingTotal) },
     anomalies,
   };
 }
+
+// Display cap for the "what came in" lists. The message shows at most 15 items
+// anyway; this only bounds the payload.
+const MAX_DIGEST_ROWS = 200;
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;

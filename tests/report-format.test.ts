@@ -86,6 +86,27 @@ test('surfaces a failing account, a broken connection and anomalies', () => {
   assert.ok(message.includes('🚨 2 transações em anomalia'));
 });
 
+test('the header uses the full count even when the list is capped', () => {
+  const expenses = Array.from({ length: 20 }, (_, index) => ({
+    name: `gasto ${index}`,
+    value: 10,
+    date: '2026-11-07',
+    type: 'mercado',
+  }));
+
+  const message = formatDigest({
+    today: '2026-11-08',
+    digest: digest({
+      counts: { expenses: 250, incomes: 0 },
+      expenses,
+      totals: { expenses: 2500, incomes: 0 },
+    }),
+  });
+
+  assert.ok(message.includes(`Novos gastos (250) — ${brl(2500)}`));
+  assert.ok(message.includes('…e mais 235 gastos'));
+});
+
 test('a locked sync is reported as such, not as a failure', () => {
   const message = formatDigest({ today: '2026-11-08', digest: digest(), locked: true });
 

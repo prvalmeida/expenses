@@ -22,9 +22,11 @@ assert {
 tests {
   const data = res.body.data;
 
-  test("totals match the rows it returned", function () {
-    const sum = data.expenses.reduce((total, row) => total + row.value, 0);
-    expect(Math.round(sum * 100) / 100).to.equal(data.totals.expenses);
+  test("counts and totals describe the whole window, not the capped list", function () {
+    expect(data.counts.expenses).to.be.at.least(data.expenses.length);
+    expect(data.counts.incomes).to.be.at.least(data.incomes.length);
+    const listed = data.expenses.reduce((total, row) => total + row.value, 0);
+    expect(data.totals.expenses).to.be.at.least(Math.round(listed * 100) / 100);
   });
 
   test("reports the review queue", function () {
