@@ -13,6 +13,8 @@
     "pluggy:sync": "tsx --env-file=.env.local scripts/pluggy-sync.ts",
     "telegram:record": "tsx scripts/telegram-record-expense.ts",
     "telegram:categories": "tsx scripts/telegram-categories.ts",
+    "telegram:daily": "tsx scripts/telegram-daily-sync.ts",
+    "telegram:weekly": "tsx scripts/telegram-weekly-report.ts",
     "test:api": "cd bruno && bru run . -r --env local --sandbox developer --exclude-tags external",
     "test:api:external": "cd bruno && bru run . -r --env local --sandbox developer --tags external",
     "test:api:prod": "cd bruno && bru run . -r --env prod --sandbox developer --exclude-tags external"

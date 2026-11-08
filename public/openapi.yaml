@@ -1189,6 +1189,87 @@ paths:
           content:
             application/json:
               schema: *a1
+  /reports/month-forecast:
+    get:
+      summary: Previsão determinística do fechamento do mês pelo fluxo de caixa
+      description: "Base de cálculo da análise semanal. Nada aqui depende de IA. `committed` é o que já está gravado com `effectiveDate` no mês; a previsão soma três lacunas conhecidas: `expected.cards` (cada cartão é completado até o seu próprio total médio dos últimos `historyMonths` meses — a fatura é importada em bloco e chega dias depois do fechamento), `expected.unrecorded` (o que o mês normalmente já tem lançado até o dia de hoje e ainda não foi importado) e `expected.tail` (o que normalmente ainda se gasta depois de hoje, descontado o que já está lançado para o futuro). `projectedLow`/`projectedHigh` usam o mínimo e o máximo de cada amostra. Linhas em staging aguardando revisão NÃO entram na análise. A receita usa a mediana dos salários históricos quando o mês ainda não recebeu o salário (`income.estimated`). `savings.status` é `ok` a partir da meta + `alertMargin`, `atencao` entre a meta e esse limite, `risco` abaixo da meta. `createdBefore` existe só para backtest: reconstitui o que a previsão diria naquele dia, ignorando registros gravados depois."
+      parameters:
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^\d{4}-(0[1-9]|1[0-2])$
+        - name: today
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: savingsGoal
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 0
+        - name: alertMargin
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 0
+        - name: historyMonths
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+        - name: createdBefore
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+      responses:
+        "200":
+          description: A previsão do mês, a comparação histórica e a meta
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
+  /reports/daily-digest:
+    get:
+      summary: O que foi registrado desde `since`, mais o que está aguardando revisão
+      description: Alvo da notificação diária do Telegram. "Novo" é decidido pelo horário de criação do registro (timestamp do ObjectId), não por qual sincronização o importou. `pending` conta as linhas de saída em staging ainda não importadas — é o sinal de que uma conta parou de sincronizar.
+      parameters:
+        - name: since
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+            pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|([+-](?:[01]\d|2[0-3]):[0-5]\d)))$
+      responses:
+        "200":
+          description: Gastos e receitas novos, totais e pendências
+        "400":
+          description: VALIDATION_FAILED ou INVALID_CATEGORY
+          content:
+            application/json:
+              schema: *a1
+        "401":
+          description: UNAUTHORIZED
+          content:
+            application/json:
+              schema: *a1
 components:
   securitySchemes:
     apiKey:

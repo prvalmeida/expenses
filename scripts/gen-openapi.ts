@@ -23,6 +23,7 @@ import { importBillSchema, parseBillSchema } from '../lib/api/schemas/bill';
 import { importReceiptSchema, parseReceiptUrlSchema } from '../lib/api/schemas/receipt';
 import { telegramExpenseTextSchema } from '../lib/api/schemas/telegram';
 import { cardCycleQuerySchema, categoriesQuerySchema } from '../lib/api/schemas/support';
+import { dailyDigestQuerySchema, monthForecastQuerySchema } from '../lib/api/schemas/report';
 import {
   listPluggyTransactionsQuerySchema,
   registerPluggyItemSchema,
@@ -296,6 +297,39 @@ const document = {
         summary: 'Emite o token de curta duração do widget Pluggy Connect',
         description: 'Retorna só o valor do token — nenhum outro dado de item ou sessão.',
         responses: responses('200', 'O token de conexão', ['UPSTREAM_FAILED']),
+      },
+    },
+    '/reports/month-forecast': {
+      get: {
+        summary: 'Previsão determinística do fechamento do mês pelo fluxo de caixa',
+        description:
+          'Base de cálculo da análise semanal. Nada aqui depende de IA. `committed` é o que já ' +
+          'está gravado com `effectiveDate` no mês; a previsão soma três lacunas conhecidas: ' +
+          '`expected.cards` (cada cartão é completado até o seu próprio total médio dos últimos ' +
+          '`historyMonths` meses — a fatura é importada em bloco e chega dias depois do ' +
+          'fechamento), `expected.unrecorded` (o que o mês normalmente já tem lançado até o dia de ' +
+          'hoje e ainda não foi importado) e `expected.tail` (o que normalmente ainda se gasta ' +
+          'depois de hoje, descontado o que já está lançado para o futuro). ' +
+          '`projectedLow`/`projectedHigh` usam o mínimo e o máximo de cada amostra. ' +
+          'Linhas em staging aguardando revisão NÃO entram na análise. A receita usa a mediana ' +
+          'dos salários históricos quando o mês ainda não recebeu o salário (`income.estimated`). ' +
+          '`savings.status` é `ok` a partir da meta + `alertMargin`, `atencao` entre a meta e esse ' +
+          'limite, `risco` abaixo da meta. `createdBefore` existe só para backtest: reconstitui o ' +
+          'que a previsão diria naquele dia, ignorando registros gravados depois.',
+        parameters: toParameters(monthForecastQuerySchema),
+        responses: responses('200', 'A previsão do mês, a comparação histórica e a meta'),
+      },
+    },
+    '/reports/daily-digest': {
+      get: {
+        summary: 'O que foi registrado desde `since`, mais o que está aguardando revisão',
+        description:
+          'Alvo da notificação diária do Telegram. "Novo" é decidido pelo horário de criação do ' +
+          'registro (timestamp do ObjectId), não por qual sincronização o importou. `pending` ' +
+          'conta as linhas de saída em staging ainda não importadas — é o sinal de que uma conta ' +
+          'parou de sincronizar.',
+        parameters: toParameters(dailyDigestQuerySchema),
+        responses: responses('200', 'Gastos e receitas novos, totais e pendências'),
       },
     },
   },
