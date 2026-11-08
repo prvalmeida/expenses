@@ -221,8 +221,11 @@ export default function PluggySync() {
     return type !== null && effectiveSubtype(type, row.resolvedSubtype) !== null;
   };
 
+  // The skeleton is for the first load only. A reload (after ignoring a row,
+  // an import or a sync) keeps the current list on screen until the new one
+  // arrives: swapping it for the shorter skeleton shrank the page and the
+  // browser clamped the scroll to the top, losing the user's place.
   const load = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const [pending, ignored, anomalies] = await Promise.all([
