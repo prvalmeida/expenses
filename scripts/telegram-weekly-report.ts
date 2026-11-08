@@ -21,6 +21,7 @@ import {
   resolveBaseUrl,
 } from './lib/cliEnv';
 import { shiftMonth, type MonthForecast } from '../lib/utils/forecast';
+import { lastDayOfMonth, todayInReportTimeZone } from '../lib/utils/reportDate';
 
 // Days into a new month during which the previous month's closing is still the
 // interesting report.
@@ -48,21 +49,6 @@ function parseArgs(argv: string[]): Args {
     today: flags.today as string | undefined,
     savingsGoal: flags['savings-goal'] as string | undefined,
   };
-}
-
-function todayInReportTimeZone(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-}
-
-function lastDayOfMonth(month: string): string {
-  const [year, monthNumber] = month.split('-').map(Number);
-  const day = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-  return `${month}-${String(day).padStart(2, '0')}`;
 }
 
 async function fetchForecast(

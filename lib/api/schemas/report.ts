@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import { isoDate } from './common';
+import { MAX_HISTORY_MONTHS } from '../../utils/forecast';
 
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
-const MAX_HISTORY_MONTHS = 12;
 // A digest older than this would be a month of "new" records — certainly a
 // mis-specified `since`, and a needlessly large read.
 const MAX_DIGEST_AGE_DAYS = 31;
+// A `since` in the future is a caller clock/time-zone mistake (it would yield an
+// empty digest that looks like a quiet day). A few minutes of skew are tolerated.
+const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
 // An empty query value (`?month=`) means "not sent": coercing '' would yield
 // NaN and reject a request that merely left a field blank in a client.
@@ -40,7 +43,8 @@ export const dailyDigestQuerySchema = z.object({
     .refine(
       value => Date.now() - Date.parse(value) <= MAX_DIGEST_AGE_DAYS * 86_400_000,
       'since não pode ser mais antigo que 31 dias'
-    ),
+    )
+    .refine(value => Date.parse(value) <= Date.now() + MAX_CLOCK_SKEW_MS, 'since não pode estar no futuro'),
 });
 
 export type MonthForecastQuery = z.infer<typeof monthForecastQuerySchema>;

@@ -118,3 +118,48 @@ test('a report-only run does not claim it synced', () => {
 
   assert.equal(message.split('\n')[0], '📊 Resumo de 08/11');
 });
+
+test('WAITING_USER_ACTION is a broken connection, the transient MFA prompt is not', () => {
+  const message = formatDigest({
+    today: '2026-11-08',
+    digest: digest(),
+    sync: {
+      items: [
+        { itemId: 'item-1', label: 'Caixa', status: 'WAITING_USER_ACTION' },
+        { itemId: 'item-2', label: 'Nubank', status: 'WAITING_USER_INPUT' },
+        { itemId: 'item-3', label: 'Inter', status: 'OUTDATED' },
+      ],
+    },
+  });
+
+  assert.ok(message.includes('⚠️ Caixa: WAITING_USER_ACTION'));
+  assert.ok(message.includes('⚠️ Inter: OUTDATED'));
+  assert.ok(!message.includes('WAITING_USER_INPUT'));
+});
+
+test('a failed sync is reported in the header and the digest still goes out', () => {
+  const message = formatDigest({
+    today: '2026-11-08',
+    digest: digest({
+      expenses: [{ name: 'Uber', value: 21.5, date: '2026-11-08', type: 'transporte' }],
+      totals: { expenses: 21.5, incomes: 0 },
+    }),
+    syncError: '502: Bad Gateway',
+    locked: false,
+  });
+
+  assert.equal(message.split('\n')[0], '⚠️ Sync de 08/11 falhou: 502: Bad Gateway');
+  assert.ok(message.includes(`Novos gastos (1) — ${brl(21.5)}`));
+});
+
+test('a sync error carrying an HTML error page is cut to one short line', () => {
+  const html = `502: <!DOCTYPE html>\n<html lang="en-US">${'<div>x</div>'.repeat(50)}</html>`;
+  const header = formatDigest({ today: '2026-11-08', digest: digest(), syncError: html }).split('\n')[0];
+
+  assert.equal(header, '⚠️ Sync de 08/11 falhou: 502: <!DOCTYPE html>');
+
+  const long = `500: ${'a'.repeat(300)}`;
+  const longHeader = formatDigest({ today: '2026-11-08', digest: digest(), syncError: long }).split('\n')[0];
+  assert.ok(longHeader.endsWith('…'));
+  assert.ok(longHeader.length < 160);
+});

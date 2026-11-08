@@ -10,7 +10,6 @@ import {
   DEFAULT_HISTORY_MONTHS,
   DEFAULT_ALERT_MARGIN,
   DEFAULT_SAVINGS_GOAL,
-  daysInMonth,
   monthForecast,
   shiftMonth,
   type CardWindow,
@@ -18,26 +17,7 @@ import {
   type ForecastIncome,
   type MonthForecast,
 } from '../utils/forecast';
-
-// The app is used from Brasília, the server runs in UTC. `todayLocal()`
-// (monthUtils) reads the process clock, so at 21:00 BRT it would already be
-// tomorrow — enough to move a report into the next month.
-export const REPORT_TIME_ZONE = 'America/Sao_Paulo';
-
-export function todayInReportTimeZone(now: Date = new Date()): string {
-  // en-CA formats as YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: REPORT_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
-}
-
-/** Last calendar day of `YYYY-MM`. */
-export function lastDayOfMonth(month: string): string {
-  return `${month}-${String(daysInMonth(month)).padStart(2, '0')}`;
-}
+import { lastDayOfMonth, resolveForecastPeriod } from '../utils/reportDate';
 
 export interface MonthForecastQuery {
   month?: string;
@@ -54,11 +34,7 @@ const EXPENSE_PROJECTION = 'name value type subtype date effectiveDate paymentTy
 export async function getMonthForecast(query: MonthForecastQuery = {}): Promise<MonthForecast> {
   await connectToDatabase();
 
-  const currentMonth = todayInReportTimeZone().slice(0, 7);
-  const month = query.month ?? currentMonth;
-  // Reporting a month other than this one only makes sense from its last day:
-  // that is what the weekly job does on the first days of a month.
-  const today = query.today ?? (month === currentMonth ? todayInReportTimeZone() : lastDayOfMonth(month));
+  const { month, today } = resolveForecastPeriod(query);
   const historyMonths = query.historyMonths ?? DEFAULT_HISTORY_MONTHS;
 
   const windowStart = `${shiftMonth(month, -historyMonths)}-01`;
@@ -183,7 +159,12 @@ export async function getDailyDigest({ since }: { since: Date }): Promise<DailyD
         .sort({ date: -1, _id: -1 })
         .limit(MAX_DIGEST_ROWS)
         .lean() as unknown as Promise<
-        (ForecastExpense & { _id: Types.ObjectId; name: string; subtype?: string | null })[]
+        (ForecastExpense & {
+          _id: Types.ObjectId;
+          name: string;
+          subtype?: string | null;
+          totalInstallments?: number | null;
+        })[]
       >,
       Income.find({ _id: { $gt: after } }, 'name value type date')
         .sort({ date: -1, _id: -1 })
@@ -218,6 +199,8 @@ export async function getDailyDigest({ since }: { since: Date }): Promise<DailyD
     effectiveDate: doc.effectiveDate,
     paymentType: doc.paymentType,
     cardBrand: doc.cardBrand ?? null,
+    installment: doc.installment ?? null,
+    totalInstallments: doc.totalInstallments ?? null,
   }));
 
   const incomes: DigestIncome[] = incomeDocs.map(doc => ({

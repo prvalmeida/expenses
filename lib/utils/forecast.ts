@@ -273,7 +273,10 @@ export function monthForecast(input: ForecastInput): MonthForecast {
   const projectedSavings = round2(expectedIncome - projected);
   const status: SavingsStatus =
     projectedSavings >= goal + margin ? 'ok' : projectedSavings >= goal ? 'atencao' : 'risco';
-  const remainingBudget = round2(expectedIncome - goal - committed - unrecorded);
+  // The card bills not imported yet are spend already contracted (installments,
+  // recurring charges), not money free to spend. The tail is NOT subtracted:
+  // it is the forecast of the very day-to-day spending this budget has to cover.
+  const remainingBudget = round2(expectedIncome - goal - committed - unrecorded - cardsExpected);
 
   // --- Comparison with previous months --------------------------------------
   const history = pastMonths

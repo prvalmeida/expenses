@@ -55,6 +55,8 @@ export interface DigestMessageInput {
   locked?: boolean;
   /** False when the job ran with --no-sync: the header must not claim a sync. */
   synced?: boolean;
+  /** The sync request itself failed (HTTP error, timeout): reported, not fatal. */
+  syncError?: string | null;
   /** Month total by fluxo de caixa, for the "where the month stands" line. */
   monthToDate?: number | null;
   maxExpenses?: number;
@@ -65,14 +67,24 @@ const DEFAULT_MAX_EXPENSES = 15;
 const DEFAULT_MAX_INCOMES = 5;
 
 // Pluggy item statuses that mean "a human has to reconnect/login". OUTDATED and
-// WAITING_USER_INPUT are as actionable as LOGIN_ERROR; UPDATED/UPDATING are the
-// healthy ones and stay silent.
-const BROKEN_ITEM_STATUSES = new Set(['LOGIN_ERROR', 'OUTDATED', 'WAITING_USER_INPUT']);
+// WAITING_USER_ACTION (act in Meu Pluggy) are as actionable as LOGIN_ERROR.
+// WAITING_USER_INPUT is NOT: it is the transient MFA prompt during an update
+// (pluggy-node src/types/item.ts), healthy like UPDATED/UPDATING — alerting on
+// it would train the user to ignore the notice.
+const BROKEN_ITEM_STATUSES = new Set(['LOGIN_ERROR', 'OUTDATED', 'WAITING_USER_ACTION']);
 const BROKEN_STATUS_PREFIX = 'REFRESH_FAILED';
 
 const shortDate = (isoDate: string): string => {
   const [, month, day] = isoDate.split('-');
   return `${day}/${month}`;
+};
+
+// A proxy error page arrives as a whole HTML document: one short line is
+// enough for the chat, the full body goes to stderr.
+const MAX_ERROR_LENGTH = 120;
+const shortError = (error: string): string => {
+  const line = error.split(/\r?\n/)[0].trim();
+  return line.length > MAX_ERROR_LENGTH ? `${line.slice(0, MAX_ERROR_LENGTH - 1)}…` : line;
 };
 
 const place = (expense: DigestExpenseLike): string =>
@@ -102,7 +114,9 @@ export function formatDigest(input: DigestMessageInput): string {
   const maxIncomes = input.maxIncomes ?? DEFAULT_MAX_INCOMES;
 
   const lines: string[] = [];
-  if (locked) {
+  if (input.syncError) {
+    lines.push(`⚠️ Sync de ${shortDate(input.today)} falhou: ${shortError(input.syncError)}`);
+  } else if (locked) {
     lines.push(`⏳ Sync de ${shortDate(input.today)} — outra execução ainda está rodando`);
   } else if (input.synced === false) {
     lines.push(`📊 Resumo de ${shortDate(input.today)}`);

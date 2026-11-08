@@ -24,6 +24,7 @@ import {
 import { formatDigest } from './lib/reportFormat';
 import type { DailyDigest } from '../lib/services/reportService';
 import type { MonthForecast } from '../lib/utils/forecast';
+import { todayInReportTimeZone } from '../lib/utils/reportDate';
 
 type Args = {
   baseUrl: string;
@@ -61,15 +62,6 @@ function parseArgs(argv: string[]): Args {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-function todayInReportTimeZone(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-}
-
 async function request(
   url: string,
   apiKey: string,
@@ -91,19 +83,29 @@ async function main() {
 
   let syncBody: unknown = null;
   let locked = false;
+  // A failed sync must not swallow the day's message: the digest is still worth
+  // sending, and the cron (no_agent) delivers nothing when the script exits 1.
+  let syncError: string | null = null;
 
   if (args.sync) {
-    for (let attempt = 0; attempt <= LOCK_RETRIES; attempt += 1) {
-      const result = await request(`${args.baseUrl}/pluggy/sync`, args.apiKey, { method: 'POST' });
-      if (!result.ok) {
-        console.error(describeApiError(result.status, result.body));
-        process.exit(1);
+    try {
+      for (let attempt = 0; attempt <= LOCK_RETRIES; attempt += 1) {
+        const result = await request(`${args.baseUrl}/pluggy/sync`, args.apiKey, { method: 'POST' });
+        if (!result.ok) {
+          syncError = describeApiError(result.status, result.body);
+          locked = false;
+          break;
+        }
+        syncBody = result.body;
+        locked = Boolean((result.body as { data?: { locked?: boolean } })?.data?.locked);
+        if (!locked) break;
+        if (attempt < LOCK_RETRIES) await sleep(LOCK_WAIT_MS);
       }
-      syncBody = result.body;
-      locked = Boolean((result.body as { data?: { locked?: boolean } })?.data?.locked);
-      if (!locked) break;
-      if (attempt < LOCK_RETRIES) await sleep(LOCK_WAIT_MS);
+    } catch (error) {
+      syncError = error instanceof Error ? error.message : String(error);
+      locked = false;
     }
+    if (syncError) console.error(`sync falhou: ${syncError}`);
   }
 
   const since = new Date(Date.now() - args.hours * 3_600_000).toISOString();
@@ -138,6 +140,7 @@ async function main() {
       sync: sync as Parameters<typeof formatDigest>[0]['sync'],
       locked,
       synced: args.sync,
+      syncError,
       monthToDate,
     })
   );

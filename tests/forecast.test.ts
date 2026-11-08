@@ -237,7 +237,7 @@ test('savings status uses the goal plus the alert margin', () => {
   assert.equal(withIncome(-100).savings.status, 'risco');
 });
 
-test('remaining budget and daily allowance come from committed spend only', () => {
+test('with no card history, remaining budget and daily allowance come from committed spend', () => {
   const forecast = monthForecast(
     base({
       incomes: [{ value: 5000, date: '2026-11-01', type: 'other' }],
@@ -282,4 +282,30 @@ test('history reports same-day and final totals, categories the biggest movers',
   assert.equal(mercado.delta, 133.33);
   assert.equal(forecast.categories[0].type, 'mercado');
   assert.equal(forecast.categories.at(-1)?.type, 'lazer');
+});
+
+test('remaining budget subtracts the card bills still to be imported, not the tail', () => {
+  const forecast = monthForecast(
+    base({
+      cardWindows: [visa],
+      incomes: [{ value: 10000, date: '2026-11-01', type: 'other' }],
+      expenses: [
+        // Visa's last three bills average 1000; November has 400 imported so far.
+        expense({ value: 500, date: '2026-08-01', effectiveDate: '2026-08-25', paymentType: 'credit', cardBrand: 'Visa Caixa' }),
+        expense({ value: 1500, date: '2026-09-01', effectiveDate: '2026-09-25', paymentType: 'credit', cardBrand: 'Visa Caixa' }),
+        expense({ value: 1000, date: '2026-10-01', effectiveDate: '2026-10-25', paymentType: 'credit', cardBrand: 'Visa Caixa' }),
+        expense({ value: 400, date: '2026-11-02', effectiveDate: '2026-11-25', paymentType: 'credit', cardBrand: 'Visa Caixa' }),
+        // Day-to-day pix spending after day 10 in past months: this is the tail.
+        expense({ value: 300, date: '2026-08-20' }),
+        expense({ value: 300, date: '2026-09-20' }),
+        expense({ value: 300, date: '2026-10-20' }),
+      ],
+    })
+  );
+
+  assert.equal(forecast.expected.cards, 600);
+  assert.ok(forecast.expected.tail > 0);
+  // 10000 income − 1500 goal − 400 committed − 600 bill still to land.
+  assert.equal(forecast.savings.remainingBudget, 7500);
+  assert.equal(forecast.savings.dailyAllowance, 375);
 });

@@ -66,6 +66,19 @@ test('daily-digest requires an ISO instant and rejects a stale window', () => {
 
   // An explicit offset is accepted too — the script sends `toISOString()`, but a
   // human with a -03:00 clock should not be rejected.
-  const offset = new Date(Date.now() - 3_600_000).toISOString().replace('Z', '-03:00');
+  // (Same instant written in -03:00: shift the wall clock back 3h.)
+  const offset = new Date(Date.now() - 4 * 3_600_000).toISOString().replace('Z', '-03:00');
   assert.equal(dailyDigestQuerySchema.safeParse({ since: offset }).success, true);
+});
+
+test('daily-digest rejects a since in the future, tolerating a little clock skew', () => {
+  const skewed = new Date(Date.now() + 60_000).toISOString();
+  assert.equal(dailyDigestQuerySchema.safeParse({ since: skewed }).success, true);
+
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  assert.equal(dailyDigestQuerySchema.safeParse({ since: future }).success, false);
+
+  // The classic mistake: a local -03:00 wall clock labelled as UTC is 3h ahead.
+  const mislabelled = new Date(Date.now() + 3 * 3_600_000).toISOString();
+  assert.equal(dailyDigestQuerySchema.safeParse({ since: mislabelled }).success, false);
 });
